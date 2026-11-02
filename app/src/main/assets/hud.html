@@ -1,0 +1,319 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="AirScope">
+<meta name="theme-color" content="#05090c">
+<title>AirScope HUD</title>
+<style>
+  :root {
+    --bg: #05090c; --panel: #0a1419; --cyan: #00e5ff; --dim: #4f8a99; --grid: #1a3f49;
+    --green: #39ff88; --amber: #ffc400; --red: #ff3b5c; --sel: #14303a;
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin: 0; background: var(--bg); color: var(--cyan);
+    font: 13px/1.35 ui-monospace, "SF Mono", Menlo, Consolas, monospace; }
+  body { padding: calc(env(safe-area-inset-top) + 8px) calc(env(safe-area-inset-right) + 10px)
+         calc(env(safe-area-inset-bottom) + 10px) calc(env(safe-area-inset-left) + 10px);
+         max-width: 720px; margin: 0 auto; }
+  h1 { font-size: 16px; margin: 0; letter-spacing: .08em; }
+  #status { color: var(--dim); font-size: 12px; margin: 2px 0 6px; min-height: 16px; white-space: pre-wrap; }
+  #status.warn { color: var(--amber); }
+  #banner { border: 1px solid var(--grid); background: var(--panel); padding: 8px 10px; margin-bottom: 8px;
+            color: #b8d8df; font-size: 12px; display: none; }
+  #banner b { color: var(--cyan); }
+  #radarWrap { position: relative; width: 100%; aspect-ratio: 1 / 1; max-height: 56vh; margin: 0 auto; }
+  canvas { width: 100%; height: 100%; display: block; touch-action: manipulation; }
+  #track { margin: 6px 0; min-height: 34px; color: var(--dim); font-size: 12px; white-space: pre-wrap; }
+  .row { display: flex; gap: 6px; margin: 4px 0; }
+  button, label.btn { flex: 1; background: transparent; color: var(--cyan); border: 1px solid var(--cyan);
+           font: inherit; font-size: 12px; padding: 9px 4px; border-radius: 2px; text-align: center; cursor: pointer; }
+  button.off { opacity: .45; }
+  input[type=file] { display: none; }
+  #list { border-top: 1px solid var(--grid); margin-top: 6px; }
+  .item { padding: 7px 4px; border-bottom: 1px solid var(--grid); white-space: pre-wrap; word-break: break-word; font-size: 12px; }
+  .item.sel { background: var(--sel); }
+  .LOW { color: var(--green); } .MEDIUM { color: var(--amber); } .HIGH { color: var(--red); }
+  .SYS { color: var(--cyan); } .SCAN { color: var(--dim); }
+  .flags { color: inherit; opacity: .85; }
+  .empty { color: var(--dim); padding: 14px 4px; }
+</style>
+</head>
+<body>
+  <h1>AIRSCOPE // REMOTE HUD</h1>
+  <div id="status">connecting…</div>
+  <div id="banner"></div>
+  <div id="radarWrap"><canvas id="radar"></canvas></div>
+  <div id="track">Tap a blip or row to track it</div>
+  <div class="row">
+    <button id="bWifi">WI-FI</button>
+    <button id="bBle">BLE</button>
+    <button id="bLog">LOG</button>
+  </div>
+  <div class="row" id="standaloneRow" style="display:none">
+    <label class="btn" for="csv">LOAD CSV</label><input id="csv" type="file" accept=".csv,text/csv">
+    <button id="bDemo">DEMO</button>
+  </div>
+  <div id="list"></div>
+
+<script>
+(() => {
+  "use strict";
+  const COLORS = { LOW: "#39ff88", MEDIUM: "#ffc400", HIGH: "#ff3b5c" };
+  const params = new URLSearchParams(location.search);
+  const key = params.get("k");
+  const state = { devices: [], timeline: [], scanning: false, warning: null, time: 0 };
+  let mode = "connecting";          // live | demo | csv | connecting
+  let showWifi = true, showBle = true, showLog = false, selected = null, failures = 0;
+
+  const $ = (id) => document.getElementById(id);
+  const canvas = $("radar"), ctx = canvas.getContext("2d");
+  const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+
+  // Same placement formula as the Android app: Java String.hashCode, Wi-Fi top half, BLE bottom half.
+  function javaHash(s) { let h = 0; for (let i = 0; i < s.length; i++) h = (Math.imul(31, h) + s.charCodeAt(i)) | 0; return h; }
+  function angleFor(d) { return (d.kind === "WIFI" ? 180 : 0) + ((javaHash(d.key) >>> 0) % 180); }
+
+  // ---------- data sources ----------
+  async function poll() {
+    try {
+      const r = await fetch("/api/state?k=" + encodeURIComponent(key), { cache: "no-store" });
+      if (!r.ok) throw new Error("HTTP " + r.status);
+      Object.assign(state, await r.json());
+      mode = "live"; failures = 0;
+    } catch (e) {
+      failures++;
+      if (failures > 2) state.warning = "Lost connection to the phone (" + e.message + "). Same Wi-Fi? Scan running?";
+    }
+    render();
+    setTimeout(poll, 1500);
+  }
+
+  function standalone(reason) {
+    mode = "demo";
+    $("standaloneRow").style.display = "flex";
+    const b = $("banner");
+    b.style.display = "block";
+    b.innerHTML = "<b>Viewer mode.</b> " + esc(reason) +
+      " iPhones can't scan Wi-Fi or Bluetooth from a browser, so the Pixel does the scanning: " +
+      "start a scan in the AirScope app, tap <b>HUD</b>, then open the link it shows in Safari on the same Wi-Fi. " +
+      "Here you can also load an <b>airscope_devices_*.csv</b> export. Showing simulated data until then.";
+    startDemo();
+  }
+
+  let demoTimer = null;
+  function startDemo() {
+    clearInterval(demoTimer);
+    const t0 = Date.now();
+    const base = [
+      ["WIFI", "a4:2b:b0:11:22:33", "HomeNet-5G", -48, "5 GHz ch36 WPA2", []],
+      ["WIFI", "c8:3a:35:44:55:66", "NETGEAR42", -66, "2.4 GHz ch6 WPA2", []],
+      ["WIFI", "10:27:f5:aa:bb:cc", "<hidden SSID>", -74, "2.4 GHz ch11 WPA2", ["Hidden SSID"]],
+      ["WIFI", "dc:4f:22:12:34:56", "ESP_C1A2B3", -58, "2.4 GHz ch1 OPEN", ["Open network (no encryption)", "Camera/IoT-style network name"]],
+      ["WIFI", "7a:11:9c:de:f0:01", "Jake's iPhone", -71, "2.4 GHz ch6 WPA2", ["Mobile hotspot name", "Randomized MAC (usually a phone hotspot)"]],
+      ["WIFI", "02:1a:11:f0:00:01", "Airport_Free_WiFi", -63, "2.4 GHz ch1 OPEN", ["Open network (no encryption)", "Same SSID seen open and secured (possible evil twin)"]],
+      ["BLE", "5c:f3:70:01:02:03", "AirPods / Beats", -60, "Apple / AirPods / Beats", []],
+      ["BLE", "e1:22:33:44:55:66", "Apple Find My tag (away from owner)", -57, "Apple / Apple Find My tag (away from owner)", ["Apple Find My tag (away from owner)", "Tracker has stayed with you for 14 min"]],
+      ["BLE", "d0:3f:aa:9b:00:11", "Tile tracker", -82, "Tile / Tile tracker", ["Tile tracker"]],
+      ["BLE", "4c:11:ae:77:88:99", "Galaxy Watch", -69, "Samsung", []],
+      ["BLE", "f4:12:fa:01:02:03", "Unknown BLE", -88, "BLE", []],
+    ];
+    const scoreOf = (flags) => Math.min(100, flags.reduce((s, f) =>
+      s + (/tracker has stayed/i.test(f) ? 30 : /away from owner/i.test(f) ? 40 : /tracker/i.test(f) ? 35 :
+           /camera/i.test(f) ? 30 : /evil twin/i.test(f) ? 25 : /open/i.test(f) ? 15 : /hidden|randomized/i.test(f) ? 10 : 5), 0));
+    const tick = () => {
+      const t = (Date.now() - t0) / 1000;
+      state.devices = base.map(([kind, id, name, rssi, detail, flags], i) => {
+        const avg = Math.round(rssi + 4 * Math.sin(t / 3 + i));
+        const score = scoreOf(flags);
+        const ref = kind === "BLE" ? -59 : (detail.startsWith("5") ? -45 : -40);
+        const dist = Math.min(99, Math.max(0.3, Math.pow(10, (ref - avg) / 27)));
+        return { key: kind + ":" + id, id, kind, name, rssi: avg, avg, dist: +dist.toFixed(1), score,
+                 level: score >= 50 ? "HIGH" : score >= 25 ? "MEDIUM" : "LOW", detail, flags, ageSec: 600 + t | 0, lastSec: 0 };
+      });
+      state.scanning = true; state.warning = null;
+      if (!state.timeline.length) state.timeline = [
+        { time: Date.now(), tag: "HIGH", text: "BLE Apple Find My tag (away from owner) [e1:22:33:44:55:66] Tracker has stayed with you for 14 min" },
+        { time: Date.now() - 6e4, tag: "MEDIUM", text: "WIFI ESP_C1A2B3 [dc:4f:22:12:34:56] Open network; Camera/IoT-style network name" },
+        { time: Date.now() - 9e4, tag: "SYS", text: "Scan started (demo data)" }];
+      render();
+    };
+    tick();
+    demoTimer = setInterval(tick, 1500);
+  }
+
+  function parseCsv(text) {
+    const rows = []; let row = [], cell = "", q = false;
+    for (let i = 0; i < text.length; i++) {
+      const c = text[i];
+      if (q) { if (c === '"') { if (text[i + 1] === '"') { cell += '"'; i++; } else q = false; } else cell += c; }
+      else if (c === '"') q = true;
+      else if (c === ",") { row.push(cell); cell = ""; }
+      else if (c === "\n") { row.push(cell); rows.push(row); row = []; cell = ""; }
+      else if (c !== "\r") cell += c;
+    }
+    if (cell || row.length) { row.push(cell); rows.push(row); }
+    return rows;
+  }
+
+  $("csv").addEventListener("change", async (e) => {
+    const file = e.target.files[0]; if (!file) return;
+    const rows = parseCsv(await file.text());
+    const head = rows.shift() || [];
+    const ix = (n) => head.indexOf(n);
+    if (ix("kind") < 0 || ix("avg_rssi") < 0) {
+      $("banner").style.display = "block";
+      $("banner").innerHTML = "<b>Can't read that file.</b> Pick an <b>airscope_devices_*.csv</b> export (not the timeline file).";
+      e.target.value = ""; return;
+    }
+    clearInterval(demoTimer);
+    mode = "csv";
+    state.devices = rows.filter((r) => r.length >= head.length - 1).map((r) => {
+      const kind = r[ix("kind")], id = r[ix("id")];
+      return { key: kind + ":" + id, id, kind, name: r[ix("name")] || (kind === "WIFI" ? "<hidden SSID>" : r[ix("details")] || "Unknown BLE"),
+        rssi: +r[ix("last_rssi")], avg: +r[ix("avg_rssi")], dist: +r[ix("est_distance_m")], score: +r[ix("score")],
+        level: r[ix("level")], detail: r[ix("details")], flags: (r[ix("flags")] || "").split("; ").filter(Boolean),
+        firstSeen: r[ix("first_seen")], lastSeenAt: r[ix("last_seen")] };
+    });
+    state.timeline = [{ time: Date.now(), tag: "SYS", text: "Loaded " + state.devices.length + " devices from " + file.name }];
+    state.scanning = false; state.warning = null;
+    $("banner").innerHTML = "<b>Viewing export:</b> " + esc(file.name) + " (" + state.devices.length + " devices). Positions are a snapshot.";
+    render();
+  });
+  $("bDemo").onclick = () => { mode = "demo"; state.timeline = []; startDemo(); };
+
+  // ---------- controls ----------
+  const setOff = (b, on) => b.classList.toggle("off", !on);
+  $("bWifi").onclick = () => { showWifi = !showWifi; setOff($("bWifi"), showWifi); render(); };
+  $("bBle").onclick = () => { showBle = !showBle; setOff($("bBle"), showBle); render(); };
+  $("bLog").onclick = () => { showLog = !showLog; $("bLog").textContent = showLog ? "DEVICES" : "LOG"; render(); };
+
+  // ---------- radar ----------
+  let sweep = 0, last = 0, blips = [];
+  const MAX = 40, RINGS = [2, 5, 10, 20, 40];
+  const radiusFor = (d, r) => r * Math.sqrt(Math.min(d, MAX) / MAX);
+
+  function visible() {
+    return state.devices.filter((d) => (d.kind === "WIFI" ? showWifi : showBle));
+  }
+
+  function draw(ts) {
+    const dpr = window.devicePixelRatio || 1;
+    const w = canvas.clientWidth, h = canvas.clientHeight;
+    if (canvas.width !== Math.round(w * dpr)) { canvas.width = Math.round(w * dpr); canvas.height = Math.round(h * dpr); }
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    if (last) sweep = (sweep + (ts - last) * 0.09) % 360;
+    last = ts;
+    const cx = w / 2, cy = h / 2, r = Math.min(w, h) / 2 - 6;
+    ctx.clearRect(0, 0, w, h);
+
+    ctx.strokeStyle = "#1a3f49"; ctx.lineWidth = 1; ctx.font = "10px ui-monospace, Menlo, monospace"; ctx.fillStyle = "#4f8a99";
+    for (const ring of RINGS) {
+      const rr = radiusFor(ring, r);
+      ctx.beginPath(); ctx.arc(cx, cy, rr, 0, Math.PI * 2); ctx.stroke();
+      ctx.fillText(ring + "m", cx + 4, cy - rr + 11);
+    }
+    ctx.beginPath(); ctx.moveTo(cx - r, cy); ctx.lineTo(cx + r, cy); ctx.moveTo(cx, cy - r); ctx.lineTo(cx, cy + r); ctx.stroke();
+    ctx.fillText("WI-FI", cx - r + 4, cy - 4); ctx.fillText("BLE", cx - r + 4, cy + 13);
+
+    // sweep trail
+    const a = (sweep * Math.PI) / 180;
+    if (ctx.createConicGradient) {
+      const g = ctx.createConicGradient(a - Math.PI * 2 * 0.18, cx, cy);
+      g.addColorStop(0, "rgba(0,229,255,0)"); g.addColorStop(0.18, "rgba(0,229,255,0.45)"); g.addColorStop(0.1801, "rgba(0,229,255,0)");
+      ctx.fillStyle = g; ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.fill();
+    }
+    ctx.strokeStyle = "#00e5ff"; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(cx + r * Math.cos(a), cy + r * Math.sin(a)); ctx.stroke();
+
+    blips = [];
+    for (const d of visible()) {
+      const ang = angleFor(d), rad = (ang * Math.PI) / 180, dist = radiusFor(d.dist, r);
+      const x = cx + dist * Math.cos(rad), y = cy + dist * Math.sin(rad);
+      blips.push({ d, x, y });
+      let delta = sweep - ang; if (delta < 0) delta += 360;
+      ctx.globalAlpha = 0.32 + 0.68 * (1 - delta / 360);
+      ctx.fillStyle = COLORS[d.level] || COLORS.LOW;
+      const s = d.level === "HIGH" ? 6.5 : 4.5;
+      ctx.beginPath();
+      if (d.kind === "WIFI") ctx.arc(x, y, s, 0, Math.PI * 2);
+      else { ctx.moveTo(x, y - s * 1.15); ctx.lineTo(x + s * 1.15, y); ctx.lineTo(x, y + s * 1.15); ctx.lineTo(x - s * 1.15, y); ctx.closePath(); }
+      ctx.fill();
+      ctx.globalAlpha = 1;
+      if (d.key === selected) {
+        ctx.strokeStyle = "#fff"; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(x, y, s + 7, 0, Math.PI * 2); ctx.stroke();
+        ctx.fillStyle = "#fff"; ctx.font = "11px ui-monospace, Menlo, monospace"; ctx.fillText(String(d.name).slice(0, 18), x + s + 9, y + 4);
+      } else if (d.level === "HIGH") {
+        ctx.fillStyle = "#4f8a99"; ctx.font = "10px ui-monospace, Menlo, monospace"; ctx.fillText(String(d.name).slice(0, 14), x + s + 4, y + 4);
+      }
+    }
+    ctx.fillStyle = "#00e5ff"; ctx.beginPath(); ctx.arc(cx, cy, 3.5, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = "#4f8a99"; ctx.font = "10px ui-monospace, Menlo, monospace";
+    ctx.fillText("● wifi  ◆ ble  · bearing not measured", 4, h - 4);
+    requestAnimationFrame(draw);
+  }
+
+  canvas.addEventListener("click", (e) => {
+    const rect = canvas.getBoundingClientRect();
+    const x = e.clientX - rect.left, y = e.clientY - rect.top;
+    let best = null, bestD = 32 * 32;
+    for (const b of blips) { const dd = (b.x - x) ** 2 + (b.y - y) ** 2; if (dd < bestD) { bestD = dd; best = b.d; } }
+    if (best) { selected = selected === best.key ? null : best.key; render(); }
+  });
+
+  // ---------- text panels ----------
+  function render() {
+    const vis = visible();
+    const wifi = vis.filter((d) => d.kind === "WIFI").length;
+    const med = vis.filter((d) => d.level === "MEDIUM").length, high = vis.filter((d) => d.level === "HIGH").length;
+    const src = mode === "live" ? (state.scanning ? "● LIVE" : "○ PHONE IDLE") : mode === "csv" ? "▣ EXPORT" : mode === "demo" ? "◌ DEMO" : "… CONNECTING";
+    let s = `${src}   WIFI ${wifi}   BLE ${vis.length - wifi}   MED ${med}   HIGH ${high}`;
+    if (state.warning) s += "\n⚠ " + state.warning;
+    $("status").textContent = s;
+    $("status").className = state.warning ? "warn" : "";
+
+    const sel = state.devices.find((d) => d.key === selected);
+    const tr = $("track");
+    if (!sel) { tr.textContent = "Tap a blip or row to track it"; tr.className = ""; }
+    else {
+      const bars = Math.round((Math.max(0, Math.min(70, sel.avg + 100)) * 10) / 70);
+      tr.textContent = `TRACK ${String(sel.name).slice(0, 18)}  ${sel.avg}dBm ~${Number(sel.dist).toFixed(1)}m\n[${"█".repeat(bars)}${"░".repeat(10 - bars)}]  more bars = closer to the Pixel`;
+      tr.className = sel.level;
+    }
+
+    const list = $("list");
+    if (showLog) {
+      list.innerHTML = state.timeline.length ? state.timeline.map((e) =>
+        `<div class="item ${esc(e.tag)}">${new Date(e.time).toLocaleTimeString([], { hour12: false })} ${esc(e.tag.padEnd(6))} ${esc(e.text)}</div>`).join("")
+        : `<div class="empty">No events yet.</div>`;
+      return;
+    }
+    const sorted = [...vis].sort((a, b) => b.score - a.score || b.avg - a.avg);
+    list.innerHTML = sorted.length ? sorted.map((d) =>
+      `<div class="item ${esc(d.level)}${d.key === selected ? " sel" : ""}" data-key="${esc(d.key)}">` +
+      `${d.kind === "WIFI" ? "WIFI" : "BLE "} ${String(d.avg).padStart(4)}dBm ~${Number(d.dist).toFixed(1).padStart(4)}m ${esc(String(d.name).slice(0, 28))}` +
+      `\n     ${esc(d.id)}  ${esc(d.detail)}  [${d.score}]` +
+      (d.flags && d.flags.length ? `<span class="flags">\n     ! ${esc(d.flags.join("; "))}</span>` : "") + `</div>`).join("")
+      : `<div class="empty">${mode === "live" ? "No devices yet. Give it a few seconds." : "No devices."}</div>`;
+  }
+
+  $("list").addEventListener("click", (e) => {
+    const el = e.target.closest(".item[data-key]");
+    if (!el) return;
+    selected = selected === el.dataset.key ? null : el.dataset.key;
+    render();
+  });
+
+  // ---------- boot ----------
+  requestAnimationFrame(draw);
+  if (key && location.protocol === "http:") poll();
+  else if (key) standalone("This page has to be opened from the phone's own http:// link.");
+  else standalone("No phone connected.");
+})();
+</script>
+</body>
+</html>
