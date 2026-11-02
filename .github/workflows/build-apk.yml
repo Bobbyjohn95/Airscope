@@ -7,6 +7,10 @@ on:
 permissions:
   contents: write # lets the job publish the APK as a release download
 
+concurrency:
+  group: build-apk
+  cancel-in-progress: false
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -18,6 +22,10 @@ jobs:
           distribution: temurin
           java-version: "17"
 
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
       # GitHub's Ubuntu runners ship with the Android SDK (ANDROID_HOME); the Android Gradle
       # plugin downloads the exact platform/build-tools it needs.
       - name: Check Android SDK
@@ -25,30 +33,37 @@ jobs:
 
       - uses: gradle/actions/setup-gradle@v4
 
-      # Uses your own key if the AIRSCOPE_KEYSTORE_B64 / AIRSCOPE_KEYSTORE_PASSWORD repository
-      # secrets exist (same key every build = updates install over each other). Otherwise a
-      # throwaway key is generated for this run (uninstall the old build before installing).
+      # Full vendor tables (IEEE MAC prefixes, Bluetooth SIG companies/UUIDs) for device labels.
+      # Never fails the build; the app has small built-in tables as a fallback.
+      - name: Fetch vendor databases
+        run: python3 tools/fetch_vendor_db.py app/src/main/assets || true
+
+      # Same key every build => the app can update itself. The key is derived from ONE secret,
+      # AIRSCOPE_SIGNING_SEED (a long passphrase you choose). It is never stored in the repo.
+      # Without the secret, a one-time key is used and the in-app updater can't install that build.
       - name: Prepare signing key
         env:
-          KS_B64: ${{ secrets.AIRSCOPE_KEYSTORE_B64 }}
-          KS_PASS: ${{ secrets.AIRSCOPE_KEYSTORE_PASSWORD }}
+          SEED: ${{ secrets.AIRSCOPE_SIGNING_SEED }}
         run: |
-          KS="$RUNNER_TEMP/airscope.jks"
-          if [ -n "$KS_B64" ] && [ -n "$KS_PASS" ]; then
-            echo "$KS_B64" | base64 -d > "$KS"
-            PASS="$KS_PASS"
-            echo "Signing with your saved key"
+          KS="$RUNNER_TEMP/airscope.p12"
+          if [ -n "$SEED" ]; then
+            python3 -m pip install --quiet "cryptography>=42"
+            PASS="$(AIRSCOPE_SIGNING_SEED="$SEED" python3 tools/derive_signing_key.py "$KS")"
+            echo "::add-mask::$PASS"
+            echo "Signing with the key derived from AIRSCOPE_SIGNING_SEED"
           else
             PASS="$(openssl rand -hex 16)"
+            echo "::add-mask::$PASS"
             keytool -genkeypair -keystore "$KS" -storetype PKCS12 -alias airscope -keyalg RSA \
               -keysize 3072 -validity 10000 -storepass "$PASS" -keypass "$PASS" -dname "CN=AirScope Personal"
-            echo "::warning::No signing secrets set: signed with a one-time key. Uninstall the previous AirScope before installing this build."
+            echo "::warning::AIRSCOPE_SIGNING_SEED secret not set: this build uses a one-time key, so it can't auto-update. See README."
           fi
-          echo "::add-mask::$PASS"
           echo "AIRSCOPE_KEYSTORE=$KS" >> "$GITHUB_ENV"
           echo "AIRSCOPE_KEYSTORE_PASSWORD=$PASS" >> "$GITHUB_ENV"
 
       - name: Build APK
+        env:
+          AIRSCOPE_VERSION_CODE: ${{ github.run_number }}
         run: |
           chmod +x ./gradlew
           ./gradlew --no-daemon assembleRelease
@@ -66,11 +81,11 @@ jobs:
           name: AirScope-apk
           path: AirScope.apk
 
-      # Phone-friendly: the APK appears under the repo's "Releases" as a direct .apk download.
+      # The app's updater reads this release. Phone-friendly: tap AirScope.apk to install manually.
       - name: Publish release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release create "build-${{ github.run_number }}" AirScope.apk \
             --title "AirScope build ${{ github.run_number }}" \
-            --notes "Built from ${{ github.sha }}. Open on the Pixel and tap AirScope.apk to install."
+            --notes "Built from ${{ github.sha }}. Open on the Pixel and tap AirScope.apk to install, or let the app update itself."

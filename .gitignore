@@ -6,3 +6,6 @@ local.properties
 .DS_Store
 *.jks
 *.keystore
+__pycache__/
+*.pyc
+app/src/main/assets/db/

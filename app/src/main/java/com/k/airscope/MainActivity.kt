@@ -3,6 +3,7 @@ package com.k.airscope
 import android.Manifest
 import android.app.Activity
 import android.app.AlertDialog
+import android.bluetooth.BluetoothManager
 import android.content.ContentValues
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -10,6 +11,11 @@ import android.graphics.Color
 import android.graphics.Typeface
 import android.graphics.drawable.ColorDrawable
 import android.graphics.drawable.GradientDrawable
+import android.hardware.Sensor
+import android.hardware.SensorEvent
+import android.hardware.SensorEventListener
+import android.hardware.SensorManager
+import android.location.LocationManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -19,55 +25,91 @@ import android.os.Looper
 import android.os.PowerManager
 import android.provider.MediaStore
 import android.provider.Settings
+import android.text.InputType
+import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
 import android.view.WindowInsets
 import android.view.WindowManager
 import android.widget.BaseAdapter
 import android.widget.Button
+import android.widget.EditText
+import android.widget.HorizontalScrollView
 import android.widget.LinearLayout
 import android.widget.ListView
+import android.widget.PopupMenu
+import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import kotlin.math.atan2
+import kotlin.math.cos
+import kotlin.math.sin
 
-class MainActivity : Activity() {
+class MainActivity : Activity(), SensorEventListener {
     companion object {
         private const val REQ_PERMS = 42
     }
 
-    private val store get() = ScanState.store
     private val ui = Handler(Looper.getMainLooper())
     private val timeFmt = SimpleDateFormat("HH:mm:ss", Locale.US)
 
-    private lateinit var radar: RadarView
+    private lateinit var radar: Radar3DView
     private lateinit var status: TextView
     private lateinit var trackBar: TextView
     private lateinit var btnScan: Button
+    private lateinit var btnView: Button
+    private lateinit var btnEnv: Button
     private lateinit var btnLog: Button
+    private lateinit var btnWifi: Button
+    private lateinit var btnBle: Button
     private lateinit var btnHud: Button
     private lateinit var list: ListView
+    private val chips = HashMap<Mode, TextView>()
     private val adapter = RowAdapter()
 
+    private var mode = Mode.ALL
     private var showTimeline = false
     private var selectedKey: String? = null
+    private var lastListVersion = -1L
+    private var lastListAt = 0L
+    private var pendingStart = false
+
+    // Compass (for mapped ALPR bearings)
+    private var sensors: SensorManager? = null
+    private var headingDeg: Float? = null
+    private val rot = FloatArray(9)
+    private val orient = FloatArray(3)
 
     private val ticker = object : Runnable {
         override fun run() {
             refresh()
-            ui.postDelayed(this, 700)
+            ui.postDelayed(this, 250)
         }
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        Prefs.load(this)
+        Engine.init(this)
+        Notifier.ensureChannels(this)
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        mode = runCatching { Mode.valueOf(Prefs.getString(this, "mode", Mode.ALL.name)) }.getOrDefault(Mode.ALL)
         setContentView(buildUi())
+        radar.threeD = Prefs.getBool(this, "view3d", true)
         handleIntent(intent)
-        if (!ScanState.running) requestNeededPermissions()
+        sensors = getSystemService(SensorManager::class.java)
+        Updater.schedule(this)
+        if (System.currentTimeMillis() - Prefs.getLong(this, Updater.PREF_LAST) > 3 * 3_600_000L &&
+            Prefs.getString(this, Updater.PREF_TOKEN).isNotEmpty()
+        ) {
+            Updater.checkAsync(this, manual = false)
+        }
+        if (!Prefs.getBool(this, "setup_seen", false)) {
+            Prefs.putBool(this, "setup_seen", true)
+            ui.post { showSetup(firstRun = true) }
+        }
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -85,20 +127,37 @@ class MainActivity : Activity() {
     override fun onResume() {
         super.onResume()
         ui.post(ticker)
+        sensors?.getDefaultSensor(Sensor.TYPE_ROTATION_VECTOR)?.let {
+            sensors?.registerListener(this, it, SensorManager.SENSOR_DELAY_UI)
+        }
     }
 
     override fun onPause() {
         super.onPause()
         ui.removeCallbacks(ticker) // scanning continues in ScanService
+        sensors?.unregisterListener(this)
     }
 
-    // ---------- permissions ----------
+    override fun onSensorChanged(e: SensorEvent) {
+        SensorManager.getRotationMatrixFromVector(rot, e.values)
+        SensorManager.getOrientation(rot, orient)
+        val az = ((Math.toDegrees(orient[0].toDouble()) + 360) % 360).toFloat()
+        val prev = headingDeg
+        headingDeg = if (prev == null) az else {
+            // Circular low-pass so the radar doesn't jitter
+            val a = Math.toRadians(prev.toDouble()); val b = Math.toRadians(az.toDouble())
+            val x = 0.85 * cos(a) + 0.15 * cos(b); val y = 0.85 * sin(a) + 0.15 * sin(b)
+            ((Math.toDegrees(atan2(y, x)) + 360) % 360).toFloat()
+        }
+        radar.heading = headingDeg
+    }
 
-    private fun wantedPermissions(): List<String> {
-        val p = mutableListOf(
-            Manifest.permission.ACCESS_FINE_LOCATION,
-            Manifest.permission.ACCESS_COARSE_LOCATION,
-        )
+    override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {}
+
+    // ---------- permissions / setup ----------
+
+    private fun runtimePermissions(): List<String> {
+        val p = mutableListOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION)
         if (Build.VERSION.SDK_INT >= 31) p += Manifest.permission.BLUETOOTH_SCAN
         if (Build.VERSION.SDK_INT >= 33) {
             p += Manifest.permission.NEARBY_WIFI_DEVICES
@@ -107,11 +166,11 @@ class MainActivity : Activity() {
         return p
     }
 
-    private fun missing(): List<String> =
-        wantedPermissions().filter { checkSelfPermission(it) != PackageManager.PERMISSION_GRANTED }
+    private fun granted(p: String) = checkSelfPermission(p) == PackageManager.PERMISSION_GRANTED
+    private fun missingRuntime() = runtimePermissions().filterNot { granted(it) }
 
-    private fun requestNeededPermissions(): Boolean {
-        val m = missing()
+    private fun requestRuntime(): Boolean {
+        val m = missingRuntime()
         if (m.isEmpty()) return true
         requestPermissions(m.toTypedArray(), REQ_PERMS)
         return false
@@ -120,79 +179,220 @@ class MainActivity : Activity() {
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
         if (requestCode != REQ_PERMS) return
-        if (checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED) {
-            startScan()
-        } else {
+        if (!granted(Manifest.permission.ACCESS_FINE_LOCATION)) {
             toast("Location permission is required: Android only gives Wi-Fi/BLE scan results to apps with it.")
         }
-        if (Build.VERSION.SDK_INT >= 33 &&
-            checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+        if (pendingStart && granted(Manifest.permission.ACCESS_FINE_LOCATION)) {
+            pendingStart = false
+            ScanService.start(this)
+        }
+        ui.postDelayed({ showSetup(firstRun = false) }, 300)
+    }
+
+    private data class Check(val title: String, val ok: Boolean, val why: String, val fix: (() -> Unit)?)
+
+    private fun checks(): List<Check> {
+        val pm = getSystemService(PowerManager::class.java)
+        val lm = getSystemService(LocationManager::class.java)
+        val bt = getSystemService(BluetoothManager::class.java)?.adapter
+        val list = ArrayList<Check>()
+        list += Check(
+            "Location, Nearby devices & Notifications", missingRuntime().isEmpty(),
+            "Needed to see Wi-Fi/BLE results, measure distance and send alerts.",
+        ) { requestRuntime() }
+        list += Check("Location turned on", lm?.isLocationEnabled == true, "Android hides scan results while Location is off.") {
+            startActivity(Intent(Settings.ACTION_LOCATION_SOURCE_SETTINGS))
+        }
+        list += Check("Bluetooth turned on", bt?.isEnabled == true, "Needed for trackers, Axon, Flock BLE and drones.") {
+            startActivity(Intent(Settings.ACTION_BLUETOOTH_SETTINGS))
+        }
+        list += Check(
+            "Battery: unrestricted", pm.isIgnoringBatteryOptimizations(packageName),
+            "Keeps scanning reliable with the screen off.",
+        ) { requestBatteryExemption() }
+        list += Check(
+            "Network access", granted(Manifest.permission.INTERNET),
+            "Only for mapped ALPRs, app updates and the iPhone HUD (GrapheneOS: Network permission).",
+        ) { openAppSettings() }
+        list += Check(
+            "Allowed to install its own updates", packageManager.canRequestPackageInstalls(),
+            "Lets AirScope update itself from your GitHub releases.",
         ) {
-            toast("Notifications denied: you won't get tracker alerts.")
+            startActivity(Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:$packageName")))
         }
+        list += Check(
+            "Optional: Wi-Fi scan throttling off", false,
+            "Developer options → Networking → Wi-Fi scan throttling → off. Otherwise Wi-Fi updates ~every 30 s.",
+        ) {
+            try { startActivity(Intent(Settings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS)) } catch (_: Exception) {
+                toast("Turn on Developer options first: Settings → About phone → tap Build number 7 times")
+            }
+        }
+        return list
     }
 
-    // ---------- actions ----------
-
-    private fun startScan() {
-        if (ScanState.running) return
-        ScanService.start(this)
-    }
-
-    private fun toggleScan() {
-        if (ScanState.running) {
-            ScanService.stop(this)
-        } else if (requestNeededPermissions()) {
-            startScan()
+    private fun showSetup(firstRun: Boolean) {
+        val items = checks()
+        val box = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(18), dp(8), dp(18), dp(4)) }
+        val dialog = AlertDialog.Builder(this)
+            .setTitle(if (firstRun) "Set up AirScope" else "Setup check")
+            .setView(ScrollView(this).apply { addView(box) })
+            .setPositiveButton("Done", null)
+            .create()
+        if (firstRun) box.addView(text("Tap each item that isn't ✓ yet. AirScope only listens: it never connects to or transmits to other devices.\n", 12.5f, Color.LTGRAY))
+        for (c in items) {
+            val mark = if (c.ok) "✓" else if (c.title.startsWith("Optional")) "○" else "✗"
+            val color = if (c.ok) Ui.GREEN else if (c.title.startsWith("Optional")) Ui.DIM else Ui.AMBER
+            box.addView(text("$mark  ${c.title}", 14f, color, bold = true))
+            box.addView(text(c.why, 12f, Color.LTGRAY).apply { setPadding(dp(22), 0, 0, dp(2)) })
+            if (!c.ok && c.fix != null) {
+                box.addView(button("FIX") { dialog.dismiss(); c.fix.invoke() }.apply {
+                    layoutParams = LinearLayout.LayoutParams(dp(90), ViewGroup.LayoutParams.WRAP_CONTENT).apply { leftMargin = dp(22); bottomMargin = dp(8) }
+                })
+            }
         }
-        ui.postDelayed({ refresh() }, 300)
-    }
-
-    private fun toggleHud() {
-        ScanState.hudEnabled = !ScanState.hudEnabled
-        if (ScanState.hudEnabled && !ScanState.running) {
-            toast("HUD will start with the scan")
-        }
-        ScanService.refreshHud(this)
-        ui.postDelayed({ refresh() }, 400)
-        if (ScanState.hudEnabled) showHudInfo()
-    }
-
-    private fun showHudInfo() {
-        val urls = ScanState.hudUrls()
-        val msg = if (urls.isEmpty()) {
-            "Connect this phone to Wi-Fi (or turn on its hotspot and join it from the iPhone), then tap HUD again."
-        } else {
-            "On your iPhone (same Wi-Fi), open this in Safari:\n\n${urls.joinToString("\n")}\n\n" +
-                "Then Share → Add to Home Screen. The key in the link keeps other people on the network out."
-        }
-        AlertDialog.Builder(this)
-            .setTitle("Web HUD for iPhone")
-            .setMessage(msg)
-            .setPositiveButton("OK", null)
-            .show()
+        dialog.show()
     }
 
     private fun requestBatteryExemption() {
         val pm = getSystemService(PowerManager::class.java)
         if (pm.isIgnoringBatteryOptimizations(packageName)) {
-            toast("Battery: already unrestricted. Screen-off scanning is good to go.")
+            toast("Battery is already unrestricted.")
             return
         }
         try {
-            startActivity(
-                Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, Uri.parse("package:$packageName")),
-            )
+            startActivity(Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, Uri.parse("package:$packageName")))
         } catch (_: Exception) {
             startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
         }
     }
 
+    private fun openAppSettings() {
+        startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$packageName")))
+    }
+
+    // ---------- actions ----------
+
+    private fun toggleScan() {
+        if (Engine.running) {
+            ScanService.stop(this)
+        } else if (requestRuntime()) {
+            ScanService.start(this)
+            val pm = getSystemService(PowerManager::class.java)
+            if (!pm.isIgnoringBatteryOptimizations(packageName) && !Prefs.getBool(this, "asked_battery", false)) {
+                Prefs.putBool(this, "asked_battery", true)
+                requestBatteryExemption()
+            }
+        } else {
+            pendingStart = true
+        }
+    }
+
+    private fun toggleHud() {
+        Engine.hudOn = !Engine.hudOn
+        if (Engine.hudOn && !Engine.running) toast("HUD will start with the scan")
+        ScanService.refreshHud(this)
+        if (Engine.hudOn) showHudInfo()
+    }
+
+    private fun showHudInfo() {
+        val urls = ScanService.hudUrls()
+        val msg = if (urls.isEmpty()) {
+            "Connect this phone to Wi-Fi (or turn on its hotspot and join it from the iPhone), then tap HUD again."
+        } else {
+            "On your iPhone (same Wi-Fi), open this in Safari:\n\n${urls.joinToString("\n")}\n\n" +
+                "Then Share → Add to Home Screen. The key in the link keeps others on the network out.\n\n" +
+                "GrapheneOS: the Network permission must be on for the HUD."
+        }
+        AlertDialog.Builder(this).setTitle("Web HUD for iPhone").setMessage(msg).setPositiveButton("OK", null).show()
+    }
+
+    private fun cycleEnv() {
+        val all = Env.values()
+        Engine.env = all[(Engine.env.ordinal + 1) % all.size]
+        Prefs.save(this)
+        toast("Distance model: ${Engine.env.label}")
+    }
+
+    private fun setMode(m: Mode) {
+        mode = m
+        Prefs.putString(this, "mode", m.name)
+        radar.mode = m
+        for ((k, v) in chips) styleChip(v, k == m)
+        lastListVersion = -1
+    }
+
+    private fun showMore(anchor: View) {
+        val pm = PopupMenu(this, anchor)
+        pm.menu.add(0, 1, 0, "Setup & permissions")
+        pm.menu.add(0, 2, 0, "Updates…")
+        pm.menu.add(0, 3, 0, if (Engine.alprOn) "Mapped ALPR alerts: ON" else "Mapped ALPR alerts: OFF")
+        pm.menu.add(0, 4, 0, "Export CSV")
+        pm.menu.add(0, 5, 0, "Clear session")
+        pm.menu.add(0, 6, 0, "About & limits")
+        pm.setOnMenuItemClickListener {
+            when (it.itemId) {
+                1 -> showSetup(false)
+                2 -> showUpdates()
+                3 -> { Engine.setAlpr(!Engine.alprOn); toast(if (!Engine.alprOn) "Mapped ALPR alerts on" else "Mapped ALPR alerts off") }
+                4 -> export()
+                5 -> { Engine.clear(); selectedKey = null }
+                6 -> showAbout()
+            }
+            true
+        }
+        pm.show()
+    }
+
+    private fun showUpdates() {
+        val box = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(18), dp(8), dp(18), 0) }
+        val build = try { Updater.installedBuild(this) } catch (_: Exception) { 0L }
+        box.addView(text("Installed build: $build\nSource: github.com/${UpdateCheck.OWNER}/${UpdateCheck.REPO} (Releases)\n" +
+            "Checks every ~6 hours when online, installs automatically when you're not scanning.\n", 12.5f, Color.LTGRAY))
+        box.addView(text("GitHub token (read-only, needed for a private repo):", 12.5f, Ui.CYAN))
+        val input = EditText(this).apply {
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
+            hint = "github_pat_…"
+            setText(Prefs.getString(this@MainActivity, Updater.PREF_TOKEN))
+        }
+        box.addView(input)
+        val result = text("Last result: " + Prefs.getString(this, Updater.PREF_RESULT, "never checked"), 12.5f, Ui.AMBER)
+        box.addView(result)
+        val d = AlertDialog.Builder(this)
+            .setTitle("Updates")
+            .setView(box)
+            .setPositiveButton("Save & check now", null)
+            .setNegativeButton("Close", null)
+            .create()
+        d.setOnShowListener {
+            d.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+                Prefs.putString(this, Updater.PREF_TOKEN, input.text.toString().trim())
+                result.text = "Checking…"
+                Updater.checkAsync(this, manual = true) { msg -> ui.post { result.text = "Result: $msg" } }
+            }
+        }
+        d.show()
+    }
+
+    private fun showAbout() {
+        AlertDialog.Builder(this).setTitle("About AirScope").setMessage(
+            "Passive Wi-Fi + Bluetooth observer. It only listens; it never connects, jams or transmits to other devices.\n\n" +
+                "Limits:\n• Phones can't measure direction. Around the ring = device type, not compass bearing " +
+                "(except mapped ALPRs and drones that broadcast GPS).\n" +
+                "• Distance from signal strength is an estimate (shown as a range). Wi-Fi RTT gives real distance for access points that support it.\n" +
+                "• Android can't see Wi-Fi probe requests, so some Flock cameras are invisible over the air: mapped ALPR alerts (OpenStreetMap/DeFlock) cover those.\n" +
+                "• With the screen off Android pauses unfiltered BLE scans; trackers, Flock BLE, Raven and Remote ID keep working.\n\n" +
+                "Vendor DB: ${Engine.dbStatus}\n\n" +
+                "Credits: Flock/Raven signatures from flock-you-esp32 (Apache-2.0) and the research it credits; ALPR map data © OpenStreetMap contributors (ODbL).",
+        ).setPositiveButton("OK", null).show()
+    }
+
     private fun export() {
         val stamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
+        val s = Engine.snapshot
         try {
-            saveToDownloads("airscope_devices_$stamp.csv", Exporter.devicesCsv(store))
-            saveToDownloads("airscope_timeline_$stamp.csv", Exporter.timelineCsv(store))
+            saveToDownloads("airscope_devices_$stamp.csv", Exporter.devicesCsv(s.devices))
+            saveToDownloads("airscope_timeline_$stamp.csv", Exporter.timelineCsv(s.timeline))
             toast("Saved 2 CSV files to Downloads/AirScope")
         } catch (e: Exception) {
             toast("Export failed: ${e.message}")
@@ -205,104 +405,112 @@ class MainActivity : Activity() {
             put(MediaStore.MediaColumns.MIME_TYPE, "text/csv")
             put(MediaStore.MediaColumns.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS + "/AirScope")
         }
-        val uri = contentResolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
-            ?: throw IllegalStateException("could not create file")
-        val out = contentResolver.openOutputStream(uri) ?: throw IllegalStateException("could not open file")
-        out.use { it.write(content.toByteArray(Charsets.UTF_8)) }
+        val uri = contentResolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values) ?: throw IllegalStateException("could not create file")
+        (contentResolver.openOutputStream(uri) ?: throw IllegalStateException("could not open file")).use {
+            it.write(content.toByteArray(Charsets.UTF_8))
+        }
     }
 
     private fun select(key: String) {
         selectedKey = if (selectedKey == key) null else key
-        refresh()
+        lastListVersion = -1
     }
 
-    private fun showDetails(d: Device) {
-        val now = System.currentTimeMillis()
+    private fun showDetails(d: DeviceView) {
         val msg = buildString {
-            appendLine("Type: ${if (d.kind == Kind.WIFI) "Wi-Fi access point" else "Bluetooth LE"}")
-            appendLine("ID: ${d.id}")
-            if (d.name.isNotBlank()) appendLine("Name: ${d.name}")
-            appendLine("Details: ${d.detail()}")
-            appendLine("Signal: ${d.rssi} dBm now, ${d.smoothRssi} avg")
-            appendLine("Distance: ~${fmt1(d.distanceMeters())} m (rough)")
-            appendLine("Seen for: ${(now - d.firstSeen) / 60_000} min, ${d.readings} readings")
+            appendLine("Type: ${d.category.label}")
+            if (d.vendor.isNotBlank()) appendLine("Maker: ${d.vendor}")
+            if (d.name.isNotBlank()) appendLine("Broadcast name: ${d.name}")
+            if (d.kind != Kind.MAP) appendLine("Signal: ${d.rssi} dBm now · ${d.avg} dBm smoothed")
+            appendLine("Distance: ~${fmtDist(d.dist)} m (likely ${fmtDist(d.lo)}–${fmtDist(d.hi)} m)")
+            appendLine("Method: ${d.distSrc}")
+            if (d.kind != Kind.MAP) appendLine("Seen for: ${d.ageSec / 60} min ${d.ageSec % 60} s")
             appendLine("Score: ${d.score} (${d.level})")
+            if (d.facts.isNotEmpty()) {
+                appendLine()
+                d.facts.forEach { appendLine("${it.first}: ${it.second}") }
+            }
             if (d.flags.isNotEmpty()) {
                 appendLine()
                 d.flags.forEach { appendLine("• $it") }
             }
         }
-        AlertDialog.Builder(this)
-            .setTitle(d.displayName())
+        val b = AlertDialog.Builder(this)
+            .setTitle(d.title)
             .setMessage(msg)
-            .setPositiveButton("Track") { _, _ ->
-                selectedKey = d.key
-                refresh()
-            }
-            .setNeutralButton(if (d.trusted) "Unmark mine" else "Mark as mine") { _, _ ->
-                store.setTrusted(d, !d.trusted)
-                Prefs.saveTrusted(this)
-                refresh()
-            }
+            .setPositiveButton("Track") { _, _ -> selectedKey = d.key; lastListVersion = -1 }
             .setNegativeButton("Close", null)
-            .show()
+        if (d.kind != Kind.MAP) {
+            b.setNeutralButton(if (d.trusted) "Unmark mine" else "Mark as mine") { _, _ -> Engine.setTrusted(d.key, !d.trusted) }
+        }
+        b.show()
     }
 
     // ---------- rendering ----------
 
     private fun refresh() {
-        val now = System.currentTimeMillis()
-        val act = store.active(now).filter {
-            (it.kind == Kind.WIFI && ScanState.wifiEnabled) || (it.kind == Kind.BLE && ScanState.bleEnabled)
-        }
-        radar.update(act, selectedKey)
+        val s = Engine.snapshot
+        val vis = s.devices.filter { mode.matches(it.category) }
+        radar.update(s.devices, selectedKey)
 
-        val wifiN = act.count { it.kind == Kind.WIFI }
-        val high = act.count { it.level == Level.HIGH }
-        val med = act.count { it.level == Level.MEDIUM }
+        val wifiN = s.devices.count { it.kind == Kind.WIFI }
+        val bleN = s.devices.count { it.kind == Kind.BLE }
+        val police = s.devices.count { it.category == Category.POLICE }
         val sb = StringBuilder()
-        sb.append(if (ScanState.running) "● SCANNING" else "○ IDLE")
-        sb.append("   WIFI $wifiN   BLE ${act.size - wifiN}   MED $med   HIGH $high")
-        if (ScanState.hudEnabled && ScanState.running) {
-            ScanState.hudUrls().firstOrNull()?.let { sb.append("\nHUD ").append(it) }
-        }
-        ScanState.warning?.let { sb.append("\n⚠ ").append(it) }
+        sb.append(if (s.scanning) "● SCANNING" else "○ IDLE")
+        sb.append("  WIFI $wifiN  BLE $bleN  HIGH ${s.devices.count { it.level == Level.HIGH }}")
+        if (police > 0) sb.append("  POLICE $police")
+        sb.append("\n").append(mode.label).append(": ").append(vis.size).append(" · ").append(Engine.env.label)
+        if (Engine.alprOn && (mode == Mode.POLICE || mode == Mode.ALL) && s.alprStatus.isNotEmpty()) sb.append(" · ALPR map: ").append(s.alprStatus)
+        if (Engine.hudOn && s.scanning) ScanService.hudUrls().firstOrNull()?.let { sb.append("\nHUD ").append(it) }
+        s.warning?.let { sb.append("\n⚠ ").append(it) }
         status.text = sb.toString()
-        status.setTextColor(if (ScanState.warning != null) Ui.AMBER else Ui.DIM)
+        status.setTextColor(if (s.warning != null) Ui.AMBER else Ui.DIM)
 
-        btnScan.text = if (ScanState.running) "STOP" else "START"
-        btnHud.alpha = if (ScanState.hudEnabled) 1f else 0.45f
+        btnScan.text = if (s.scanning) "STOP" else "START"
+        btnView.text = if (radar.threeD) "3D" else "2D"
+        btnEnv.text = "ENV:" + Engine.env.name
         btnLog.text = if (showTimeline) "RADAR" else "LOG"
+        btnWifi.alpha = if (Engine.wifiOn) 1f else 0.4f
+        btnBle.alpha = if (Engine.bleOn) 1f else 0.4f
+        btnHud.alpha = if (Engine.hudOn) 1f else 0.4f
 
-        adapter.items = if (showTimeline) {
-            store.timeline.toList()
-        } else {
-            act.sortedWith(compareByDescending<Device> { it.score }.thenByDescending { it.smoothRssi })
+        updateTrack(s)
+        val now = System.currentTimeMillis()
+        if (s.version != lastListVersion && now - lastListAt > 900) {
+            lastListVersion = s.version
+            lastListAt = now
+            adapter.items = if (showTimeline) s.timeline else vis
+            adapter.notifyDataSetChanged()
         }
-        adapter.notifyDataSetChanged()
-        updateTrack(now)
     }
 
-    private fun updateTrack(now: Long) {
-        val d = selectedKey?.let { store.devices[it] }
+    private fun updateTrack(s: Snapshot) {
+        val d = selectedKey?.let { k -> s.devices.firstOrNull { it.key == k } }
         if (d == null) {
-            trackBar.text = "Tap a blip or row to track it · long-press a row for details"
+            trackBar.text = if (selectedKey != null) "Signal lost: keep moving slowly, or tap another device" else
+                "Tap a device to track it · long-press a row for full details"
             trackBar.setTextColor(Ui.DIM)
             return
         }
-        val stale = now - d.lastSeen > 15_000
-        val bars = ((d.smoothRssi + 100).coerceIn(0, 70) * 10) / 70
-        val meter = "█".repeat(bars) + "░".repeat(10 - bars)
-        trackBar.text = "TRACK ${d.displayName().take(16)}  ${d.smoothRssi}dBm ~${fmt1(d.distanceMeters())}m\n[$meter]" +
-            if (stale) "  signal lost" else "  move around: more bars = closer"
+        if (d.kind == Kind.MAP) {
+            trackBar.text = "TRACK ${d.title.take(22)}  ${fmtDist(d.dist)} m ${Geo.cardinal(d.bearing!!.toDouble())}\n" +
+                (headingDeg?.let { "Turn until it's at the top of the radar" } ?: "Compass unavailable: shown north-up")
+            trackBar.setTextColor(Ui.VIOLET)
+            return
+        }
+        val bars = ((d.avg + 100).coerceIn(0, 70) * 12) / 70
+        trackBar.text = "TRACK ${d.title.take(20)}  ${d.avg}dBm  ~${fmtDist(d.dist)}m (${fmtDist(d.lo)}–${fmtDist(d.hi)})\n" +
+            "[" + "█".repeat(bars) + "░".repeat(12 - bars) + "]  more bars = closer"
         trackBar.setTextColor(Ui.levelColor(d.level))
     }
 
-    private fun deviceLine(d: Device): String {
-        val tag = if (d.kind == Kind.WIFI) "WIFI" else "BLE "
-        val flags = if (d.flags.isEmpty()) "" else "\n     ! " + d.flags.joinToString("; ")
-        return "$tag ${d.smoothRssi.toString().padStart(4)}dBm ~${fmt1(d.distanceMeters()).padStart(4)}m " +
-            "${d.displayName().take(26)}\n     ${d.id}  ${d.detail()}  [${d.score}]$flags"
+    private fun deviceLine(d: DeviceView): String {
+        val icon = when (d.kind) { Kind.WIFI -> "●"; Kind.BLE -> "◆"; Kind.MAP -> "■" }
+        val sig = if (d.kind == Kind.MAP) "map" else "${d.avg}dBm"
+        val flags = if (d.flags.isEmpty()) "" else "\n   ! " + d.flags.take(3).joinToString("; ")
+        return "$icon ${d.title.take(34)}\n   ${sig.padEnd(7)} ~${fmtDist(d.dist)}m (${fmtDist(d.lo)}–${fmtDist(d.hi)})  " +
+            "${d.category.short}${if (d.vendor.isNotBlank() && !d.title.contains(d.vendor)) " · " + d.vendor.take(18) else ""}  [${d.score}]$flags"
     }
 
     private inner class RowAdapter : BaseAdapter() {
@@ -318,21 +526,14 @@ class MainActivity : Activity() {
                 setPadding(dp(4), dp(6), dp(4), dp(6))
             }
             when (val item = items[position]) {
-                is Device -> {
+                is DeviceView -> {
                     tv.text = deviceLine(item)
-                    tv.setTextColor(Ui.levelColor(item.level))
+                    tv.setTextColor(if (item.kind == Kind.MAP) Ui.VIOLET else Ui.levelColor(item.level))
                     tv.setBackgroundColor(if (item.key == selectedKey) Ui.SELECT_BG else Color.TRANSPARENT)
                 }
                 is DeviceStore.LogEntry -> {
                     tv.text = "${timeFmt.format(Date(item.time))} ${item.tag.padEnd(6)} ${item.text}"
-                    tv.setTextColor(
-                        when (item.tag) {
-                            "HIGH" -> Ui.RED
-                            "MEDIUM" -> Ui.AMBER
-                            "SYS" -> Ui.CYAN
-                            else -> Ui.DIM
-                        },
-                    )
+                    tv.setTextColor(when (item.tag) { "HIGH" -> Ui.RED; "MEDIUM" -> Ui.AMBER; "SYS" -> Ui.CYAN; else -> Ui.DIM })
                     tv.setBackgroundColor(Color.TRANSPARENT)
                 }
             }
@@ -347,7 +548,7 @@ class MainActivity : Activity() {
             setPadding(dp(10), dp(8), dp(10), dp(8))
         }
         if (Build.VERSION.SDK_INT >= 30) {
-            window.setDecorFitsSystemWindows(false)
+            @Suppress("DEPRECATION") window.setDecorFitsSystemWindows(false)
             root.setOnApplyWindowInsetsListener { v, insets ->
                 val b = insets.getInsets(WindowInsets.Type.systemBars())
                 v.setPadding(b.left + dp(10), b.top + dp(8), b.right + dp(10), b.bottom + dp(8))
@@ -359,48 +560,58 @@ class MainActivity : Activity() {
         status = text("", 11.5f, Ui.DIM)
         root.addView(status)
 
-        radar = RadarView(this).apply { onSelect = { d -> select(d.key) } }
-        root.addView(radar, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1.2f))
+        // Mode chips
+        val chipRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; setPadding(0, dp(4), 0, dp(2)) }
+        for (m in Mode.values()) {
+            val chip = TextView(this).apply {
+                text = m.label
+                textSize = 11f
+                typeface = Typeface.MONOSPACE
+                gravity = Gravity.CENTER
+                setPadding(dp(10), dp(6), dp(10), dp(6))
+                setOnClickListener { setMode(m) }
+            }
+            chips[m] = chip
+            styleChip(chip, m == mode)
+            chipRow.addView(chip, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { rightMargin = dp(6) })
+        }
+        root.addView(HorizontalScrollView(this).apply { isHorizontalScrollBarEnabled = false; addView(chipRow) })
+
+        radar = Radar3DView(this).apply {
+            onSelect = { d ->
+                select(d.key)
+                if (selectedKey == d.key) toast(d.title)
+            }
+            mode = this@MainActivity.mode
+        }
+        root.addView(radar, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1.25f))
 
         trackBar = text("", 12f, Ui.DIM).apply { setPadding(0, dp(4), 0, dp(4)) }
         root.addView(trackBar)
 
         btnScan = button("START") { toggleScan() }
-        btnLog = button("LOG") {
-            showTimeline = !showTimeline
-            refresh()
+        btnView = button("3D") {
+            radar.threeD = !radar.threeD
+            Prefs.putBool(this, "view3d", radar.threeD)
         }
+        btnEnv = button("ENV") { cycleEnv() }
+        btnLog = button("LOG") { showTimeline = !showTimeline; lastListVersion = -1 }
+        root.addView(row(btnScan, btnView, btnEnv, btnLog))
+
+        btnWifi = button("WI-FI") { Engine.wifiOn = !Engine.wifiOn; Prefs.save(this) }
+        btnBle = button("BLE") { Engine.bleOn = !Engine.bleOn; Prefs.save(this) }
         btnHud = button("HUD") { toggleHud() }
-        root.addView(
-            row(
-                btnScan,
-                toggle("WI-FI", ScanState.wifiEnabled) { ScanState.wifiEnabled = it },
-                toggle("BLE", ScanState.bleEnabled) { ScanState.bleEnabled = it },
-                btnLog,
-            ),
-        )
-        root.addView(
-            row(
-                btnHud,
-                button("BATTERY") { requestBatteryExemption() },
-                button("EXPORT") { export() },
-                button("CLEAR") {
-                    store.clear()
-                    selectedKey = null
-                    refresh()
-                },
-            ),
-        )
+        val btnMore = button("MORE ▾") {}
+        btnMore.setOnClickListener { showMore(it) }
+        root.addView(row(btnWifi, btnBle, btnHud, btnMore))
 
         list = ListView(this).apply {
             divider = ColorDrawable(Ui.GRID)
             dividerHeight = 1
             adapter = this@MainActivity.adapter
-            setOnItemClickListener { _, _, pos, _ ->
-                (this@MainActivity.adapter.items.getOrNull(pos) as? Device)?.let { select(it.key) }
-            }
+            setOnItemClickListener { _, _, pos, _ -> (this@MainActivity.adapter.items.getOrNull(pos) as? DeviceView)?.let { select(it.key) } }
             setOnItemLongClickListener { _, _, pos, _ ->
-                (this@MainActivity.adapter.items.getOrNull(pos) as? Device)?.let { showDetails(it) }
+                (this@MainActivity.adapter.items.getOrNull(pos) as? DeviceView)?.let { showDetails(it) }
                 true
             }
         }
@@ -408,9 +619,18 @@ class MainActivity : Activity() {
         return root
     }
 
-    // ---------- small view helpers ----------
+    // ---------- view helpers ----------
 
     private fun dp(v: Int): Int = (v * resources.displayMetrics.density).toInt()
+
+    private fun styleChip(v: TextView, on: Boolean) {
+        v.setTextColor(if (on) Ui.BG else Ui.CYAN)
+        v.background = GradientDrawable().apply {
+            setStroke(dp(1), Ui.CYAN)
+            setColor(if (on) Ui.CYAN else Color.TRANSPARENT)
+            cornerRadius = dp(14).toFloat()
+        }
+    }
 
     private fun text(s: String, size: Float, color: Int, bold: Boolean = false) = TextView(this).apply {
         text = s
@@ -430,25 +650,9 @@ class MainActivity : Activity() {
             setColor(Color.TRANSPARENT)
             cornerRadius = dp(2).toFloat()
         }
-        minHeight = 0
-        minimumHeight = 0
-        minWidth = 0
-        minimumWidth = 0
+        minHeight = 0; minimumHeight = 0; minWidth = 0; minimumWidth = 0
         setPadding(dp(4), dp(8), dp(4), dp(8))
         setOnClickListener { onClick() }
-    }
-
-    private fun toggle(label: String, initial: Boolean, onChange: (Boolean) -> Unit): Button {
-        var on = initial
-        val b = button(label) {}
-        b.alpha = if (on) 1f else 0.45f
-        b.setOnClickListener {
-            on = !on
-            b.alpha = if (on) 1f else 0.45f
-            onChange(on)
-            refresh()
-        }
-        return b
     }
 
     private fun row(vararg views: View): LinearLayout = LinearLayout(this).apply {

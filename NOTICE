@@ -1,0 +1,20 @@
+AirScope
+Personal passive Wi-Fi / Bluetooth observation app.
+
+Third-party data used:
+
+1. Flock Safety / Raven / SoundThinking detection signatures (app/src/main/java/com/k/airscope/Signatures.kt)
+   are derived from flock-you-esp32, fy_detect.h
+   https://github.com/simeononsecurity/flock-you-esp32
+   Licensed under the Apache License, Version 2.0 (http://www.apache.org/licenses/LICENSE-2.0).
+   That project credits: @NitekryDPaul, DeFlockJoplin, dougborg, wgreenberg, GainSec, avenstewart,
+   and colonelpanichacks/flock-you.
+
+2. Mapped ALPR cameras and gunshot detectors are downloaded at runtime from OpenStreetMap via the
+   Overpass API (tags man_made=surveillance + surveillance:type=ALPR / gunshot_detector, as used by DeFlock).
+   Map data (c) OpenStreetMap contributors, available under the Open Database License (ODbL).
+
+3. Vendor tables fetched at build time: IEEE Registration Authority MA-L registry and the
+   Bluetooth SIG Assigned Numbers (company identifiers, 16-bit UUIDs).
+
+4. Axon (Taser International) BLE prefix 00:25:DF per public research (RFParty / ABC News coverage).

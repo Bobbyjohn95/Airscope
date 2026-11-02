@@ -14,20 +14,31 @@ import android.os.Build
 object Notifier {
     private const val CH_SCAN = "scan"
     private const val CH_ALERT = "alerts"
+    private const val CH_POLICE = "police"
+    private const val CH_UPDATE = "updates"
     const val EXTRA_SELECT = "select_key"
+    const val UPDATE_ID = 900
 
     fun ensureChannels(ctx: Context) {
         val nm = ctx.getSystemService(NotificationManager::class.java)
         nm.createNotificationChannel(
             NotificationChannel(CH_SCAN, "Background scanning", NotificationManager.IMPORTANCE_LOW).apply {
-                description = "Shown while AirScope is scanning"
-                setShowBadge(false)
+                description = "Shown while AirScope is scanning"; setShowBadge(false)
             },
         )
         nm.createNotificationChannel(
-            NotificationChannel(CH_ALERT, "Threat alerts", NotificationManager.IMPORTANCE_HIGH).apply {
-                description = "Trackers following you and suspicious networks"
-                enableVibration(true)
+            NotificationChannel(CH_ALERT, "Tracker & threat alerts", NotificationManager.IMPORTANCE_HIGH).apply {
+                description = "Trackers following you and high-risk signals"; enableVibration(true)
+            },
+        )
+        nm.createNotificationChannel(
+            NotificationChannel(CH_POLICE, "Police, ALPR & drone alerts", NotificationManager.IMPORTANCE_HIGH).apply {
+                description = "Flock / ALPR cameras, Axon equipment, gunshot detectors, drones"; enableVibration(true)
+            },
+        )
+        nm.createNotificationChannel(
+            NotificationChannel(CH_UPDATE, "App updates", NotificationManager.IMPORTANCE_DEFAULT).apply {
+                description = "New AirScope builds from GitHub"
             },
         )
     }
@@ -36,20 +47,16 @@ object Notifier {
         Build.VERSION.SDK_INT < 33 ||
             ctx.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
 
-    private fun openApp(ctx: Context, requestCode: Int, selectKey: String?): PendingIntent {
+    fun openApp(ctx: Context, requestCode: Int, selectKey: String?): PendingIntent {
         val i = Intent(ctx, MainActivity::class.java)
             .addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP)
         if (selectKey != null) i.putExtra(EXTRA_SELECT, selectKey)
-        return PendingIntent.getActivity(
-            ctx, requestCode, i,
-            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
-        )
+        return PendingIntent.getActivity(ctx, requestCode, i, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
     }
 
     fun ongoing(ctx: Context, text: String): Notification {
         val stop = PendingIntent.getService(
-            ctx, 1,
-            Intent(ctx, ScanService::class.java).setAction(ScanService.ACTION_STOP),
+            ctx, 1, Intent(ctx, ScanService::class.java).setAction(ScanService.ACTION_STOP),
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
         )
         val b = Notification.Builder(ctx, CH_SCAN)
@@ -60,49 +67,68 @@ object Notifier {
             .setOnlyAlertOnce(true)
             .setCategory(Notification.CATEGORY_SERVICE)
             .setContentIntent(openApp(ctx, 0, null))
-            .addAction(
-                Notification.Action.Builder(
-                    Icon.createWithResource(ctx, R.drawable.ic_stat_radar), "Stop", stop,
-                ).build(),
-            )
-        if (Build.VERSION.SDK_INT >= 31) {
-            b.setForegroundServiceBehavior(Notification.FOREGROUND_SERVICE_IMMEDIATE)
-        }
+            .addAction(Notification.Action.Builder(Icon.createWithResource(ctx, R.drawable.ic_stat_radar), "Stop", stop).build())
+        if (Build.VERSION.SDK_INT >= 31) b.setForegroundServiceBehavior(Notification.FOREGROUND_SERVICE_IMMEDIATE)
         return b.build()
     }
 
     fun updateOngoing(ctx: Context, text: String) {
         if (!canPost(ctx)) return
         try {
-            ctx.getSystemService(NotificationManager::class.java)
-                .notify(ScanService.NOTIF_ID, ongoing(ctx, text))
-        } catch (_: SecurityException) {
-        }
+            ctx.getSystemService(NotificationManager::class.java).notify(ScanService.NOTIF_ID, ongoing(ctx, text))
+        } catch (_: SecurityException) { }
     }
 
-    fun alert(ctx: Context, d: Device) {
+    private fun post(ctx: Context, channel: String, id: Int, title: String, text: String, intent: PendingIntent) {
         if (!canPost(ctx)) return
-        val tracker = d.bleType in BleClassifier.TRACKERS
-        val title = when {
-            tracker && d.level == Level.HIGH -> "Tracker may be traveling with you"
-            tracker -> "Tracker detected nearby"
-            else -> "High-risk signal: ${d.displayName()}"
-        }
-        val text = "${d.displayName()} · ${d.smoothRssi} dBm · ~${fmt1(d.distanceMeters())} m\n" +
-            d.flags.joinToString(" · ")
-        val id = 1000 + (d.key.hashCode() and 0x7fffffff) % 100_000
-        val n = Notification.Builder(ctx, CH_ALERT)
+        val n = Notification.Builder(ctx, channel)
             .setSmallIcon(R.drawable.ic_stat_radar)
             .setContentTitle(title)
             .setContentText(text)
-            .setStyle(Notification.BigTextStyle().bigText(text + "\n\nTap to open and track its signal."))
+            .setStyle(Notification.BigTextStyle().bigText(text))
             .setAutoCancel(true)
             .setCategory(Notification.CATEGORY_STATUS)
-            .setContentIntent(openApp(ctx, id, d.key))
+            .setContentIntent(intent)
             .build()
-        try {
-            ctx.getSystemService(NotificationManager::class.java).notify(id, n)
-        } catch (_: SecurityException) {
+        try { ctx.getSystemService(NotificationManager::class.java).notify(id, n) } catch (_: SecurityException) { }
+    }
+
+    /** Called from the engine thread with a live Device. */
+    fun deviceAlert(ctx: Context, d: Device, distText: String) {
+        val title = when {
+            d.category == Category.POLICE -> when {
+                d.label.startsWith("Axon") -> "Police equipment nearby (Axon)"
+                d.label.startsWith("Flock") -> "Flock Safety device detected"
+                d.label.startsWith("Raven") -> "Gunshot detector nearby"
+                d.label.startsWith("Fleet") -> "Fleet router nearby (possible police vehicle)"
+                else -> d.label + " nearby"
+            }
+            d.category == Category.DRONE -> "Drone nearby: ${d.label}"
+            d.bleType in Classifier.TRACKERS && d.level == Level.HIGH -> "Tracker may be traveling with you"
+            d.bleType in Classifier.TRACKERS -> "Tracker detected nearby"
+            else -> "High-risk signal: ${d.displayName()}"
         }
+        val text = "${d.displayName()} · ${d.smoothRssi} dBm · $distText\n" + d.flags.joinToString(" · ") +
+            "\n\nTap to open and track its signal."
+        val id = 1000 + (d.key.hashCode() and 0x7fffffff) % 100_000
+        val ch = if (d.category == Category.POLICE || d.category == Category.DRONE) CH_POLICE else CH_ALERT
+        post(ctx, ch, id, title, text, openApp(ctx, id, d.key))
+    }
+
+    fun alprAlert(ctx: Context, h: AlprHit, course: Double?) {
+        val a = h.alpr
+        val where = if (course != null && Geo.angleDiff(h.bearing, course) <= 45) "ahead" else Geo.cardinal(h.bearing)
+        val title = "${a.title().removeSuffix(" (mapped)")} ${fmtDist(h.dist)} m $where"
+        val text = listOfNotNull(
+            a.operator?.let { "Operator: $it" },
+            a.direction?.let { "Camera faces: $it" },
+            "Mapped on OpenStreetMap (DeFlock).",
+        ).joinToString("\n")
+        val id = 200_000 + (a.id % 100_000).toInt()
+        post(ctx, CH_POLICE, id, title, text, openApp(ctx, id, "MAP:${a.id}"))
+    }
+
+    fun update(ctx: Context, title: String, text: String, intent: PendingIntent? = null) {
+        post(ctx, CH_UPDATE, UPDATE_ID, title, text, intent ?: openApp(ctx, UPDATE_ID, null))
     }
 }

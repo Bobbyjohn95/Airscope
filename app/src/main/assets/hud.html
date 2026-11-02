@@ -10,48 +10,47 @@
 <meta name="theme-color" content="#05090c">
 <title>AirScope HUD</title>
 <style>
-  :root {
-    --bg: #05090c; --panel: #0a1419; --cyan: #00e5ff; --dim: #4f8a99; --grid: #1a3f49;
-    --green: #39ff88; --amber: #ffc400; --red: #ff3b5c; --sel: #14303a;
-  }
-  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
-  html, body { margin: 0; background: var(--bg); color: var(--cyan);
-    font: 13px/1.35 ui-monospace, "SF Mono", Menlo, Consolas, monospace; }
-  body { padding: calc(env(safe-area-inset-top) + 8px) calc(env(safe-area-inset-right) + 10px)
-         calc(env(safe-area-inset-bottom) + 10px) calc(env(safe-area-inset-left) + 10px);
-         max-width: 720px; margin: 0 auto; }
-  h1 { font-size: 16px; margin: 0; letter-spacing: .08em; }
-  #status { color: var(--dim); font-size: 12px; margin: 2px 0 6px; min-height: 16px; white-space: pre-wrap; }
-  #status.warn { color: var(--amber); }
-  #banner { border: 1px solid var(--grid); background: var(--panel); padding: 8px 10px; margin-bottom: 8px;
-            color: #b8d8df; font-size: 12px; display: none; }
-  #banner b { color: var(--cyan); }
-  #radarWrap { position: relative; width: 100%; aspect-ratio: 1 / 1; max-height: 56vh; margin: 0 auto; }
-  canvas { width: 100%; height: 100%; display: block; touch-action: manipulation; }
-  #track { margin: 6px 0; min-height: 34px; color: var(--dim); font-size: 12px; white-space: pre-wrap; }
-  .row { display: flex; gap: 6px; margin: 4px 0; }
-  button, label.btn { flex: 1; background: transparent; color: var(--cyan); border: 1px solid var(--cyan);
-           font: inherit; font-size: 12px; padding: 9px 4px; border-radius: 2px; text-align: center; cursor: pointer; }
-  button.off { opacity: .45; }
-  input[type=file] { display: none; }
-  #list { border-top: 1px solid var(--grid); margin-top: 6px; }
-  .item { padding: 7px 4px; border-bottom: 1px solid var(--grid); white-space: pre-wrap; word-break: break-word; font-size: 12px; }
-  .item.sel { background: var(--sel); }
-  .LOW { color: var(--green); } .MEDIUM { color: var(--amber); } .HIGH { color: var(--red); }
-  .SYS { color: var(--cyan); } .SCAN { color: var(--dim); }
-  .flags { color: inherit; opacity: .85; }
-  .empty { color: var(--dim); padding: 14px 4px; }
+  :root { --bg:#05090c; --panel:#0a1419; --cyan:#00e5ff; --dim:#4f8a99; --grid:#1a3f49;
+          --green:#39ff88; --amber:#ffc400; --red:#ff3b5c; --violet:#b388ff; --sel:#14303a; }
+  * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  html,body { margin:0; background:var(--bg); color:var(--cyan); font:13px/1.35 ui-monospace,"SF Mono",Menlo,Consolas,monospace; }
+  body { padding:calc(env(safe-area-inset-top) + 8px) calc(env(safe-area-inset-right) + 10px)
+         calc(env(safe-area-inset-bottom) + 10px) calc(env(safe-area-inset-left) + 10px); max-width:720px; margin:0 auto; }
+  h1 { font-size:16px; margin:0; letter-spacing:.08em; }
+  #status { color:var(--dim); font-size:12px; margin:2px 0 6px; min-height:16px; white-space:pre-wrap; }
+  #status.warn { color:var(--amber); }
+  #banner { border:1px solid var(--grid); background:var(--panel); padding:8px 10px; margin-bottom:8px; color:#b8d8df; font-size:12px; display:none; }
+  #banner b { color:var(--cyan); }
+  #chips { display:flex; gap:6px; overflow-x:auto; padding:2px 0 6px; scrollbar-width:none; }
+  #chips::-webkit-scrollbar { display:none; }
+  .chip { flex:0 0 auto; border:1px solid var(--cyan); border-radius:14px; padding:5px 10px; font-size:11px; color:var(--cyan); background:transparent; font-family:inherit; }
+  .chip.on { background:var(--cyan); color:var(--bg); }
+  #radarWrap { position:relative; width:100%; aspect-ratio:1/1; max-height:58vh; margin:0 auto; }
+  canvas { width:100%; height:100%; display:block; touch-action:none; }
+  #track { margin:6px 0; min-height:34px; color:var(--dim); font-size:12px; white-space:pre-wrap; }
+  .row { display:flex; gap:6px; margin:4px 0; }
+  button,label.btn { flex:1; background:transparent; color:var(--cyan); border:1px solid var(--cyan); font:inherit; font-size:12px;
+           padding:9px 4px; border-radius:2px; text-align:center; cursor:pointer; }
+  button.off { opacity:.45; }
+  input[type=file] { display:none; }
+  #list { border-top:1px solid var(--grid); margin-top:6px; }
+  .item { padding:7px 4px; border-bottom:1px solid var(--grid); white-space:pre-wrap; word-break:break-word; font-size:12px; }
+  .item.sel { background:var(--sel); }
+  .LOW { color:var(--green); } .MEDIUM { color:var(--amber); } .HIGH { color:var(--red); } .MAP { color:var(--violet); }
+  .SYS { color:var(--cyan); } .SCAN { color:var(--dim); }
+  .facts { color:#9fbfc7; opacity:.95; }
+  .empty { color:var(--dim); padding:14px 4px; }
 </style>
 </head>
 <body>
   <h1>AIRSCOPE // REMOTE HUD</h1>
   <div id="status">connecting…</div>
   <div id="banner"></div>
+  <div id="chips"></div>
   <div id="radarWrap"><canvas id="radar"></canvas></div>
-  <div id="track">Tap a blip or row to track it</div>
+  <div id="track">Tap a device to track it</div>
   <div class="row">
-    <button id="bWifi">WI-FI</button>
-    <button id="bBle">BLE</button>
+    <button id="b3d">3D</button>
     <button id="bLog">LOG</button>
   </div>
   <div class="row" id="standaloneRow" style="display:none">
@@ -63,28 +62,38 @@
 <script>
 (() => {
   "use strict";
-  const COLORS = { LOW: "#39ff88", MEDIUM: "#ffc400", HIGH: "#ff3b5c" };
+  const COLORS = { LOW:"#39ff88", MEDIUM:"#ffc400", HIGH:"#ff3b5c" };
+  const CATS = [ ["PHONE","PHONE"],["WEARABLE","WEAR"],["TRACKER","TRACK"],["CAMERA_IOT","CAM/IOT"],
+                 ["VEHICLE","VEHICLE"],["DRONE","DRONE"],["POLICE","POLICE"],["NETWORK","NET"] ];
+  const MODES = [ ["ALL",null],["PHONES","PHONE"],["WEAR/AUDIO","WEARABLE"],["TRACKERS","TRACKER"],["CAMS/IOT","CAMERA_IOT"],
+                  ["VEHICLES","VEHICLE"],["DRONES","DRONE"],["POLICE/ALPR","POLICE"],["NETWORKS","NETWORK"] ];
   const params = new URLSearchParams(location.search);
   const key = params.get("k");
-  const state = { devices: [], timeline: [], scanning: false, warning: null, time: 0 };
-  let mode = "connecting";          // live | demo | csv | connecting
-  let showWifi = true, showBle = true, showLog = false, selected = null, failures = 0;
+  const state = { devices:[], timeline:[], scanning:false, warning:null, env:"", alpr:"" };
+  let mode = null, source = "connecting", showLog = false, selected = null, failures = 0, threeD = true;
 
   const $ = (id) => document.getElementById(id);
   const canvas = $("radar"), ctx = canvas.getContext("2d");
-  const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;" }[c]));
+  const fd = (m) => m < 10 ? Number(m).toFixed(1) : m < 1000 ? String(Math.round(m)) : (m / 1000).toFixed(1) + "k";
+  const visible = () => state.devices.filter((d) => !mode || d.cat === mode);
 
-  // Same placement formula as the Android app: Java String.hashCode, Wi-Fi top half, BLE bottom half.
-  function javaHash(s) { let h = 0; for (let i = 0; i < s.length; i++) h = (Math.imul(31, h) + s.charCodeAt(i)) | 0; return h; }
-  function angleFor(d) { return (d.kind === "WIFI" ? 180 : 0) + ((javaHash(d.key) >>> 0) % 180); }
+  // ---------- mode chips ----------
+  for (const [label, cat] of MODES) {
+    const b = document.createElement("button");
+    b.className = "chip" + (cat === mode ? " on" : "");
+    b.textContent = label;
+    b.onclick = () => { mode = cat; document.querySelectorAll(".chip").forEach((c) => c.classList.remove("on")); b.classList.add("on"); render(); };
+    $("chips").appendChild(b);
+  }
 
   // ---------- data sources ----------
   async function poll() {
     try {
-      const r = await fetch("/api/state?k=" + encodeURIComponent(key), { cache: "no-store" });
+      const r = await fetch("/api/state?k=" + encodeURIComponent(key), { cache:"no-store" });
       if (!r.ok) throw new Error("HTTP " + r.status);
       Object.assign(state, await r.json());
-      mode = "live"; failures = 0;
+      source = "live"; failures = 0;
     } catch (e) {
       failures++;
       if (failures > 2) state.warning = "Lost connection to the phone (" + e.message + "). Same Wi-Fi? Scan running?";
@@ -94,52 +103,50 @@
   }
 
   function standalone(reason) {
-    mode = "demo";
     $("standaloneRow").style.display = "flex";
     const b = $("banner");
     b.style.display = "block";
     b.innerHTML = "<b>Viewer mode.</b> " + esc(reason) +
-      " iPhones can't scan Wi-Fi or Bluetooth from a browser, so the Pixel does the scanning: " +
-      "start a scan in the AirScope app, tap <b>HUD</b>, then open the link it shows in Safari on the same Wi-Fi. " +
-      "Here you can also load an <b>airscope_devices_*.csv</b> export. Showing simulated data until then.";
+      " iPhones can't scan Wi-Fi or Bluetooth from a browser, so the Pixel does the scanning: start a scan in AirScope, tap " +
+      "<b>HUD</b>, then open the link it shows in Safari on the same Wi-Fi. You can also load an <b>airscope_devices_*.csv</b> export. Showing simulated data until then.";
     startDemo();
   }
 
   let demoTimer = null;
   function startDemo() {
     clearInterval(demoTimer);
-    const t0 = Date.now();
+    source = "demo";
     const base = [
-      ["WIFI", "a4:2b:b0:11:22:33", "HomeNet-5G", -48, "5 GHz ch36 WPA2", []],
-      ["WIFI", "c8:3a:35:44:55:66", "NETGEAR42", -66, "2.4 GHz ch6 WPA2", []],
-      ["WIFI", "10:27:f5:aa:bb:cc", "<hidden SSID>", -74, "2.4 GHz ch11 WPA2", ["Hidden SSID"]],
-      ["WIFI", "dc:4f:22:12:34:56", "ESP_C1A2B3", -58, "2.4 GHz ch1 OPEN", ["Open network (no encryption)", "Camera/IoT-style network name"]],
-      ["WIFI", "7a:11:9c:de:f0:01", "Jake's iPhone", -71, "2.4 GHz ch6 WPA2", ["Mobile hotspot name", "Randomized MAC (usually a phone hotspot)"]],
-      ["WIFI", "02:1a:11:f0:00:01", "Airport_Free_WiFi", -63, "2.4 GHz ch1 OPEN", ["Open network (no encryption)", "Same SSID seen open and secured (possible evil twin)"]],
-      ["BLE", "5c:f3:70:01:02:03", "AirPods / Beats", -60, "Apple / AirPods / Beats", []],
-      ["BLE", "e1:22:33:44:55:66", "Apple Find My tag (away from owner)", -57, "Apple / Apple Find My tag (away from owner)", ["Apple Find My tag (away from owner)", "Tracker has stayed with you for 14 min"]],
-      ["BLE", "d0:3f:aa:9b:00:11", "Tile tracker", -82, "Tile / Tile tracker", ["Tile tracker"]],
-      ["BLE", "4c:11:ae:77:88:99", "Galaxy Watch", -69, "Samsung", []],
-      ["BLE", "f4:12:fa:01:02:03", "Unknown BLE", -88, "BLE", []],
+      ["WIFI","a4:2b:b0:11:22:33","NETGEAR Nighthawk access point","NETWORK","NETGEAR",-48,0,[]],
+      ["WIFI","dc:4f:22:12:34:56","ESP_C1A2B3 · Espressif device","CAMERA_IOT","Espressif",-58,45,["Open network (no encryption)","Camera/IoT-style network name"]],
+      ["WIFI","7a:11:9c:de:f0:01","iPhone hotspot","PHONE","",-71,15,["Randomized MAC (phone hotspot, guest or mesh network)"]],
+      ["WIFI","00:30:44:aa:bb:cc","IBR900-1b2 · Fleet / vehicle router","POLICE","Cradlepoint",-79,30,["Fleet/vehicle router (police, EMS, transit or business)"]],
+      ["BLE","00:25:df:68:5d:1f","Axon police equipment","POLICE","Axon",-84,60,["Axon police equipment (body cam / Taser / holster sensor)"]],
+      ["BLE","4a:11:22:33:44:55","Apple AirPods Pro 2","WEARABLE","Apple",-60,0,[]],
+      ["BLE","f1:22:33:44:55:66","Apple Find My tag (away from owner)","TRACKER","Apple",-57,70,["Apple Find My tag (away from owner)","Tracker has stayed with you for 14 min"]],
+      ["BLE","c1:22:33:44:55:66","Tesla vehicle (phone key)","VEHICLE","",-77,10,["Nearby for 11 min"]],
+      ["BLE","e2:11:22:33:44:55","DJI drone (Remote ID)","DRONE","DJI",-81,35,["Drone broadcasting FAA Remote ID"]],
+      ["BLE","5b:22:33:44:55:66","Apple iPhone / iPad / Mac","PHONE","Apple",-66,0,[]],
     ];
-    const scoreOf = (flags) => Math.min(100, flags.reduce((s, f) =>
-      s + (/tracker has stayed/i.test(f) ? 30 : /away from owner/i.test(f) ? 40 : /tracker/i.test(f) ? 35 :
-           /camera/i.test(f) ? 30 : /evil twin/i.test(f) ? 25 : /open/i.test(f) ? 15 : /hidden|randomized/i.test(f) ? 10 : 5), 0));
+    const t0 = Date.now();
     const tick = () => {
       const t = (Date.now() - t0) / 1000;
-      state.devices = base.map(([kind, id, name, rssi, detail, flags], i) => {
-        const avg = Math.round(rssi + 4 * Math.sin(t / 3 + i));
-        const score = scoreOf(flags);
-        const ref = kind === "BLE" ? -59 : (detail.startsWith("5") ? -45 : -40);
-        const dist = Math.min(99, Math.max(0.3, Math.pow(10, (ref - avg) / 27)));
-        return { key: kind + ":" + id, id, kind, name, rssi: avg, avg, dist: +dist.toFixed(1), score,
-                 level: score >= 50 ? "HIGH" : score >= 25 ? "MEDIUM" : "LOW", detail, flags, ageSec: 600 + t | 0, lastSec: 0 };
+      state.devices = base.map(([kind,id,name,cat,vendor,rssi,score,flags], i) => {
+        const avg = Math.round(rssi + 3 * Math.sin(t / 3 + i));
+        const ref = kind === "BLE" ? -60 : -28;
+        const dist = Math.min(300, Math.max(0.3, Math.pow(10, (ref - avg) / 26)));
+        const sector = CATS.findIndex((c) => c[0] === cat);
+        return { key:kind + ":" + id, id, kind, cat, name, vendor, avg, dist, lo:dist / 1.6, hi:dist * 1.6, src:"demo",
+                 score, level: score >= 50 ? "HIGH" : score >= 25 ? "MEDIUM" : "LOW", flags, facts:[],
+                 angle: sector * 45 + 5 + (i * 13) % 35, bearing:null };
       });
-      state.scanning = true; state.warning = null;
+      state.devices.push({ key:"MAP:1", id:"osm:1", kind:"MAP", cat:"POLICE", name:"Flock Safety ALPR (mapped)", vendor:"Flock Safety",
+        avg:0, dist:240, lo:230, hi:250, src:"GPS + mapped location", score:60, level:"HIGH", flags:["Mapped ALPR camera 240 m NE"], facts:[], angle:40, bearing:40 });
+      state.scanning = true; state.warning = null; state.env = "demo";
       if (!state.timeline.length) state.timeline = [
-        { time: Date.now(), tag: "HIGH", text: "BLE Apple Find My tag (away from owner) [e1:22:33:44:55:66] Tracker has stayed with you for 14 min" },
-        { time: Date.now() - 6e4, tag: "MEDIUM", text: "WIFI ESP_C1A2B3 [dc:4f:22:12:34:56] Open network; Camera/IoT-style network name" },
-        { time: Date.now() - 9e4, tag: "SYS", text: "Scan started (demo data)" }];
+        { time:Date.now(), tag:"HIGH", text:"POLICE Axon police equipment [00:25:df:68:5d:1f]" },
+        { time:Date.now() - 6e4, tag:"HIGH", text:"TRACK Apple Find My tag (away from owner) — stayed with you 14 min" },
+        { time:Date.now() - 9e4, tag:"SYS", text:"Scan started (demo data)" } ];
       render();
     };
     tick();
@@ -165,40 +172,56 @@
     const rows = parseCsv(await file.text());
     const head = rows.shift() || [];
     const ix = (n) => head.indexOf(n);
-    if (ix("kind") < 0 || ix("avg_rssi") < 0) {
+    if (ix("kind") < 0 || ix("avg_rssi") < 0 || ix("category") < 0) {
       $("banner").style.display = "block";
-      $("banner").innerHTML = "<b>Can't read that file.</b> Pick an <b>airscope_devices_*.csv</b> export (not the timeline file).";
+      $("banner").innerHTML = "<b>Can't read that file.</b> Pick an <b>airscope_devices_*.csv</b> export from AirScope 2 or newer.";
       e.target.value = ""; return;
     }
     clearInterval(demoTimer);
-    mode = "csv";
-    state.devices = rows.filter((r) => r.length >= head.length - 1).map((r) => {
-      const kind = r[ix("kind")], id = r[ix("id")];
-      return { key: kind + ":" + id, id, kind, name: r[ix("name")] || (kind === "WIFI" ? "<hidden SSID>" : r[ix("details")] || "Unknown BLE"),
-        rssi: +r[ix("last_rssi")], avg: +r[ix("avg_rssi")], dist: +r[ix("est_distance_m")], score: +r[ix("score")],
-        level: r[ix("level")], detail: r[ix("details")], flags: (r[ix("flags")] || "").split("; ").filter(Boolean),
-        firstSeen: r[ix("first_seen")], lastSeenAt: r[ix("last_seen")] };
+    source = "csv";
+    state.devices = rows.filter((r) => r.length >= head.length - 1).map((r, i) => {
+      const kind = r[ix("kind")], id = r[ix("id")], cat = r[ix("category")];
+      const sector = Math.max(0, CATS.findIndex((c) => c[0] === cat));
+      return { key:kind + ":" + id, id, kind, cat, name:r[ix("label")], vendor:r[ix("vendor")], avg:+r[ix("avg_rssi")],
+        dist:+r[ix("est_distance_m")], lo:+r[ix("dist_low_m")], hi:+r[ix("dist_high_m")], src:r[ix("dist_method")],
+        score:+r[ix("score")], level:r[ix("level")], flags:(r[ix("flags")] || "").split("; ").filter(Boolean),
+        facts:(r[ix("details")] || "").split("; ").filter(Boolean).map((f) => [f.split(": ")[0], f.split(": ").slice(1).join(": ")]),
+        angle: sector * 45 + 5 + (i * 13) % 35, bearing:null };
     });
-    state.timeline = [{ time: Date.now(), tag: "SYS", text: "Loaded " + state.devices.length + " devices from " + file.name }];
+    state.timeline = [{ time:Date.now(), tag:"SYS", text:"Loaded " + state.devices.length + " devices from " + file.name }];
     state.scanning = false; state.warning = null;
-    $("banner").innerHTML = "<b>Viewing export:</b> " + esc(file.name) + " (" + state.devices.length + " devices). Positions are a snapshot.";
+    $("banner").innerHTML = "<b>Viewing export:</b> " + esc(file.name) + " (" + state.devices.length + " devices).";
     render();
   });
-  $("bDemo").onclick = () => { mode = "demo"; state.timeline = []; startDemo(); };
-
-  // ---------- controls ----------
-  const setOff = (b, on) => b.classList.toggle("off", !on);
-  $("bWifi").onclick = () => { showWifi = !showWifi; setOff($("bWifi"), showWifi); render(); };
-  $("bBle").onclick = () => { showBle = !showBle; setOff($("bBle"), showBle); render(); };
+  $("bDemo").onclick = () => { state.timeline = []; startDemo(); };
+  $("b3d").onclick = () => { threeD = !threeD; targetPitch = threeD ? 58 : 0; if (!threeD) targetYaw = 0; $("b3d").textContent = threeD ? "3D" : "2D"; };
   $("bLog").onclick = () => { showLog = !showLog; $("bLog").textContent = showLog ? "DEVICES" : "LOG"; render(); };
 
-  // ---------- radar ----------
-  let sweep = 0, last = 0, blips = [];
-  const MAX = 40, RINGS = [2, 5, 10, 20, 40];
-  const radiusFor = (d, r) => r * Math.sqrt(Math.min(d, MAX) / MAX);
+  // ---------- 3D radar (same model as the app) ----------
+  const CAM = 3.2;
+  let yaw = 0, targetYaw = 0, pitch = 58, targetPitch = 58, sweep = 0, last = 0, lastTouch = 0, maxRange = 40;
+  const anim = new Map();
+  let blips = [];
+  const gr = (d) => Math.sqrt(Math.min(d, maxRange) / maxRange) * 0.95;
 
-  function visible() {
-    return state.devices.filter((d) => (d.kind === "WIFI" ? showWifi : showBle));
+  function proj(x, y, z, cx, cy, r) {
+    const yr = yaw * Math.PI / 180, pr = pitch * Math.PI / 180;
+    const xr = x * Math.cos(yr) - y * Math.sin(yr);
+    const yy = x * Math.sin(yr) + y * Math.cos(yr);
+    const v = yy * Math.cos(pr) + z * Math.sin(pr);
+    const depth = yy * Math.sin(pr) - z * Math.cos(pr);
+    const s = CAM / (CAM + depth);
+    return [cx + xr * s * r, cy - v * s * r, s];
+  }
+
+  function ring(rr, cx, cy, r) {
+    ctx.beginPath();
+    for (let k = 0; k <= 72; k++) {
+      const a = k * 5 * Math.PI / 180;
+      const p = proj(Math.sin(a) * rr, Math.cos(a) * rr, 0, cx, cy, r);
+      k ? ctx.lineTo(p[0], p[1]) : ctx.moveTo(p[0], p[1]);
+    }
+    ctx.closePath();
   }
 
   function draw(ts) {
@@ -206,99 +229,154 @@
     const w = canvas.clientWidth, h = canvas.clientHeight;
     if (canvas.width !== Math.round(w * dpr)) { canvas.width = Math.round(w * dpr); canvas.height = Math.round(h * dpr); }
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    if (last) sweep = (sweep + (ts - last) * 0.09) % 360;
+    const dt = last ? Math.min(0.1, (ts - last) / 1000) : 0.016;
     last = ts;
-    const cx = w / 2, cy = h / 2, r = Math.min(w, h) / 2 - 6;
+    sweep = (sweep + dt * 90) % 360;
+    const ease = 1 - Math.exp(-dt / 0.25);
+    pitch += (targetPitch - pitch) * ease;
+    if (threeD && !selected && performance.now() - lastTouch > 6000) targetYaw += dt * 3;
+    yaw += (targetYaw - yaw) * ease;
+
+    const t3 = Math.max(0, Math.min(1, pitch / 58));
+    const cx = w / 2, r = Math.min(w, h) / 2 * (0.92 - 0.03 * t3), cy = h / 2 + t3 * r * 0.06;
     ctx.clearRect(0, 0, w, h);
+    ctx.fillStyle = "#0a1419"; ring(1, cx, cy, r); ctx.fill();
 
-    ctx.strokeStyle = "#1a3f49"; ctx.lineWidth = 1; ctx.font = "10px ui-monospace, Menlo, monospace"; ctx.fillStyle = "#4f8a99";
-    for (const ring of RINGS) {
-      const rr = radiusFor(ring, r);
-      ctx.beginPath(); ctx.arc(cx, cy, rr, 0, Math.PI * 2); ctx.stroke();
-      ctx.fillText(ring + "m", cx + 4, cy - rr + 11);
+    ctx.lineWidth = 1; ctx.strokeStyle = "#1a3f49"; ctx.font = "10px ui-monospace, Menlo, monospace";
+    const o = proj(0, 0, 0, cx, cy, r);
+    for (let k = 0; k < 8; k++) {
+      const a = k * 45 * Math.PI / 180, p = proj(Math.sin(a), Math.cos(a), 0, cx, cy, r);
+      ctx.beginPath(); ctx.moveTo(o[0], o[1]); ctx.lineTo(p[0], p[1]); ctx.stroke();
     }
-    ctx.beginPath(); ctx.moveTo(cx - r, cy); ctx.lineTo(cx + r, cy); ctx.moveTo(cx, cy - r); ctx.lineTo(cx, cy + r); ctx.stroke();
-    ctx.fillText("WI-FI", cx - r + 4, cy - 4); ctx.fillText("BLE", cx - r + 4, cy + 13);
-
-    // sweep trail
-    const a = (sweep * Math.PI) / 180;
-    if (ctx.createConicGradient) {
-      const g = ctx.createConicGradient(a - Math.PI * 2 * 0.18, cx, cy);
-      g.addColorStop(0, "rgba(0,229,255,0)"); g.addColorStop(0.18, "rgba(0,229,255,0.45)"); g.addColorStop(0.1801, "rgba(0,229,255,0)");
-      ctx.fillStyle = g; ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.fill();
+    if (!mode) {
+      ctx.fillStyle = "#4f8a99";
+      CATS.forEach(([, short], i) => {
+        const a = (i * 45 + 22.5) * Math.PI / 180, p = proj(Math.sin(a) * 1.07, Math.cos(a) * 1.07, 0, cx, cy, r);
+        ctx.fillText(short, p[0] - ctx.measureText(short).width / 2, p[1] + 4);
+      });
+    } else {
+      const s = CATS.findIndex((c) => c[0] === mode);
+      ctx.beginPath(); ctx.moveTo(o[0], o[1]);
+      for (let k = 0; k <= 9; k++) { const a = (s * 45 + k * 5) * Math.PI / 180, p = proj(Math.sin(a), Math.cos(a), 0, cx, cy, r); ctx.lineTo(p[0], p[1]); }
+      ctx.closePath(); ctx.fillStyle = "rgba(0,229,255,0.11)"; ctx.fill();
     }
-    ctx.strokeStyle = "#00e5ff"; ctx.lineWidth = 2;
-    ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(cx + r * Math.cos(a), cy + r * Math.sin(a)); ctx.stroke();
+    for (const fr of [0.05, 0.125, 0.25, 0.5, 1]) {
+      const rr = gr(fr * maxRange);
+      ring(rr, cx, cy, r); ctx.strokeStyle = "#1a3f49"; ctx.stroke();
+      const la = 100 * Math.PI / 180, p = proj(Math.sin(la) * rr, Math.cos(la) * rr, 0, cx, cy, r); ctx.fillStyle = "#4f8a99"; ctx.fillText(fd(fr * maxRange) + "m", p[0] - 6, p[1] + 11);
+    }
+    for (let k = 0; k < 12; k++) {
+      const a0 = (sweep - (k + 1) * 4) * Math.PI / 180, a1 = (sweep - k * 4) * Math.PI / 180;
+      const p0 = proj(Math.sin(a0), Math.cos(a0), 0, cx, cy, r), p1 = proj(Math.sin(a1), Math.cos(a1), 0, cx, cy, r);
+      ctx.beginPath(); ctx.moveTo(o[0], o[1]); ctx.lineTo(p0[0], p0[1]); ctx.lineTo(p1[0], p1[1]); ctx.closePath();
+      ctx.fillStyle = `rgba(0,229,255,${0.27 * (1 - k / 12)})`; ctx.fill();
+    }
+    const sa = sweep * Math.PI / 180, se = proj(Math.sin(sa), Math.cos(sa), 0, cx, cy, r);
+    ctx.strokeStyle = "#00e5ff"; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(o[0], o[1]); ctx.lineTo(se[0], se[1]); ctx.stroke(); ctx.lineWidth = 1;
 
+    const list = visible();
+    const a = 1 - Math.exp(-dt / 0.3);
+    const pts = list.map((d) => {
+      const ang = (d.bearing != null ? d.bearing : d.angle) * Math.PI / 180;   // web HUD: mapped items north-up
+      const g = d.kind === "MAP" && d.dist > maxRange ? 1.03 : gr(d.dist);
+      const tx = Math.sin(ang) * g, ty = Math.cos(ang) * g, tz = d.kind === "MAP" ? 0.38 : 0.04 + d.score / 100 * 0.45;
+      let an = anim.get(d.key); if (!an) { an = { x:tx, y:ty, z:0, a:0 }; anim.set(d.key, an); }
+      an.x += (tx - an.x) * a; an.y += (ty - an.y) * a; an.z += (tz - an.z) * a; an.a += (1 - an.a) * a;
+      const p = proj(an.x, an.y, an.z, cx, cy, r), gnd = proj(an.x, an.y, 0, cx, cy, r);
+      return { d, an, p, gnd };
+    }).sort((u, v) => u.p[2] - v.p[2]);
     blips = [];
-    for (const d of visible()) {
-      const ang = angleFor(d), rad = (ang * Math.PI) / 180, dist = radiusFor(d.dist, r);
-      const x = cx + dist * Math.cos(rad), y = cy + dist * Math.sin(rad);
-      blips.push({ d, x, y });
-      let delta = sweep - ang; if (delta < 0) delta += 360;
-      ctx.globalAlpha = 0.32 + 0.68 * (1 - delta / 360);
-      ctx.fillStyle = COLORS[d.level] || COLORS.LOW;
-      const s = d.level === "HIGH" ? 6.5 : 4.5;
+    for (const { d, an, p, gnd } of pts) {
+      const col = d.kind === "MAP" ? "#b388ff" : (COLORS[d.level] || COLORS.LOW);
+      ctx.globalAlpha = 0.45 * an.a; ctx.strokeStyle = col; ctx.beginPath(); ctx.moveTo(gnd[0], gnd[1]); ctx.lineTo(p[0], p[1]); ctx.stroke();
+      const size = (d.level === "HIGH" ? 6.5 : 4.8) * p[2];
+      let delta = ((sweep - (d.bearing ?? d.angle)) % 360 + 360) % 360;
+      ctx.globalAlpha = 0.28 * (0.45 + 0.55 * (1 - delta / 360)) * an.a; ctx.fillStyle = col;
+      ctx.beginPath(); ctx.arc(p[0], p[1], size * 2.2, 0, Math.PI * 2); ctx.fill();
+      ctx.globalAlpha = an.a;
       ctx.beginPath();
-      if (d.kind === "WIFI") ctx.arc(x, y, s, 0, Math.PI * 2);
-      else { ctx.moveTo(x, y - s * 1.15); ctx.lineTo(x + s * 1.15, y); ctx.lineTo(x, y + s * 1.15); ctx.lineTo(x - s * 1.15, y); ctx.closePath(); }
-      ctx.fill();
-      ctx.globalAlpha = 1;
-      if (d.key === selected) {
-        ctx.strokeStyle = "#fff"; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(x, y, s + 7, 0, Math.PI * 2); ctx.stroke();
-        ctx.fillStyle = "#fff"; ctx.font = "11px ui-monospace, Menlo, monospace"; ctx.fillText(String(d.name).slice(0, 18), x + s + 9, y + 4);
-      } else if (d.level === "HIGH") {
-        ctx.fillStyle = "#4f8a99"; ctx.font = "10px ui-monospace, Menlo, monospace"; ctx.fillText(String(d.name).slice(0, 14), x + s + 4, y + 4);
+      if (d.kind === "WIFI") ctx.arc(p[0], p[1], size, 0, Math.PI * 2);
+      else if (d.kind === "MAP") ctx.rect(p[0] - size, p[1] - size * 0.8, size * 2, size * 1.6);
+      else { ctx.moveTo(p[0], p[1] - size * 1.2); ctx.lineTo(p[0] + size * 1.2, p[1]); ctx.lineTo(p[0], p[1] + size * 1.2); ctx.lineTo(p[0] - size * 1.2, p[1]); ctx.closePath(); }
+      ctx.fill(); ctx.globalAlpha = 1;
+      const sel = d.key === selected;
+      if (sel) { ctx.strokeStyle = "#fff"; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(p[0], p[1], size + 7, 0, Math.PI * 2); ctx.stroke(); ctx.lineWidth = 1; }
+      if (sel || d.level === "HIGH" || d.cat === "POLICE") {
+        ctx.fillStyle = sel ? "#fff" : col; ctx.font = (sel ? 11 : 10) + "px ui-monospace, Menlo, monospace";
+        const t = d.kind === "MAP" ? d.name.replace(" (mapped)", "") + " " + fd(d.dist) + "m" : d.name;
+        ctx.fillText(String(t).slice(0, sel ? 26 : 18), p[0] + size + 5, p[1] + 4);
       }
+      blips.push({ d, x:p[0], y:p[1] });
     }
-    ctx.fillStyle = "#00e5ff"; ctx.beginPath(); ctx.arc(cx, cy, 3.5, 0, Math.PI * 2); ctx.fill();
+    if (!list.length) { ctx.fillStyle = "#4f8a99"; ctx.font = "10px ui-monospace, Menlo, monospace"; const m = mode ? "Nothing in this mode right now" : "No devices yet"; ctx.fillText(m, cx - ctx.measureText(m).width / 2, cy); }
     ctx.fillStyle = "#4f8a99"; ctx.font = "10px ui-monospace, Menlo, monospace";
-    ctx.fillText("● wifi  ◆ ble  · bearing not measured", 4, h - 4);
+    ctx.fillText("ring = distance · wedge = type · height = threat", 4, h - 4);
     requestAnimationFrame(draw);
   }
 
-  canvas.addEventListener("click", (e) => {
-    const rect = canvas.getBoundingClientRect();
-    const x = e.clientX - rect.left, y = e.clientY - rect.top;
-    let best = null, bestD = 32 * 32;
-    for (const b of blips) { const dd = (b.x - x) ** 2 + (b.y - y) ** 2; if (dd < bestD) { bestD = dd; best = b.d; } }
-    if (best) { selected = selected === best.key ? null : best.key; render(); }
+  // drag to orbit/tilt, tap to select
+  let down = null, moved = false, lx = 0, ly = 0;
+  canvas.addEventListener("pointerdown", (e) => { down = [e.clientX, e.clientY]; lx = e.clientX; ly = e.clientY; moved = false; canvas.setPointerCapture(e.pointerId); });
+  canvas.addEventListener("pointermove", (e) => {
+    if (!down) return;
+    if (Math.abs(e.clientX - down[0]) + Math.abs(e.clientY - down[1]) > 10) moved = true;
+    if (moved && threeD) {
+      targetYaw += (e.clientX - lx) * 0.35; yaw = targetYaw;
+      targetPitch = Math.max(15, Math.min(78, targetPitch - (e.clientY - ly) * 0.25)); pitch = targetPitch;
+    }
+    lx = e.clientX; ly = e.clientY; lastTouch = performance.now();
   });
+  canvas.addEventListener("pointerup", (e) => {
+    if (!moved) {
+      const rect = canvas.getBoundingClientRect(), x = e.clientX - rect.left, y = e.clientY - rect.top;
+      let best = null, bd = 34 * 34;
+      for (const b of blips) { const dd = (b.x - x) ** 2 + (b.y - y) ** 2; if (dd < bd) { bd = dd; best = b.d; } }
+      if (best) { selected = selected === best.key ? null : best.key; render(); }
+    }
+    down = null;
+  });
+  canvas.addEventListener("wheel", (e) => { maxRange = Math.max(5, Math.min(150, maxRange * (e.deltaY > 0 ? 1.1 : 0.9))); e.preventDefault(); }, { passive:false });
 
   // ---------- text panels ----------
   function render() {
     const vis = visible();
-    const wifi = vis.filter((d) => d.kind === "WIFI").length;
-    const med = vis.filter((d) => d.level === "MEDIUM").length, high = vis.filter((d) => d.level === "HIGH").length;
-    const src = mode === "live" ? (state.scanning ? "● LIVE" : "○ PHONE IDLE") : mode === "csv" ? "▣ EXPORT" : mode === "demo" ? "◌ DEMO" : "… CONNECTING";
-    let s = `${src}   WIFI ${wifi}   BLE ${vis.length - wifi}   MED ${med}   HIGH ${high}`;
+    const wifi = state.devices.filter((d) => d.kind === "WIFI").length, ble = state.devices.filter((d) => d.kind === "BLE").length;
+    const police = state.devices.filter((d) => d.cat === "POLICE").length, high = state.devices.filter((d) => d.level === "HIGH").length;
+    const src = source === "live" ? (state.scanning ? "● LIVE" : "○ PHONE IDLE") : source === "csv" ? "▣ EXPORT" : source === "demo" ? "◌ DEMO" : "… CONNECTING";
+    let s = `${src}  WIFI ${wifi}  BLE ${ble}  HIGH ${high}` + (police ? `  POLICE ${police}` : "");
+    s += `\n${(MODES.find((m) => m[1] === mode) || MODES[0])[0]}: ${vis.length}` + (state.env ? " · " + state.env : "") + (state.alpr ? " · ALPR map: " + state.alpr : "");
     if (state.warning) s += "\n⚠ " + state.warning;
     $("status").textContent = s;
     $("status").className = state.warning ? "warn" : "";
 
     const sel = state.devices.find((d) => d.key === selected);
     const tr = $("track");
-    if (!sel) { tr.textContent = "Tap a blip or row to track it"; tr.className = ""; }
+    if (!sel) { tr.textContent = "Tap a device to track it"; tr.className = ""; }
+    else if (sel.kind === "MAP") { tr.textContent = `TRACK ${sel.name}  ${fd(sel.dist)} m · bearing ${Math.round(sel.bearing)}°`; tr.className = "MAP"; }
     else {
-      const bars = Math.round((Math.max(0, Math.min(70, sel.avg + 100)) * 10) / 70);
-      tr.textContent = `TRACK ${String(sel.name).slice(0, 18)}  ${sel.avg}dBm ~${Number(sel.dist).toFixed(1)}m\n[${"█".repeat(bars)}${"░".repeat(10 - bars)}]  more bars = closer to the Pixel`;
+      const bars = Math.round((Math.max(0, Math.min(70, sel.avg + 100)) * 12) / 70);
+      tr.textContent = `TRACK ${String(sel.name).slice(0, 20)}  ${sel.avg}dBm  ~${fd(sel.dist)}m (${fd(sel.lo)}–${fd(sel.hi)})\n[${"█".repeat(bars)}${"░".repeat(12 - bars)}]  more bars = closer to the Pixel`;
       tr.className = sel.level;
     }
 
     const list = $("list");
     if (showLog) {
       list.innerHTML = state.timeline.length ? state.timeline.map((e) =>
-        `<div class="item ${esc(e.tag)}">${new Date(e.time).toLocaleTimeString([], { hour12: false })} ${esc(e.tag.padEnd(6))} ${esc(e.text)}</div>`).join("")
+        `<div class="item ${esc(e.tag)}">${new Date(e.time).toLocaleTimeString([], { hour12:false })} ${esc(String(e.tag).padEnd(6))} ${esc(e.text)}</div>`).join("")
         : `<div class="empty">No events yet.</div>`;
       return;
     }
-    const sorted = [...vis].sort((a, b) => b.score - a.score || b.avg - a.avg);
-    list.innerHTML = sorted.length ? sorted.map((d) =>
-      `<div class="item ${esc(d.level)}${d.key === selected ? " sel" : ""}" data-key="${esc(d.key)}">` +
-      `${d.kind === "WIFI" ? "WIFI" : "BLE "} ${String(d.avg).padStart(4)}dBm ~${Number(d.dist).toFixed(1).padStart(4)}m ${esc(String(d.name).slice(0, 28))}` +
-      `\n     ${esc(d.id)}  ${esc(d.detail)}  [${d.score}]` +
-      (d.flags && d.flags.length ? `<span class="flags">\n     ! ${esc(d.flags.join("; "))}</span>` : "") + `</div>`).join("")
-      : `<div class="empty">${mode === "live" ? "No devices yet. Give it a few seconds." : "No devices."}</div>`;
+    const sorted = [...vis].sort((a, b) => b.score - a.score || a.dist - b.dist);
+    list.innerHTML = sorted.length ? sorted.map((d) => {
+      const icon = d.kind === "WIFI" ? "●" : d.kind === "BLE" ? "◆" : "■";
+      const sig = d.kind === "MAP" ? "map" : d.avg + "dBm";
+      const facts = d.key === selected && d.facts && d.facts.length
+        ? `<span class="facts">\n   ${d.facts.slice(0, 10).map((f) => esc(f[0] + ": " + f[1])).join("\n   ")}\n   distance: ${esc(d.src)}</span>` : "";
+      return `<div class="item ${d.kind === "MAP" ? "MAP" : esc(d.level)}${d.key === selected ? " sel" : ""}" data-key="${esc(d.key)}">` +
+        `${icon} ${esc(String(d.name).slice(0, 40))}\n   ${esc(sig.padEnd(7))} ~${fd(d.dist)}m (${fd(d.lo)}–${fd(d.hi)})  ${esc((CATS.find((c) => c[0] === d.cat) || ["", d.cat])[1])}` +
+        `${d.vendor ? " · " + esc(d.vendor) : ""}  [${d.score}]` +
+        (d.flags && d.flags.length ? `\n   ! ${esc(d.flags.slice(0, 3).join("; "))}` : "") + facts + `</div>`;
+    }).join("") : `<div class="empty">${source === "live" ? "Nothing in this mode yet. Give it a few seconds." : "No devices."}</div>`;
   }
 
   $("list").addEventListener("click", (e) => {
@@ -308,7 +386,6 @@
     render();
   });
 
-  // ---------- boot ----------
   requestAnimationFrame(draw);
   if (key && location.protocol === "http:") poll();
   else if (key) standalone("This page has to be opened from the phone's own http:// link.");

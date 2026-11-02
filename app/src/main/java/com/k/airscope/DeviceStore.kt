@@ -1,6 +1,6 @@
 package com.k.airscope
 
-/** All observations for this session plus the intel timeline. Accessed from the main thread only. */
+/** All observations plus the intel timeline. Owned by the engine thread only. */
 class DeviceStore {
     data class LogEntry(val time: Long, val tag: String, val text: String)
 
@@ -27,33 +27,40 @@ class DeviceStore {
         while (timeline.size > 500) timeline.removeAt(timeline.size - 1)
     }
 
-    /** Re-scores active devices; returns the ones that just escalated to MEDIUM or HIGH. */
+    /** Re-scores active devices; returns devices that should raise an alert now (each only once). */
     fun rescore(now: Long): List<Device> {
         val act = active(now)
-        val escalated = ArrayList<Device>()
+        val alerts = ArrayList<Device>()
         for (d in act) {
             Heuristics.score(d, act, now)
             val lvl = d.level.ordinal
             if (lvl > d.maxLevelLogged) {
                 d.maxLevelLogged = lvl
-                log(d.level.name, "${d.kind.name} ${d.displayName()} [${d.id}] ${d.flags.joinToString("; ")}", now)
-                escalated += d
+                log(d.level.name, "${d.category.short} ${d.displayName()} [${d.id}] ${d.flags.joinToString("; ")}", now)
+            }
+            if (!d.alerted && Heuristics.wantsAlert(d)) {
+                d.alerted = true
+                alerts += d
             }
         }
         val wifi = act.count { it.kind == Kind.WIFI }
-        val summary = "wifi=$wifi ble=${act.size - wifi} med=${act.count { it.level == Level.MEDIUM }} high=${act.count { it.level == Level.HIGH }}"
+        val police = act.count { it.category == Category.POLICE }
+        val summary = "wifi=$wifi ble=${act.size - wifi} med=${act.count { it.level == Level.MEDIUM }} " +
+            "high=${act.count { it.level == Level.HIGH }}" + if (police > 0) " police=$police" else ""
         if (summary != lastSummary) {
             lastSummary = summary
             log("SCAN", summary, now)
         }
         if (devices.size > 3000) devices.values.removeAll { now - it.lastSeen > 15 * 60_000L }
-        return escalated
+        return alerts
     }
 
-    fun setTrusted(d: Device, on: Boolean) {
+    fun setTrusted(key: String, on: Boolean) {
+        val d = devices[key] ?: return
         d.trusted = on
-        if (on) trustedKeys += d.key else trustedKeys -= d.key
+        if (on) trustedKeys += key else trustedKeys -= key
         d.maxLevelLogged = 0
+        d.alerted = on
     }
 
     fun clear() {

@@ -11,8 +11,11 @@ android {
         applicationId = "com.k.airscope"
         minSdk = 29
         targetSdk = 35
-        versionCode = 1
-        versionName = "1.0"
+        // GitHub Actions sets this to the run number, which is also the release tag (build-N).
+        // The in-app updater compares it with the newest release to decide whether to update.
+        val build = System.getenv("AIRSCOPE_VERSION_CODE")?.toIntOrNull() ?: 1
+        versionCode = build
+        versionName = "2.$build"
     }
 
     // Signing key comes from environment variables (set by the GitHub workflow from encrypted

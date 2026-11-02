@@ -3,32 +3,49 @@ package com.k.airscope
 import android.content.Context
 import java.security.SecureRandom
 
-/** Persists "marked as mine" devices and the HUD access key. */
+/** Persistent settings. Tokens stay on the phone (allowBackup=false); nothing is synced anywhere. */
 object Prefs {
     private const val FILE = "airscope"
     private var loaded = false
 
+    fun p(ctx: Context) = ctx.getSharedPreferences(FILE, Context.MODE_PRIVATE)
+
     fun load(ctx: Context) {
         if (loaded) return
         loaded = true
-        val p = ctx.getSharedPreferences(FILE, Context.MODE_PRIVATE)
-        ScanState.store.trustedKeys += p.getStringSet("trusted", emptySet()) ?: emptySet()
+        val p = p(ctx)
+        Engine.store.trustedKeys += p.getStringSet("trusted", emptySet()) ?: emptySet()
+        Engine.env = runCatching { Env.valueOf(p.getString("env", Env.INDOOR.name)!!) }.getOrDefault(Env.INDOOR)
+        Engine.wifiOn = p.getBoolean("wifi", true)
+        Engine.bleOn = p.getBoolean("ble", true)
+        Engine.alprOn = p.getBoolean("alpr", true)
         val saved: String? = p.getString("hud_token", null)
-        val token: String = if (!saved.isNullOrEmpty()) {
-            saved
-        } else {
+        Engine.hudToken = if (!saved.isNullOrEmpty()) saved else {
             val alphabet = "abcdefghjkmnpqrstuvwxyz23456789"
             val rnd = SecureRandom()
-            val fresh = (1..10).map { alphabet[rnd.nextInt(alphabet.length)] }.joinToString("")
-            p.edit().putString("hud_token", fresh).apply()
-            fresh
+            (1..10).map { alphabet[rnd.nextInt(alphabet.length)] }.joinToString("").also {
+                p.edit().putString("hud_token", it).apply()
+            }
         }
-        ScanState.hudToken = token
     }
 
-    fun saveTrusted(ctx: Context) {
-        ctx.getSharedPreferences(FILE, Context.MODE_PRIVATE).edit()
-            .putStringSet("trusted", HashSet(ScanState.store.trustedKeys))
+    fun save(ctx: Context) {
+        p(ctx).edit()
+            .putString("env", Engine.env.name)
+            .putBoolean("wifi", Engine.wifiOn)
+            .putBoolean("ble", Engine.bleOn)
+            .putBoolean("alpr", Engine.alprOn)
             .apply()
     }
+
+    fun saveTrusted(ctx: Context, keys: Set<String>) {
+        p(ctx).edit().putStringSet("trusted", HashSet(keys)).apply()
+    }
+
+    fun getString(ctx: Context, key: String, def: String = ""): String = p(ctx).getString(key, def) ?: def
+    fun putString(ctx: Context, key: String, v: String) = p(ctx).edit().putString(key, v).apply()
+    fun getBool(ctx: Context, key: String, def: Boolean) = p(ctx).getBoolean(key, def)
+    fun putBool(ctx: Context, key: String, v: Boolean) = p(ctx).edit().putBoolean(key, v).apply()
+    fun getLong(ctx: Context, key: String) = p(ctx).getLong(key, 0L)
+    fun putLong(ctx: Context, key: String, v: Long) = p(ctx).edit().putLong(key, v).apply()
 }
