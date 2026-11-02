@@ -84,6 +84,9 @@ class Device(val id: String, val kind: Kind, now: Long) {
     var selfLat: Double? = null
     var selfLon: Double? = null
 
+    // Signal samples at GPS positions -> estimated map position
+    val track = LocTrack()
+
     // Scoring
     var flags: List<String> = emptyList()
     var score: Int = 0

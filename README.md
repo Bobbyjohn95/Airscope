@@ -16,8 +16,25 @@ broadcast. It never connects to, jams, deauths or transmits to anything.
   - **Mapped ALPRs:** 336k+ cameras volunteers mapped on OpenStreetMap (DeFlock). AirScope downloads the ones within 8 km,
     caches them for offline use, and alerts when one is **ahead of you within 400 m while driving**, or within 150 m on foot.
     These have **real distance and direction** from GPS.
-- **3D radar:** distance from the center = estimated range, wedge around the ring = device type, height = threat score.
-  Drag to orbit/tilt, pinch to zoom, tap to select, and **3D/2D** to switch. Devices glide smoothly between updates.
+- **Live street map (v2.1):** OpenStreetMap roads, street names, buildings, water and parks around your GPS position,
+  in 2D or a tilted **3D** view with raised buildings. You're the blue dot with an accuracy circle and heading cone.
+  - **Mapped ALPRs** sit at their real positions with a cone showing which way the camera faces. Remote ID drones sit
+    where they report being.
+  - **Radios are placed on the map from your movement.** A phone can't tell which direction a signal comes from, so
+    AirScope records signal strength at each GPS spot as you walk or drive and works out where the device must be.
+    That's the same idea wardriving tools use.
+    - Solid pin + error circle = located.
+    - Hollow marker = not located yet. It sits at the right *distance* but a placeholder direction. Walk 10–20 m in a
+      couple of directions to pin it down.
+    - Selecting an unlocated device shows its distance band as dashed rings around you.
+  - **Gestures (like a maps app):**
+    - One finger: pan, with fling.
+    - Pinch: zoom. Double-tap: zoom in.
+    - Two-finger twist: rotate.
+    - Two-finger drag up/down: tilt, in 3D.
+    - Tap: select.
+  - **Map buttons:** ◎ follows you again, N/⬆ switches north-up or heading-up, and ＋/－ zoom.
+  - Map data downloads once per area (about 1.5 km) and is cached for offline use. It needs the Network permission on GrapheneOS.
 - **Smoother:** all scanning, classification and scoring runs on a background engine thread. The UI only draws snapshots.
 - **Better distance**
   - Kalman-filtered signal strength, so readings don't jump around.
@@ -91,8 +108,9 @@ iPhones can't scan Wi-Fi or Bluetooth from a browser, so the Pixel scans and the
 The HUD has the same modes and 3D radar. The `k=` key keeps other people on the network out.
 
 ## Honest limits
-- **Direction:** phones can't measure where a radio signal comes from. Position around the ring is the device *type*,
-  except for mapped ALPRs and drones that broadcast GPS.
+- **Direction:** phones can't measure where a radio signal comes from. Devices get a map position only after you've
+  measured them from spots far enough apart (walking a loop works best; a straight line can't tell which side of the
+  road something is on, so it stays uncertain). Mapped ALPRs and Remote ID drones are exact.
 - **Distance:** distance from signal strength is an estimate, so it's shown as a range. Bodies, walls and pockets change it.
   Wi-Fi RTT and GPS-based items are measured.
 - **Flock cameras over the air:** phones can't capture Wi-Fi probe requests, which is how ESP32 detectors catch most of them.

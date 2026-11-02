@@ -24,6 +24,14 @@ object Engine {
         private set
     @Volatile var snapshotJson: String = "{\"devices\":[],\"timeline\":[]}"
         private set
+    private var mapJsonCache: Pair<Long, String>? = null
+
+    /** Street-map geometry for the web HUD (cached per map version). */
+    fun mapJson(): String {
+        val v = geo.mapVersion
+        mapJsonCache?.let { if (it.first == v) return it.second }
+        return Exporter.mapJson(geo.map).also { mapJsonCache = v to it }
+    }
     @Volatile var running = false
         private set
     @Volatile var wifiOn = true
@@ -76,7 +84,8 @@ object Engine {
         if (running) return
         running = true
         scanner = SignalScanner(app, handler).also { it.start() }
-        if (alprOn) geo.start(app, handler)
+        geo.alprEnabled = alprOn
+        geo.start(app, handler)
         handler.removeCallbacks(tick)
         handler.post(tick)
     }
@@ -94,7 +103,7 @@ object Engine {
 
     fun setAlpr(on: Boolean) = post {
         alprOn = on
-        if (running) { if (on) geo.start(app, handler) else geo.stop() }
+        geo.alprEnabled = on
         Prefs.save(app)
     }
 
@@ -115,10 +124,25 @@ object Engine {
             val now = System.currentTimeMillis()
             scanner?.syncBle()
             for (d in store.rescore(now)) deviceAlert?.invoke(d)
+            // Re-estimate map positions for devices with new GPS-tagged samples (cheap, a few per tick)
+            var budget = 25
+            for (d in store.devices.values) {
+                if (budget == 0) break
+                if (d.track.dirty && store.isActive(d, now)) {
+                    Locator.estimate(d.track, Distance.reference(d).first.toDouble(), env)
+                    budget--
+                }
+            }
             if (alprOn) for (h in geo.dueAlerts(now)) alprAlert?.invoke(h)
             publish()
             handler.postDelayed(this, 500)
         }
+    }
+
+    /** Engine thread: tag a fresh signal reading with the current GPS position. */
+    fun recordObservation(d: Device, rssi: Int, now: Long) {
+        if (!geo.goodFix(now)) return
+        Locator.add(d.track, geo.lat!!, geo.lon!!, rssi.toDouble(), now)
     }
 
     /** Builds the immutable snapshot (engine thread). */
@@ -134,7 +158,10 @@ object Engine {
         if (alprOn && lat != null && lon != null) for (h in geo.hits()) views += Snapshot.alprView(h, now)
         views.sortWith(compareByDescending<DeviceView> { it.score }.thenBy { it.dist })
         val warning = if (running) scanner?.warning() ?: geo.warning() else null
-        val s = Snapshot(now, running, warning, views, ArrayList(store.timeline.take(200)), env, lat != null, geo.status, ++version)
+        val s = Snapshot(
+            now, running, warning, views, ArrayList(store.timeline.take(200)), env, geo.status, geo.mapStatus, ++version,
+            lat, lon, geo.accuracy, geo.course, geo.mapVersion,
+        )
         snapshot = s
         if (hudOn) snapshotJson = Exporter.snapshotJson(s)
     }

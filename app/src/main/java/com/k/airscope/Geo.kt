@@ -34,6 +34,24 @@ object Geo {
         return if (d > 180) 360 - d else d
     }
 
+    private val CARD = mapOf(
+        "N" to 0.0, "NNE" to 22.5, "NE" to 45.0, "ENE" to 67.5, "E" to 90.0, "ESE" to 112.5, "SE" to 135.0, "SSE" to 157.5,
+        "S" to 180.0, "SSW" to 202.5, "SW" to 225.0, "WSW" to 247.5, "W" to 270.0, "WNW" to 292.5, "NW" to 315.0, "NNW" to 337.5,
+    )
+
+    /** OSM "direction" tag -> degrees: "270", "45;90" (first), "45-90" (middle), "NE". */
+    fun parseDirection(s: String?): Double? {
+        val t = s?.trim()?.uppercase(java.util.Locale.US)?.split(';')?.firstOrNull()?.trim() ?: return null
+        CARD[t]?.let { return it }
+        val range = Regex("^(\\d+(?:\\.\\d+)?)\\s*-\\s*(\\d+(?:\\.\\d+)?)$").find(t)
+        if (range != null) {
+            val a = range.groupValues[1].toDouble(); var b = range.groupValues[2].toDouble()
+            if (b < a) b += 360.0
+            return ((a + b) / 2) % 360
+        }
+        return t.toDoubleOrNull()?.let { ((it % 360) + 360) % 360 }
+    }
+
     fun cardinal(deg: Double): String {
         val names = arrayOf("N", "NE", "E", "SE", "S", "SW", "W", "NW")
         return names[(((deg % 360) + 360) % 360 / 45 + 0.5).toInt() % 8]

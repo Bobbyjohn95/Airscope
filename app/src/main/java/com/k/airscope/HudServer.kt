@@ -20,6 +20,7 @@ class HudServer(
     private val token: String,
     private val page: ByteArray,
     private val snapshot: () -> String,
+    private val map: () -> String = { "{\"lat\":null}" },
 ) {
     @Volatile
     private var socket: ServerSocket? = null
@@ -81,6 +82,7 @@ class HudServer(
                 } else when (path) {
                     "/", "/index.html" -> send(out, 200, "text/html; charset=utf-8", page)
                     "/api/state" -> send(out, 200, "application/json; charset=utf-8", snapshot().toByteArray(Charsets.UTF_8))
+                    "/api/map" -> send(out, 200, "application/json; charset=utf-8", map().toByteArray(Charsets.UTF_8))
                     else -> send(out, 404, "text/plain", "not found".toByteArray())
                 }
             }

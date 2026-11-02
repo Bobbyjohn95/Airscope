@@ -207,6 +207,7 @@ class SignalScanner(ctx: Context, private val handler: Handler) {
             d.txPower = adv.txPower
         }
         d.addReading(r.rssi, now)
+        Engine.recordObservation(d, r.rssi, now)
     }
 
     private fun apply(d: Device, c: Classification) {
@@ -262,6 +263,7 @@ class SignalScanner(ctx: Context, private val handler: Handler) {
                 apply(d, c)
             }
             d.addReading(r.level, now)
+            Engine.recordObservation(d, r.level, now)
         }
     }
 

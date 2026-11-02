@@ -25,20 +25,21 @@
   #chips::-webkit-scrollbar { display:none; }
   .chip { flex:0 0 auto; border:1px solid var(--cyan); border-radius:14px; padding:5px 10px; font-size:11px; color:var(--cyan); background:transparent; font-family:inherit; }
   .chip.on { background:var(--cyan); color:var(--bg); }
-  #radarWrap { position:relative; width:100%; aspect-ratio:1/1; max-height:58vh; margin:0 auto; }
-  canvas { width:100%; height:100%; display:block; touch-action:none; }
+  #mapWrap { position:relative; width:100%; height:min(62vh, 560px); margin:0 auto; }
+  canvas { width:100%; height:100%; display:block; touch-action:none; border:1px solid var(--grid); }
+  #tools { position:absolute; top:6px; right:6px; display:flex; flex-direction:column; gap:8px; }
+  #tools button { width:40px; height:40px; border-radius:20px; background:rgba(5,9,12,.8); border:1px solid var(--cyan); color:var(--cyan); font-size:16px; padding:0; }
   #track { margin:6px 0; min-height:34px; color:var(--dim); font-size:12px; white-space:pre-wrap; }
   .row { display:flex; gap:6px; margin:4px 0; }
-  button,label.btn { flex:1; background:transparent; color:var(--cyan); border:1px solid var(--cyan); font:inherit; font-size:12px;
+  .row button,label.btn { flex:1; background:transparent; color:var(--cyan); border:1px solid var(--cyan); font:inherit; font-size:12px;
            padding:9px 4px; border-radius:2px; text-align:center; cursor:pointer; }
-  button.off { opacity:.45; }
   input[type=file] { display:none; }
   #list { border-top:1px solid var(--grid); margin-top:6px; }
   .item { padding:7px 4px; border-bottom:1px solid var(--grid); white-space:pre-wrap; word-break:break-word; font-size:12px; }
   .item.sel { background:var(--sel); }
   .LOW { color:var(--green); } .MEDIUM { color:var(--amber); } .HIGH { color:var(--red); } .MAP { color:var(--violet); }
   .SYS { color:var(--cyan); } .SCAN { color:var(--dim); }
-  .facts { color:#9fbfc7; opacity:.95; }
+  .facts { color:#9fbfc7; }
   .empty { color:var(--dim); padding:14px 4px; }
 </style>
 </head>
@@ -47,12 +48,12 @@
   <div id="status">connecting…</div>
   <div id="banner"></div>
   <div id="chips"></div>
-  <div id="radarWrap"><canvas id="radar"></canvas></div>
-  <div id="track">Tap a device to track it</div>
-  <div class="row">
-    <button id="b3d">3D</button>
-    <button id="bLog">LOG</button>
+  <div id="mapWrap">
+    <canvas id="map"></canvas>
+    <div id="tools"><button id="tFollow">◎</button><button id="tIn">＋</button><button id="tOut">－</button></div>
   </div>
+  <div id="track">Tap a device to track it</div>
+  <div class="row"><button id="b3d">3D</button><button id="bLog">LOG</button></div>
   <div class="row" id="standaloneRow" style="display:none">
     <label class="btn" for="csv">LOAD CSV</label><input id="csv" type="file" accept=".csv,text/csv">
     <button id="bDemo">DEMO</button>
@@ -63,22 +64,27 @@
 (() => {
   "use strict";
   const COLORS = { LOW:"#39ff88", MEDIUM:"#ffc400", HIGH:"#ff3b5c" };
-  const CATS = [ ["PHONE","PHONE"],["WEARABLE","WEAR"],["TRACKER","TRACK"],["CAMERA_IOT","CAM/IOT"],
-                 ["VEHICLE","VEHICLE"],["DRONE","DRONE"],["POLICE","POLICE"],["NETWORK","NET"] ];
+  const CAT_SHORT = { PHONE:"PHONE", WEARABLE:"WEAR", TRACKER:"TRACK", CAMERA_IOT:"CAM/IOT", VEHICLE:"VEHICLE", DRONE:"DRONE", POLICE:"POLICE", NETWORK:"NET" };
   const MODES = [ ["ALL",null],["PHONES","PHONE"],["WEAR/AUDIO","WEARABLE"],["TRACKERS","TRACKER"],["CAMS/IOT","CAMERA_IOT"],
                   ["VEHICLES","VEHICLE"],["DRONES","DRONE"],["POLICE/ALPR","POLICE"],["NETWORKS","NETWORK"] ];
-  const params = new URLSearchParams(location.search);
-  const key = params.get("k");
-  const state = { devices:[], timeline:[], scanning:false, warning:null, env:"", alpr:"" };
-  let mode = null, source = "connecting", showLog = false, selected = null, failures = 0, threeD = true;
+  const ROAD_COL = ["#36D6F0","#2AA6BA","#1E7486","#174F5C","#2E5A47"], ROAD_W = [4.2,3.0,2.0,1.3,1.0];
+  const key = new URLSearchParams(location.search).get("k");
+  const state = { devices:[], timeline:[], scanning:false, warning:null, env:"", alpr:"", me:null, mapV:-1 };
+  let mapData = null, loadedMapV = -2;
+  let mode = null, source = "connecting", showLog = false, selected = null, failures = 0;
 
   const $ = (id) => document.getElementById(id);
-  const canvas = $("radar"), ctx = canvas.getContext("2d");
+  const canvas = $("map"), ctx = canvas.getContext("2d");
   const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;" }[c]));
   const fd = (m) => m < 10 ? Number(m).toFixed(1) : m < 1000 ? String(Math.round(m)) : (m / 1000).toFixed(1) + "k";
   const visible = () => state.devices.filter((d) => !mode || d.cat === mode);
 
-  // ---------- mode chips ----------
+  // ---------- local projection (meters east / north of an origin) ----------
+  const K = Math.PI / 180 * 6371000;
+  const proj = (lat0, lon0) => ({ lat0, lon0, x:(lon) => (lon - lon0) * K * Math.cos(lat0 * Math.PI / 180), y:(lat) => (lat - lat0) * K,
+                                  lat:(y) => lat0 + y / K, lon:(x) => lon0 + x / (K * Math.cos(lat0 * Math.PI / 180)) });
+  let frame = null;
+
   for (const [label, cat] of MODES) {
     const b = document.createElement("button");
     b.className = "chip" + (cat === mode ? " on" : "");
@@ -87,19 +93,39 @@
     $("chips").appendChild(b);
   }
 
-  // ---------- data sources ----------
+  // ---------- data ----------
   async function poll() {
     try {
       const r = await fetch("/api/state?k=" + encodeURIComponent(key), { cache:"no-store" });
       if (!r.ok) throw new Error("HTTP " + r.status);
       Object.assign(state, await r.json());
       source = "live"; failures = 0;
+      if (state.mapV !== loadedMapV) {
+        loadedMapV = state.mapV;
+        const m = await (await fetch("/api/map?k=" + encodeURIComponent(key), { cache:"no-store" })).json();
+        setMap(m.lat == null ? null : m);
+      }
     } catch (e) {
       failures++;
       if (failures > 2) state.warning = "Lost connection to the phone (" + e.message + "). Same Wi-Fi? Scan running?";
     }
+    ensureFrame();
     render();
     setTimeout(poll, 1500);
+  }
+
+  function setMap(m) {
+    const old = frame;
+    mapData = m;
+    if (m) {
+      const nf = proj(m.lat, m.lon);
+      if (old && !follow) { const la = old.lat(camY), lo = old.lon(camX); camX = nf.x(lo); camY = nf.y(la); }
+      frame = nf;
+    }
+  }
+  function ensureFrame() {
+    if (!frame && state.me) frame = proj(state.me.lat, state.me.lon);
+    if (!frame) { const d = state.devices.find((x) => x.lat != null); if (d) frame = proj(d.lat, d.lon); }
   }
 
   function standalone(reason) {
@@ -108,7 +134,7 @@
     b.style.display = "block";
     b.innerHTML = "<b>Viewer mode.</b> " + esc(reason) +
       " iPhones can't scan Wi-Fi or Bluetooth from a browser, so the Pixel does the scanning: start a scan in AirScope, tap " +
-      "<b>HUD</b>, then open the link it shows in Safari on the same Wi-Fi. You can also load an <b>airscope_devices_*.csv</b> export. Showing simulated data until then.";
+      "<b>HUD</b>, then open the link it shows in Safari on the same Wi-Fi. You can also load an <b>airscope_devices_*.csv</b> export. Showing a simulated street and devices until then.";
     startDemo();
   }
 
@@ -116,41 +142,55 @@
   function startDemo() {
     clearInterval(demoTimer);
     source = "demo";
+    const lat0 = 33.9212, lon0 = -84.8410;
+    // Synthetic street grid + buildings (meters) so the map has something to show
+    const roads = [], bld = [];
+    for (let i = -3; i <= 3; i++) {
+      roads.push([i === 0 ? 0 : 2, i === 0 ? "Demo Main St" : "", [-450, i * 120, 450, i * 120]]);
+      roads.push([i === 0 ? 1 : 2, i === 0 ? "Demo Ave" : "", [i * 150, -450, i * 150, 450]]);
+    }
+    roads.push([3, "", [20, 0, 20, 60, 70, 60]]);
+    for (let gx = -3; gx < 3; gx++) for (let gy = -3; gy < 3; gy++) for (let k = 0; k < 4; k++) {
+      const x = gx * 150 + 22 + (k % 2) * 60, y = gy * 120 + 18 + Math.floor(k / 2) * 50, w = 34, h = 26;
+      bld.push([4 + ((gx * 7 + gy * 3 + k) % 5) * 3.2, [x, y, x + w, y, x + w, y + h, x, y + h]]);
+    }
+    setMap({ lat:lat0, lon:lon0, roads, bld, areas:[[0, [200, -300, 330, -300, 330, -200, 200, -200]], [1, [-330, 180, -200, 180, -200, 300, -330, 300]]] });
+    const P = proj(lat0, lon0);
     const base = [
-      ["WIFI","a4:2b:b0:11:22:33","NETGEAR Nighthawk access point","NETWORK","NETGEAR",-48,0,[]],
-      ["WIFI","dc:4f:22:12:34:56","ESP_C1A2B3 · Espressif device","CAMERA_IOT","Espressif",-58,45,["Open network (no encryption)","Camera/IoT-style network name"]],
-      ["WIFI","7a:11:9c:de:f0:01","iPhone hotspot","PHONE","",-71,15,["Randomized MAC (phone hotspot, guest or mesh network)"]],
-      ["WIFI","00:30:44:aa:bb:cc","IBR900-1b2 · Fleet / vehicle router","POLICE","Cradlepoint",-79,30,["Fleet/vehicle router (police, EMS, transit or business)"]],
-      ["BLE","00:25:df:68:5d:1f","Axon police equipment","POLICE","Axon",-84,60,["Axon police equipment (body cam / Taser / holster sensor)"]],
-      ["BLE","4a:11:22:33:44:55","Apple AirPods Pro 2","WEARABLE","Apple",-60,0,[]],
-      ["BLE","f1:22:33:44:55:66","Apple Find My tag (away from owner)","TRACKER","Apple",-57,70,["Apple Find My tag (away from owner)","Tracker has stayed with you for 14 min"]],
-      ["BLE","c1:22:33:44:55:66","Tesla vehicle (phone key)","VEHICLE","",-77,10,["Nearby for 11 min"]],
-      ["BLE","e2:11:22:33:44:55","DJI drone (Remote ID)","DRONE","DJI",-81,35,["Drone broadcasting FAA Remote ID"]],
-      ["BLE","5b:22:33:44:55:66","Apple iPhone / iPad / Mac","PHONE","Apple",-66,0,[]],
+      ["WIFI","a4:2b:b0:11:22:33","NETGEAR Nighthawk access point","NETWORK","NETGEAR",-48,0,[], [32, 40, 6]],
+      ["WIFI","dc:4f:22:12:34:56","ESP_C1A2B3 · camera / IoT setup network","CAMERA_IOT","Espressif",-58,45,["Open network (no encryption)","Camera/IoT-style network name"], [-70, 25, 9]],
+      ["WIFI","00:30:44:aa:bb:cc","IBR900-1b2 · Fleet / vehicle router","POLICE","Cradlepoint",-79,30,["Fleet/vehicle router (police, EMS, transit or business)"], [140, -60, 18]],
+      ["BLE","00:25:df:68:5d:1f","Axon police equipment","POLICE","Axon",-84,60,["Axon police equipment (body cam / Taser / holster sensor)"], null],
+      ["BLE","4a:11:22:33:44:55","Apple AirPods Pro 2","WEARABLE","Apple",-60,0,[], null],
+      ["BLE","f1:22:33:44:55:66","Apple Find My tag (away from owner)","TRACKER","Apple",-57,70,["Apple Find My tag (away from owner)","Tracker has stayed with you for 14 min"], [3, -4, 5]],
+      ["BLE","c1:22:33:44:55:66","Tesla vehicle (phone key)","VEHICLE","",-77,10,["Nearby for 11 min"], [-35, -55, 11]],
+      ["BLE","e2:11:22:33:44:55","DJI drone (Remote ID)","DRONE","DJI",-81,35,["Drone broadcasting FAA Remote ID"], [90, 120, 10]],
     ];
     const t0 = Date.now();
     const tick = () => {
       const t = (Date.now() - t0) / 1000;
-      state.devices = base.map(([kind,id,name,cat,vendor,rssi,score,flags], i) => {
+      const mx = 15 * Math.sin(t / 8), my = 10 * Math.cos(t / 11);
+      state.me = { lat:P.lat(my), lon:P.lon(mx), acc:5, course:null };
+      state.devices = base.map(([kind,id,name,cat,vendor,rssi,score,flags,pos], i) => {
         const avg = Math.round(rssi + 3 * Math.sin(t / 3 + i));
-        const ref = kind === "BLE" ? -60 : -28;
-        const dist = Math.min(300, Math.max(0.3, Math.pow(10, (ref - avg) / 26)));
-        const sector = CATS.findIndex((c) => c[0] === cat);
-        return { key:kind + ":" + id, id, kind, cat, name, vendor, avg, dist, lo:dist / 1.6, hi:dist * 1.6, src:"demo",
-                 score, level: score >= 50 ? "HIGH" : score >= 25 ? "MEDIUM" : "LOW", flags, facts:[],
-                 angle: sector * 45 + 5 + (i * 13) % 35, bearing:null };
+        const dist = pos ? Math.hypot(pos[0] - mx, pos[1] - my) : Math.min(80, Math.pow(10, (-60 - avg) / 26));
+        return { key:kind + ":" + id, id, kind, cat, name, vendor, avg, dist, lo:dist / 1.5, hi:dist * 1.5,
+                 src: pos ? "map fix (demo)" : "signal strength (demo)", score, level: score >= 50 ? "HIGH" : score >= 25 ? "MEDIUM" : "LOW",
+                 flags, facts:[], angle:(i * 47) % 360, bearing:null,
+                 lat: pos ? P.lat(pos[1]) : null, lon: pos ? P.lon(pos[0]) : null, err: pos ? pos[2] : 0, spots: pos ? 12 : 1 };
       });
       state.devices.push({ key:"MAP:1", id:"osm:1", kind:"MAP", cat:"POLICE", name:"Flock Safety ALPR (mapped)", vendor:"Flock Safety",
-        avg:0, dist:240, lo:230, hi:250, src:"GPS + mapped location", score:60, level:"HIGH", flags:["Mapped ALPR camera 240 m NE"], facts:[], angle:40, bearing:40 });
+        avg:0, dist:Math.hypot(150 - mx, 121 - my), lo:0, hi:0, src:"GPS + mapped location", score:60, level:"HIGH",
+        flags:["Mapped ALPR camera"], facts:[["Camera faces","270"]], angle:0, bearing:40, lat:P.lat(121), lon:P.lon(150), err:5, spots:0 });
       state.scanning = true; state.warning = null; state.env = "demo";
       if (!state.timeline.length) state.timeline = [
         { time:Date.now(), tag:"HIGH", text:"POLICE Axon police equipment [00:25:df:68:5d:1f]" },
-        { time:Date.now() - 6e4, tag:"HIGH", text:"TRACK Apple Find My tag (away from owner) — stayed with you 14 min" },
         { time:Date.now() - 9e4, tag:"SYS", text:"Scan started (demo data)" } ];
+      ensureFrame();
       render();
     };
     tick();
-    demoTimer = setInterval(tick, 1500);
+    demoTimer = setInterval(tick, 1000);
   }
 
   function parseCsv(text) {
@@ -178,164 +218,273 @@
       e.target.value = ""; return;
     }
     clearInterval(demoTimer);
-    source = "csv";
+    source = "csv"; mapData = null; frame = null; state.me = null;
     state.devices = rows.filter((r) => r.length >= head.length - 1).map((r, i) => {
-      const kind = r[ix("kind")], id = r[ix("id")], cat = r[ix("category")];
-      const sector = Math.max(0, CATS.findIndex((c) => c[0] === cat));
-      return { key:kind + ":" + id, id, kind, cat, name:r[ix("label")], vendor:r[ix("vendor")], avg:+r[ix("avg_rssi")],
+      const kind = r[ix("kind")], id = r[ix("id")];
+      const lat = ix("lat") >= 0 && r[ix("lat")] ? +r[ix("lat")] : null, lon = ix("lon") >= 0 && r[ix("lon")] ? +r[ix("lon")] : null;
+      return { key:kind + ":" + id, id, kind, cat:r[ix("category")], name:r[ix("label")], vendor:r[ix("vendor")], avg:+r[ix("avg_rssi")],
         dist:+r[ix("est_distance_m")], lo:+r[ix("dist_low_m")], hi:+r[ix("dist_high_m")], src:r[ix("dist_method")],
         score:+r[ix("score")], level:r[ix("level")], flags:(r[ix("flags")] || "").split("; ").filter(Boolean),
         facts:(r[ix("details")] || "").split("; ").filter(Boolean).map((f) => [f.split(": ")[0], f.split(": ").slice(1).join(": ")]),
-        angle: sector * 45 + 5 + (i * 13) % 35, bearing:null };
+        angle:(i * 47) % 360, bearing:null, lat, lon, err:ix("pos_err_m") >= 0 ? +r[ix("pos_err_m")] || 0 : 0, spots:0 };
     });
+    const located = state.devices.filter((d) => d.lat != null);
+    if (located.length) frame = proj(located.reduce((s, d) => s + d.lat, 0) / located.length, located.reduce((s, d) => s + d.lon, 0) / located.length);
+    camX = 0; camY = 0; follow = false;
     state.timeline = [{ time:Date.now(), tag:"SYS", text:"Loaded " + state.devices.length + " devices from " + file.name }];
     state.scanning = false; state.warning = null;
-    $("banner").innerHTML = "<b>Viewing export:</b> " + esc(file.name) + " (" + state.devices.length + " devices).";
+    $("banner").innerHTML = "<b>Viewing export:</b> " + esc(file.name) + " (" + state.devices.length + " devices, " + located.length + " with map positions).";
     render();
   });
   $("bDemo").onclick = () => { state.timeline = []; startDemo(); };
-  $("b3d").onclick = () => { threeD = !threeD; targetPitch = threeD ? 58 : 0; if (!threeD) targetYaw = 0; $("b3d").textContent = threeD ? "3D" : "2D"; };
-  $("bLog").onclick = () => { showLog = !showLog; $("bLog").textContent = showLog ? "DEVICES" : "LOG"; render(); };
 
-  // ---------- 3D radar (same model as the app) ----------
-  const CAM = 3.2;
-  let yaw = 0, targetYaw = 0, pitch = 58, targetPitch = 58, sweep = 0, last = 0, lastTouch = 0, maxRange = 40;
+  // ---------- camera ----------
+  const CAM = 3.4, ZEX = 1.6;
+  let camX = 0, camY = 0, rangeM = 180, tgtRange = 180, yaw = 0, pitch = 52, tgtPitch = 52, threeD = true, follow = true;
+  let flingX = 0, flingY = 0, last = 0, pulse = 0;
+  let cY = 1, sY = 0, cP = 1, sP = 0, ccx = 0, ccy = 0, rad = 1;
   const anim = new Map();
-  let blips = [];
-  const gr = (d) => Math.sqrt(Math.min(d, maxRange) / maxRange) * 0.95;
+  let hits = [];
+  const P = [0, 0, 0];
 
-  function proj(x, y, z, cx, cy, r) {
-    const yr = yaw * Math.PI / 180, pr = pitch * Math.PI / 180;
-    const xr = x * Math.cos(yr) - y * Math.sin(yr);
-    const yy = x * Math.sin(yr) + y * Math.cos(yr);
-    const v = yy * Math.cos(pr) + z * Math.sin(pr);
-    const depth = yy * Math.sin(pr) - z * Math.cos(pr);
-    const s = CAM / (CAM + depth);
-    return [cx + xr * s * r, cy - v * s * r, s];
+  function project(x, y, z) {
+    const dx = x - camX, dy = y - camY;
+    const xr = dx * cY - dy * sY, yr = dx * sY + dy * cY;
+    const u = xr / rangeM, v = yr / rangeM, w = z / rangeM * ZEX;
+    const vs = v * cP + w * sP, depth = v * sP - w * cP, den = CAM + depth;
+    if (den < 0.35) return false;
+    const s = CAM / den;
+    P[0] = ccx + u * s * rad; P[1] = ccy - vs * s * rad; P[2] = s;
+    return s < 6;
   }
-
-  function ring(rr, cx, cy, r) {
-    ctx.beginPath();
-    for (let k = 0; k <= 72; k++) {
-      const a = k * 5 * Math.PI / 180;
-      const p = proj(Math.sin(a) * rr, Math.cos(a) * rr, 0, cx, cy, r);
-      k ? ctx.lineTo(p[0], p[1]) : ctx.moveTo(p[0], p[1]);
-    }
-    ctx.closePath();
+  function polyPath(pts, z, close) {
+    ctx.beginPath(); let any = false;
+    for (let i = 0; i < pts.length; i += 2) if (project(pts[i], pts[i + 1], z)) { any ? ctx.lineTo(P[0], P[1]) : ctx.moveTo(P[0], P[1]); any = true; }
+    if (any && close) ctx.closePath();
+    return any;
+  }
+  function circle(x, y, r, n = 48) {
+    ctx.beginPath(); let any = false;
+    for (let k = 0; k <= n; k++) { const a = 2 * Math.PI * k / n; if (project(x + r * Math.sin(a), y + r * Math.cos(a), 0)) { any ? ctx.lineTo(P[0], P[1]) : ctx.moveTo(P[0], P[1]); any = true; } }
+    ctx.closePath(); return any;
   }
 
   function draw(ts) {
-    const dpr = window.devicePixelRatio || 1;
-    const w = canvas.clientWidth, h = canvas.clientHeight;
-    if (canvas.width !== Math.round(w * dpr)) { canvas.width = Math.round(w * dpr); canvas.height = Math.round(h * dpr); }
+    const dpr = window.devicePixelRatio || 1, w = canvas.clientWidth, h = canvas.clientHeight;
+    if (canvas.width !== Math.round(w * dpr) || canvas.height !== Math.round(h * dpr)) { canvas.width = Math.round(w * dpr); canvas.height = Math.round(h * dpr); }
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    const dt = last ? Math.min(0.1, (ts - last) / 1000) : 0.016;
-    last = ts;
-    sweep = (sweep + dt * 90) % 360;
-    const ease = 1 - Math.exp(-dt / 0.25);
-    pitch += (targetPitch - pitch) * ease;
-    if (threeD && !selected && performance.now() - lastTouch > 6000) targetYaw += dt * 3;
-    yaw += (targetYaw - yaw) * ease;
+    const dt = last ? Math.min(0.1, (ts - last) / 1000) : 0.016; last = ts;
+    const meX = frame && state.me ? frame.x(state.me.lon) : camX, meY = frame && state.me ? frame.y(state.me.lat) : camY;
+    if (follow && frame && state.me) { const a = 1 - Math.exp(-dt / 0.35); camX += (meX - camX) * a; camY += (meY - camY) * a; }
+    else if (flingX || flingY) { camX += flingX * dt; camY += flingY * dt; const k = Math.exp(-dt / 0.35); flingX *= k; flingY *= k; if (Math.hypot(flingX, flingY) < rangeM * 0.02) flingX = flingY = 0; }
+    const ea = 1 - Math.exp(-dt / 0.22);
+    rangeM = Math.exp(Math.log(rangeM) + (Math.log(tgtRange) - Math.log(rangeM)) * ea);
+    pitch += (tgtPitch - pitch) * ea;
+    pulse = (pulse + dt / 2.4) % 1;
+    const t3 = Math.min(1.2, Math.max(0, pitch / 52));
+    ccx = w / 2; rad = Math.min(w, h) / 2 * 0.95; ccy = h / 2 + t3 * h * 0.16;
+    const yr = yaw * Math.PI / 180, prr = pitch * Math.PI / 180;
+    cY = Math.cos(yr); sY = Math.sin(yr); cP = Math.cos(prr); sP = Math.sin(prr);
+    ctx.fillStyle = "#05090c"; ctx.fillRect(0, 0, w, h);
+    const ext = rangeM * (pitch > 20 ? 3.2 : 1.7);
+    if (pitch > 5) { circle(camX, camY, rangeM * 3, 64); ctx.fillStyle = "#0a1419"; ctx.fill(); }
 
-    const t3 = Math.max(0, Math.min(1, pitch / 58));
-    const cx = w / 2, r = Math.min(w, h) / 2 * (0.92 - 0.03 * t3), cy = h / 2 + t3 * r * 0.06;
-    ctx.clearRect(0, 0, w, h);
-    ctx.fillStyle = "#0a1419"; ring(1, cx, cy, r); ctx.fill();
-
-    ctx.lineWidth = 1; ctx.strokeStyle = "#1a3f49"; ctx.font = "10px ui-monospace, Menlo, monospace";
-    const o = proj(0, 0, 0, cx, cy, r);
-    for (let k = 0; k < 8; k++) {
-      const a = k * 45 * Math.PI / 180, p = proj(Math.sin(a), Math.cos(a), 0, cx, cy, r);
-      ctx.beginPath(); ctx.moveTo(o[0], o[1]); ctx.lineTo(p[0], p[1]); ctx.stroke();
-    }
-    if (!mode) {
-      ctx.fillStyle = "#4f8a99";
-      CATS.forEach(([, short], i) => {
-        const a = (i * 45 + 22.5) * Math.PI / 180, p = proj(Math.sin(a) * 1.07, Math.cos(a) * 1.07, 0, cx, cy, r);
-        ctx.fillText(short, p[0] - ctx.measureText(short).width / 2, p[1] + 4);
-      });
-    } else {
-      const s = CATS.findIndex((c) => c[0] === mode);
-      ctx.beginPath(); ctx.moveTo(o[0], o[1]);
-      for (let k = 0; k <= 9; k++) { const a = (s * 45 + k * 5) * Math.PI / 180, p = proj(Math.sin(a), Math.cos(a), 0, cx, cy, r); ctx.lineTo(p[0], p[1]); }
-      ctx.closePath(); ctx.fillStyle = "rgba(0,229,255,0.11)"; ctx.fill();
-    }
-    for (const fr of [0.05, 0.125, 0.25, 0.5, 1]) {
-      const rr = gr(fr * maxRange);
-      ring(rr, cx, cy, r); ctx.strokeStyle = "#1a3f49"; ctx.stroke();
-      const la = 100 * Math.PI / 180, p = proj(Math.sin(la) * rr, Math.cos(la) * rr, 0, cx, cy, r); ctx.fillStyle = "#4f8a99"; ctx.fillText(fd(fr * maxRange) + "m", p[0] - 6, p[1] + 11);
-    }
-    for (let k = 0; k < 12; k++) {
-      const a0 = (sweep - (k + 1) * 4) * Math.PI / 180, a1 = (sweep - k * 4) * Math.PI / 180;
-      const p0 = proj(Math.sin(a0), Math.cos(a0), 0, cx, cy, r), p1 = proj(Math.sin(a1), Math.cos(a1), 0, cx, cy, r);
-      ctx.beginPath(); ctx.moveTo(o[0], o[1]); ctx.lineTo(p0[0], p0[1]); ctx.lineTo(p1[0], p1[1]); ctx.closePath();
-      ctx.fillStyle = `rgba(0,229,255,${0.27 * (1 - k / 12)})`; ctx.fill();
-    }
-    const sa = sweep * Math.PI / 180, se = proj(Math.sin(sa), Math.cos(sa), 0, cx, cy, r);
-    ctx.strokeStyle = "#00e5ff"; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(o[0], o[1]); ctx.lineTo(se[0], se[1]); ctx.stroke(); ctx.lineWidth = 1;
-
-    const list = visible();
-    const a = 1 - Math.exp(-dt / 0.3);
-    const pts = list.map((d) => {
-      const ang = (d.bearing != null ? d.bearing : d.angle) * Math.PI / 180;   // web HUD: mapped items north-up
-      const g = d.kind === "MAP" && d.dist > maxRange ? 1.03 : gr(d.dist);
-      const tx = Math.sin(ang) * g, ty = Math.cos(ang) * g, tz = d.kind === "MAP" ? 0.38 : 0.04 + d.score / 100 * 0.45;
-      let an = anim.get(d.key); if (!an) { an = { x:tx, y:ty, z:0, a:0 }; anim.set(d.key, an); }
-      an.x += (tx - an.x) * a; an.y += (ty - an.y) * a; an.z += (tz - an.z) * a; an.a += (1 - an.a) * a;
-      const p = proj(an.x, an.y, an.z, cx, cy, r), gnd = proj(an.x, an.y, 0, cx, cy, r);
-      return { d, an, p, gnd };
-    }).sort((u, v) => u.p[2] - v.p[2]);
-    blips = [];
-    for (const { d, an, p, gnd } of pts) {
-      const col = d.kind === "MAP" ? "#b388ff" : (COLORS[d.level] || COLORS.LOW);
-      ctx.globalAlpha = 0.45 * an.a; ctx.strokeStyle = col; ctx.beginPath(); ctx.moveTo(gnd[0], gnd[1]); ctx.lineTo(p[0], p[1]); ctx.stroke();
-      const size = (d.level === "HIGH" ? 6.5 : 4.8) * p[2];
-      let delta = ((sweep - (d.bearing ?? d.angle)) % 360 + 360) % 360;
-      ctx.globalAlpha = 0.28 * (0.45 + 0.55 * (1 - delta / 360)) * an.a; ctx.fillStyle = col;
-      ctx.beginPath(); ctx.arc(p[0], p[1], size * 2.2, 0, Math.PI * 2); ctx.fill();
-      ctx.globalAlpha = an.a;
-      ctx.beginPath();
-      if (d.kind === "WIFI") ctx.arc(p[0], p[1], size, 0, Math.PI * 2);
-      else if (d.kind === "MAP") ctx.rect(p[0] - size, p[1] - size * 0.8, size * 2, size * 1.6);
-      else { ctx.moveTo(p[0], p[1] - size * 1.2); ctx.lineTo(p[0] + size * 1.2, p[1]); ctx.lineTo(p[0], p[1] + size * 1.2); ctx.lineTo(p[0] - size * 1.2, p[1]); ctx.closePath(); }
-      ctx.fill(); ctx.globalAlpha = 1;
-      const sel = d.key === selected;
-      if (sel) { ctx.strokeStyle = "#fff"; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(p[0], p[1], size + 7, 0, Math.PI * 2); ctx.stroke(); ctx.lineWidth = 1; }
-      if (sel || d.level === "HIGH" || d.cat === "POLICE") {
-        ctx.fillStyle = sel ? "#fff" : col; ctx.font = (sel ? 11 : 10) + "px ui-monospace, Menlo, monospace";
-        const t = d.kind === "MAP" ? d.name.replace(" (mapped)", "") + " " + fd(d.dist) + "m" : d.name;
-        ctx.fillText(String(t).slice(0, sel ? 26 : 18), p[0] + size + 5, p[1] + 4);
+    if (mapData) {
+      for (const [k, pts] of mapData.areas) { if (polyPath(pts, 0, true)) { ctx.fillStyle = k === 0 ? "#0B2A44" : "#0C2A1E"; ctx.fill(); } }
+      for (let cls = 4; cls >= 0; cls--) {
+        if (cls >= 3 && rangeM > 900) continue;
+        ctx.strokeStyle = ROAD_COL[cls]; ctx.lineWidth = ROAD_W[cls] * Math.max(0.5, Math.min(1.8, Math.pow(180 / rangeM, 0.35))); ctx.lineCap = "round";
+        ctx.beginPath();
+        for (const [c, , pts] of mapData.roads) {
+          if (c !== cls) continue;
+          let have = false;
+          for (let i = 0; i < pts.length; i += 2) {
+            if (Math.abs(pts[i] - camX) > ext * 1.5 && Math.abs(pts[i + 1] - camY) > ext * 1.5) { have = false; continue; }
+            if (project(pts[i], pts[i + 1], 0)) { have ? ctx.lineTo(P[0], P[1]) : ctx.moveTo(P[0], P[1]); have = true; } else have = false;
+          }
+        }
+        ctx.stroke();
       }
-      blips.push({ d, x:p[0], y:p[1] });
+      if (rangeM < 1200) {
+        const near = mapData.bld.map((b) => { const p = b[1]; let cx = 0, cy = 0; for (let i = 0; i < p.length; i += 2) { cx += p[i]; cy += p[i + 1]; } cx /= p.length / 2; cy /= p.length / 2; return [b, cx, cy]; })
+          .filter(([, cx, cy]) => Math.abs(cx - camX) < ext && Math.abs(cy - camY) < ext)
+          .sort((a, b) => Math.hypot(b[1] - camX, b[2] - camY) - Math.hypot(a[1] - camX, a[2] - camY)).slice(-500);
+        for (const [[hgt, pts]] of near) {
+          if (!polyPath(pts, 0, true)) continue;
+          ctx.fillStyle = "#0F2E38"; ctx.fill();
+          if (pitch <= 8) { ctx.strokeStyle = "#1E5A68"; ctx.lineWidth = 1; ctx.stroke(); continue; }
+          ctx.strokeStyle = "rgba(42,138,156,0.6)"; ctx.lineWidth = 0.8;
+          for (let i = 0; i < pts.length; i += 2) { if (project(pts[i], pts[i + 1], 0)) { const bx = P[0], by = P[1]; if (project(pts[i], pts[i + 1], hgt)) { ctx.beginPath(); ctx.moveTo(bx, by); ctx.lineTo(P[0], P[1]); ctx.stroke(); } } }
+          if (polyPath(pts, hgt, true)) { ctx.fillStyle = "rgba(18,60,72,0.9)"; ctx.fill(); ctx.strokeStyle = "#3FB7CC"; ctx.stroke(); }
+        }
+      }
+      if (rangeM < 1500) {
+        ctx.font = "9.5px ui-monospace, Menlo, monospace"; let n = 0; const seen = new Set();
+        for (let r = mapData.roads.length - 1; r >= 0 && n < 12; r--) {
+          const [c, name, pts] = mapData.roads[r];
+          if (!name || c > 2 || seen.has(name)) continue;
+          let bx = 0, by = 0, bd = 1e9;
+          for (let i = 0; i + 3 < pts.length; i += 2) {
+            const vx = pts[i + 2] - pts[i], vy = pts[i + 3] - pts[i + 1], l2 = vx * vx + vy * vy;
+            const t = l2 < 1e-6 ? 0 : Math.max(0, Math.min(1, ((camX - pts[i]) * vx + (camY - pts[i + 1]) * vy) / l2));
+            const qx = pts[i] + t * vx, qy = pts[i + 1] + t * vy, d = Math.hypot(qx - camX, qy - camY);
+            if (d < bd) { bd = d; bx = qx; by = qy; }
+          }
+          if (bd > rangeM * 0.9 || !project(bx, by, 0)) continue;
+          seen.add(name); n++;
+          const tw = ctx.measureText(name).width;
+          ctx.fillStyle = "rgba(5,9,12,0.7)"; ctx.fillRect(P[0] - tw / 2 - 3, P[1] - 10, tw + 6, 13);
+          ctx.fillStyle = "#8FD9E6"; ctx.fillText(name, P[0] - tw / 2, P[1]);
+        }
+      }
+    } else {
+      ctx.strokeStyle = "#1a3f49"; ctx.lineWidth = 1;
+      for (const f of [0.25, 0.5, 1]) { circle(camX, camY, rangeM * f, 64); ctx.stroke(); }
     }
-    if (!list.length) { ctx.fillStyle = "#4f8a99"; ctx.font = "10px ui-monospace, Menlo, monospace"; const m = mode ? "Nothing in this mode right now" : "No devices yet"; ctx.fillText(m, cx - ctx.measureText(m).width / 2, cy); }
-    ctx.fillStyle = "#4f8a99"; ctx.font = "10px ui-monospace, Menlo, monospace";
-    ctx.fillText("ring = distance · wedge = type · height = threat", 4, h - 4);
+
+    // You
+    if (state.me && frame) {
+      if (state.me.acc > 3 && circle(meX, meY, state.me.acc, 40)) { ctx.fillStyle = "rgba(0,229,255,0.11)"; ctx.fill(); }
+      if (state.scanning && circle(meX, meY, rangeM * 0.6 * pulse + 2, 48)) { ctx.strokeStyle = `rgba(0,229,255,${0.63 * (1 - pulse)})`; ctx.lineWidth = 1.5; ctx.stroke(); }
+      if (project(meX, meY, 0)) { ctx.fillStyle = "#fff"; ctx.beginPath(); ctx.arc(P[0], P[1], 7.5, 0, 7); ctx.fill(); ctx.fillStyle = "#00e5ff"; ctx.beginPath(); ctx.arc(P[0], P[1], 5.5, 0, 7); ctx.fill(); }
+    }
+
+    // Devices
+    const a = 1 - Math.exp(-dt / 0.45);
+    const items = visible().map((d) => {
+      const placed = d.lat != null && frame;
+      let tx, ty;
+      if (placed) { tx = frame.x(d.lon); ty = frame.y(d.lat); }
+      else { const ang = d.angle * Math.PI / 180, r = Math.min(d.dist, rangeM * 1.4); tx = meX + r * Math.sin(ang); ty = meY + r * Math.cos(ang); }
+      const tz = d.kind === "MAP" ? 7 : !placed ? 0 : (6 + d.score * 0.3) * Math.min(4, Math.max(0.5, rangeM / 180));
+      let an = anim.get(d.key); if (!an) { an = { x:tx, y:ty, z:tz, a:0 }; anim.set(d.key, an); }
+      an.x += (tx - an.x) * a; an.y += (ty - an.y) * a; an.z += (tz - an.z) * a; an.a += (1 - an.a) * a;
+      const depth = project(an.x, an.y, an.z) ? P[2] : 99;
+      return { d, an, placed, depth };
+    }).sort((u, v) => u.depth - v.depth);
+    hits = [];
+    for (const { d, an, placed } of items) {
+      const col = d.kind === "MAP" ? "#b388ff" : (COLORS[d.level] || COLORS.LOW), sel = d.key === selected;
+      if (placed) {
+        if (d.kind === "MAP") {
+          const f = (d.facts || []).find((x) => x[0] === "Camera faces"); const dir = f ? parseFloat(f[1]) : NaN;
+          if (!isNaN(dir)) {
+            ctx.beginPath(); if (project(an.x, an.y, 0)) ctx.moveTo(P[0], P[1]);
+            for (let k = 0; k <= 6; k++) { const aa = (dir - 22 + 44 * k / 6) * Math.PI / 180; if (project(an.x + 45 * Math.sin(aa), an.y + 45 * Math.cos(aa), 0)) ctx.lineTo(P[0], P[1]); }
+            ctx.closePath(); ctx.fillStyle = "rgba(179,136,255,0.24)"; ctx.fill();
+          }
+        } else if (d.err > 0 && circle(an.x, an.y, d.err, 32)) { ctx.globalAlpha = sel ? 0.18 : 0.09; ctx.fillStyle = col; ctx.fill(); ctx.globalAlpha = 1; }
+        if (project(an.x, an.y, 0)) { const gx = P[0], gy = P[1]; if (project(an.x, an.y, an.z)) { ctx.strokeStyle = col; ctx.globalAlpha = 0.7 * an.a; ctx.lineWidth = 1.6; ctx.beginPath(); ctx.moveTo(gx, gy); ctx.lineTo(P[0], P[1]); ctx.stroke(); ctx.globalAlpha = 1; } }
+      } else if (sel && state.me) {
+        ctx.setLineDash([6, 5]); ctx.strokeStyle = col; ctx.lineWidth = 1.5;
+        if (circle(meX, meY, d.dist, 64)) ctx.stroke();
+        ctx.globalAlpha = 0.4; if (circle(meX, meY, d.hi, 64)) ctx.stroke(); if (circle(meX, meY, d.lo, 64)) ctx.stroke(); ctx.globalAlpha = 1; ctx.setLineDash([]);
+      }
+      if (!project(an.x, an.y, an.z)) continue;
+      const x = P[0], y = P[1], s = (d.level === "HIGH" ? 6.5 : 5) * Math.max(0.6, Math.min(1.6, P[2]));
+      ctx.beginPath();
+      if (d.kind === "WIFI") ctx.arc(x, y, s, 0, 7);
+      else if (d.kind === "MAP") ctx.rect(x - s, y - s * 0.8, s * 2, s * 1.6);
+      else { ctx.moveTo(x, y - s * 1.25); ctx.lineTo(x + s * 1.25, y); ctx.lineTo(x, y + s * 1.25); ctx.lineTo(x - s * 1.25, y); ctx.closePath(); }
+      if (placed) { ctx.globalAlpha = 0.27 * an.a; ctx.fillStyle = col; ctx.save(); ctx.beginPath(); ctx.arc(x, y, s * 2, 0, 7); ctx.fill(); ctx.restore(); ctx.globalAlpha = an.a; ctx.fill(); ctx.globalAlpha = 1; }
+      else { ctx.strokeStyle = col; ctx.lineWidth = 1.8; ctx.globalAlpha = 0.8 * an.a; ctx.stroke(); ctx.globalAlpha = 1; }
+      if (sel) { ctx.strokeStyle = "#fff"; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(x, y, s + 7, 0, 7); ctx.stroke(); }
+      if (sel || d.level === "HIGH" || d.cat === "POLICE") {
+        const t = String((d.kind === "MAP" ? d.name.replace(" (mapped)", "") : d.name) + (placed ? "" : " ?")).slice(0, sel ? 28 : 18);
+        ctx.font = (sel ? 11 : 10) + "px ui-monospace, Menlo, monospace";
+        ctx.fillStyle = "rgba(5,9,12,0.6)"; ctx.fillRect(x + s + 3, y - 8, ctx.measureText(t).width + 4, 12);
+        ctx.fillStyle = sel ? "#fff" : col; ctx.fillText(t, x + s + 5, y + 3);
+      }
+      hits.push({ d, x, y });
+    }
+
+    // Overlay: north arrow, scale, attribution
+    ctx.fillStyle = "rgba(5,9,12,0.75)"; ctx.beginPath(); ctx.arc(22, 22, 15, 0, 7); ctx.fill();
+    const na = -yaw * Math.PI / 180;
+    ctx.strokeStyle = "#ff3b5c"; ctx.lineWidth = 2.5; ctx.beginPath(); ctx.moveTo(22, 22); ctx.lineTo(22 + 11 * Math.sin(na), 22 - 11 * Math.cos(na)); ctx.stroke();
+    ctx.fillStyle = "#fff"; ctx.font = "10px ui-monospace, Menlo, monospace"; ctx.fillText("N", 19 + 17 * Math.sin(na), 26 - 17 * Math.cos(na));
+    const mpp = rangeM / rad, nice = [5, 10, 20, 50, 100, 200, 500, 1000, 2000, 5000].filter((v) => v <= mpp * w * 0.22).pop() || 5, px = nice / mpp;
+    ctx.strokeStyle = "#fff"; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(10, h - 22); ctx.lineTo(10 + px, h - 22); ctx.stroke();
+    ctx.fillText((nice >= 1000 ? nice / 1000 + " km" : nice + " m"), 10, h - 28);
+    ctx.fillStyle = "rgba(5,9,12,0.8)"; ctx.fillRect(0, h - 18, w, 18);
+    ctx.fillStyle = "#4f8a99"; ctx.fillText("● located  ○ direction unknown", 10, h - 6);
+    const attr = "© OpenStreetMap"; ctx.fillText(attr, w - ctx.measureText(attr).width - 6, h - 6);
+    const msg = !state.me && source === "live" ? "Waiting for the phone's GPS…" : !mapData && source === "live" ? "Street map loading on the phone…" : null;
+    if (msg) { ctx.fillStyle = "#ffc400"; ctx.font = "11px ui-monospace, Menlo, monospace"; ctx.fillText(msg, w / 2 - ctx.measureText(msg).width / 2, 20); }
+    if (!follow) { ctx.fillStyle = "#ffc400"; const t = "free view · tap ◎ to follow"; ctx.fillText(t, w / 2 - ctx.measureText(t).width / 2, h - 36); }
     requestAnimationFrame(draw);
   }
 
-  // drag to orbit/tilt, tap to select
-  let down = null, moved = false, lx = 0, ly = 0;
-  canvas.addEventListener("pointerdown", (e) => { down = [e.clientX, e.clientY]; lx = e.clientX; ly = e.clientY; moved = false; canvas.setPointerCapture(e.pointerId); });
+  // ---------- gestures: 1 finger pan (+fling), 2 fingers pinch-zoom / twist-rotate / vertical-drag tilt ----------
+  const pts = new Map();
+  let gesture = null, moved = false, downAt = 0, lastTapAt = 0, vel = [0, 0], lastMove = 0;
+  function screenToWorld(dx, dy) {
+    const mpp = rangeM / rad, fy = 1 / Math.max(0.45, Math.cos(pitch * Math.PI / 180));
+    const sx = dx * mpp, sy = -dy * mpp * fy, cy = Math.cos(yaw * Math.PI / 180), sy2 = Math.sin(yaw * Math.PI / 180);
+    return [sx * cy + sy * sy2, -sx * sy2 + sy * cy];
+  }
+  function two() { const [a, b] = [...pts.values()]; return { ang:Math.atan2(b.y - a.y, b.x - a.x) * 180 / Math.PI, span:Math.hypot(b.x - a.x, b.y - a.y), fy:(a.y + b.y) / 2 }; }
+  canvas.addEventListener("pointerdown", (e) => {
+    canvas.setPointerCapture(e.pointerId);
+    pts.set(e.pointerId, { x:e.clientX, y:e.clientY, x0:e.clientX, y0:e.clientY });
+    flingX = flingY = 0;
+    if (pts.size === 1) { gesture = "pan"; moved = false; downAt = performance.now(); vel = [0, 0]; }
+    else if (pts.size === 2) { const t = two(); gesture = { ...t, span0:t.span, rot:0, tilt:0, mode:null }; moved = true; }
+  });
   canvas.addEventListener("pointermove", (e) => {
-    if (!down) return;
-    if (Math.abs(e.clientX - down[0]) + Math.abs(e.clientY - down[1]) > 10) moved = true;
-    if (moved && threeD) {
-      targetYaw += (e.clientX - lx) * 0.35; yaw = targetYaw;
-      targetPitch = Math.max(15, Math.min(78, targetPitch - (e.clientY - ly) * 0.25)); pitch = targetPitch;
+    const p = pts.get(e.pointerId); if (!p) return;
+    const dx = e.clientX - p.x, dy = e.clientY - p.y;
+    p.x = e.clientX; p.y = e.clientY;
+    if (pts.size === 1 && gesture === "pan") {
+      if (!moved && Math.hypot(e.clientX - p.x0, e.clientY - p.y0) > 8) moved = true; // tap vs drag by total travel
+      if (moved) {
+        const [wx, wy] = screenToWorld(-dx, -dy); camX += wx; camY += wy; follow = false;
+        const now = performance.now(), dtm = Math.max(1, now - lastMove); lastMove = now;
+        vel = [0.7 * vel[0] + 0.3 * (-dx / dtm * 1000), 0.7 * vel[1] + 0.3 * (-dy / dtm * 1000)];
+      }
+    } else if (pts.size === 2 && gesture && typeof gesture === "object") {
+      const t = two();
+      let da = t.ang - gesture.ang; da = ((da + 540) % 360) - 180;
+      const dfy = t.fy - gesture.fy;
+      gesture.rot += da; gesture.tilt += dfy;
+      if (!gesture.mode) {
+        if (Math.abs(gesture.rot) > 10) gesture.mode = "rotate";
+        else if (Math.abs(gesture.tilt) > 28 && Math.abs(t.span - gesture.span0) < 40 && threeD) gesture.mode = "tilt";
+      }
+      if (gesture.mode === "rotate") yaw = (yaw - da + 360) % 360;
+      if (gesture.mode === "tilt") { pitch = Math.max(0, Math.min(65, pitch - dfy * 0.22)); tgtPitch = pitch; }
+      else { rangeM = Math.max(20, Math.min(3000, rangeM * gesture.span / t.span)); tgtRange = rangeM; }
+      gesture.ang = t.ang; gesture.fy = t.fy; gesture.span = t.span;
     }
-    lx = e.clientX; ly = e.clientY; lastTouch = performance.now();
   });
-  canvas.addEventListener("pointerup", (e) => {
-    if (!moved) {
-      const rect = canvas.getBoundingClientRect(), x = e.clientX - rect.left, y = e.clientY - rect.top;
-      let best = null, bd = 34 * 34;
-      for (const b of blips) { const dd = (b.x - x) ** 2 + (b.y - y) ** 2; if (dd < bd) { bd = dd; best = b.d; } }
-      if (best) { selected = selected === best.key ? null : best.key; render(); }
+  function up(e) {
+    pts.delete(e.pointerId);
+    if (gesture === "pan" && pts.size === 0) {
+      if (!moved && performance.now() - downAt < 350) {
+        const now = performance.now();
+        if (now - lastTapAt < 300) { tgtRange = Math.max(20, tgtRange * 0.5); lastTapAt = 0; }
+        else { lastTapAt = now; tap(e); }
+      } else if (moved && performance.now() - lastMove < 80 && Math.hypot(vel[0], vel[1]) > 120) {
+        const [wx, wy] = screenToWorld(vel[0], vel[1]); flingX = wx; flingY = wy;
+      }
     }
-    down = null;
-  });
-  canvas.addEventListener("wheel", (e) => { maxRange = Math.max(5, Math.min(150, maxRange * (e.deltaY > 0 ? 1.1 : 0.9))); e.preventDefault(); }, { passive:false });
+    if (pts.size === 1) { gesture = "pan-after"; } // ignore the leftover finger until it lifts: no jumps
+    if (pts.size === 0) gesture = null;
+  }
+  canvas.addEventListener("pointerup", up);
+  canvas.addEventListener("pointercancel", up);
+  canvas.addEventListener("wheel", (e) => { tgtRange = Math.max(20, Math.min(3000, tgtRange * (e.deltaY > 0 ? 1.15 : 0.87))); e.preventDefault(); }, { passive:false });
+  function tap(e) {
+    const r = canvas.getBoundingClientRect(), x = e.clientX - r.left, y = e.clientY - r.top;
+    let best = null, bd = 38 * 38;
+    for (const hh of hits) { const dd = (hh.x - x) ** 2 + (hh.y - y) ** 2; if (dd <= bd) { bd = dd; best = hh.d; } }
+    if (best) { selected = selected === best.key ? null : best.key; render(); }
+  }
+  $("tFollow").onclick = () => { follow = true; };
+  $("tIn").onclick = () => { tgtRange = Math.max(20, tgtRange * 0.6); };
+  $("tOut").onclick = () => { tgtRange = Math.min(3000, tgtRange * 1.6); };
+  $("b3d").onclick = () => { threeD = !threeD; tgtPitch = threeD ? 52 : 0; $("b3d").textContent = threeD ? "3D" : "2D"; };
+  $("bLog").onclick = () => { showLog = !showLog; $("bLog").textContent = showLog ? "DEVICES" : "LOG"; render(); };
 
   // ---------- text panels ----------
   function render() {
@@ -343,8 +492,9 @@
     const wifi = state.devices.filter((d) => d.kind === "WIFI").length, ble = state.devices.filter((d) => d.kind === "BLE").length;
     const police = state.devices.filter((d) => d.cat === "POLICE").length, high = state.devices.filter((d) => d.level === "HIGH").length;
     const src = source === "live" ? (state.scanning ? "● LIVE" : "○ PHONE IDLE") : source === "csv" ? "▣ EXPORT" : source === "demo" ? "◌ DEMO" : "… CONNECTING";
+    const located = vis.filter((d) => d.lat != null && d.kind !== "MAP").length, radios = vis.filter((d) => d.kind !== "MAP").length;
     let s = `${src}  WIFI ${wifi}  BLE ${ble}  HIGH ${high}` + (police ? `  POLICE ${police}` : "");
-    s += `\n${(MODES.find((m) => m[1] === mode) || MODES[0])[0]}: ${vis.length}` + (state.env ? " · " + state.env : "") + (state.alpr ? " · ALPR map: " + state.alpr : "");
+    s += `\n${(MODES.find((m) => m[1] === mode) || MODES[0])[0]}: ${vis.length} · located ${located}/${radios}` + (state.me ? ` · GPS ±${state.me.acc} m` : " · no GPS") + (state.alpr ? " · ALPR: " + state.alpr : "");
     if (state.warning) s += "\n⚠ " + state.warning;
     $("status").textContent = s;
     $("status").className = state.warning ? "warn" : "";
@@ -352,10 +502,11 @@
     const sel = state.devices.find((d) => d.key === selected);
     const tr = $("track");
     if (!sel) { tr.textContent = "Tap a device to track it"; tr.className = ""; }
-    else if (sel.kind === "MAP") { tr.textContent = `TRACK ${sel.name}  ${fd(sel.dist)} m · bearing ${Math.round(sel.bearing)}°`; tr.className = "MAP"; }
+    else if (sel.kind === "MAP") { tr.textContent = `TRACK ${sel.name}  ${fd(sel.dist)} m\nExact mapped position (OpenStreetMap)`; tr.className = "MAP"; }
     else {
       const bars = Math.round((Math.max(0, Math.min(70, sel.avg + 100)) * 12) / 70);
-      tr.textContent = `TRACK ${String(sel.name).slice(0, 20)}  ${sel.avg}dBm  ~${fd(sel.dist)}m (${fd(sel.lo)}–${fd(sel.hi)})\n[${"█".repeat(bars)}${"░".repeat(12 - bars)}]  more bars = closer to the Pixel`;
+      const where = sel.lat != null ? `on map ±${sel.err} m` : `direction unknown: walk around (${sel.spots} spots so far)`;
+      tr.textContent = `TRACK ${String(sel.name).slice(0, 20)}  ${sel.avg}dBm  ~${fd(sel.dist)}m (${fd(sel.lo)}–${fd(sel.hi)})\n[${"█".repeat(bars)}${"░".repeat(12 - bars)}] ${where}`;
       tr.className = sel.level;
     }
 
@@ -368,13 +519,13 @@
     }
     const sorted = [...vis].sort((a, b) => b.score - a.score || a.dist - b.dist);
     list.innerHTML = sorted.length ? sorted.map((d) => {
-      const icon = d.kind === "WIFI" ? "●" : d.kind === "BLE" ? "◆" : "■";
-      const sig = d.kind === "MAP" ? "map" : d.avg + "dBm";
+      const icon = d.kind === "WIFI" ? "●" : d.kind === "BLE" ? "◆" : "■", sig = d.kind === "MAP" ? "map" : d.avg + "dBm";
+      const pos = d.kind === "MAP" ? "" : d.lat != null ? ` · 📍±${d.err}m` : " · ?";
       const facts = d.key === selected && d.facts && d.facts.length
         ? `<span class="facts">\n   ${d.facts.slice(0, 10).map((f) => esc(f[0] + ": " + f[1])).join("\n   ")}\n   distance: ${esc(d.src)}</span>` : "";
       return `<div class="item ${d.kind === "MAP" ? "MAP" : esc(d.level)}${d.key === selected ? " sel" : ""}" data-key="${esc(d.key)}">` +
-        `${icon} ${esc(String(d.name).slice(0, 40))}\n   ${esc(sig.padEnd(7))} ~${fd(d.dist)}m (${fd(d.lo)}–${fd(d.hi)})  ${esc((CATS.find((c) => c[0] === d.cat) || ["", d.cat])[1])}` +
-        `${d.vendor ? " · " + esc(d.vendor) : ""}  [${d.score}]` +
+        `${icon} ${esc(String(d.name).slice(0, 40))}\n   ${esc(sig.padEnd(7))} ~${fd(d.dist)}m (${fd(d.lo)}–${fd(d.hi)})  ${esc(CAT_SHORT[d.cat] || d.cat)}` +
+        `${d.vendor ? " · " + esc(d.vendor) : ""}${pos}  [${d.score}]` +
         (d.flags && d.flags.length ? `\n   ! ${esc(d.flags.slice(0, 3).join("; "))}` : "") + facts + `</div>`;
     }).join("") : `<div class="empty">${source === "live" ? "Nothing in this mode yet. Give it a few seconds." : "No devices."}</div>`;
   }

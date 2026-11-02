@@ -23,11 +23,22 @@ class DeviceView(
     val ageSec: Long,
     val lastSec: Long,
     val trusted: Boolean,
-    /** Ground angle on the radar in degrees: the category's wedge, or real bearing for mapped/self-located items. */
+    /** Stable placeholder angle (deg) used only while a device's position is unknown. */
     val angle: Float,
-    /** True compass bearing (degrees) when known (mapped ALPRs, drones reporting GPS); null otherwise. */
+    /** Compass bearing from you (deg) when its position is known. */
     val bearing: Float?,
-)
+    /** Map position: exact (mapped ALPR, drone GPS) or estimated from your movement; null if unknown. */
+    val lat: Double?,
+    val lon: Double?,
+    /** Position uncertainty radius in meters. */
+    val errM: Double,
+    /** Number of distinct GPS spots it was measured from. */
+    val spots: Int,
+    /** Meters you've moved while measuring it (bigger = better fix). */
+    val spreadM: Double,
+) {
+    val located: Boolean get() = lat != null
+}
 
 class Snapshot(
     val time: Long,
@@ -36,26 +47,43 @@ class Snapshot(
     val devices: List<DeviceView>,
     val timeline: List<DeviceStore.LogEntry>,
     val env: Env,
-    val hasFix: Boolean,
     val alprStatus: String,
+    val mapStatus: String,
     val version: Long,
+    val myLat: Double?,
+    val myLon: Double?,
+    val myAccM: Double,
+    val myCourse: Double?,
+    val mapVersion: Long,
 ) {
-    companion object {
-        val EMPTY = Snapshot(0, false, null, emptyList(), emptyList(), Env.INDOOR, false, "", 0)
+    val hasFix: Boolean get() = myLat != null
 
-        /** Stable angle inside the category's 45° wedge (5°..40° within it). */
-        fun wedgeAngle(key: String, c: Category): Float {
-            val h = (key.hashCode().toLong() and 0xffffffffL) % 35
-            return (c.sector * 45 + 5 + h).toFloat()
-        }
+    companion object {
+        val EMPTY = Snapshot(0, false, null, emptyList(), emptyList(), Env.INDOOR, "", "", 0, null, null, 0.0, null, 0)
+
+        fun hashAngle(key: String): Float = ((key.hashCode().toLong() and 0xffffffffL) % 360).toFloat()
 
         fun view(d: Device, env: Env, now: Long, fixLat: Double?, fixLon: Double?): DeviceView {
             var est = Distance.estimate(d, env, now)
+            var lat: Double? = null
+            var lon: Double? = null
+            var err = 0.0
+            val tr = d.track
+            if (d.selfLat != null && d.selfLon != null) {
+                lat = d.selfLat; lon = d.selfLon; err = 10.0
+            } else if (tr.located) {
+                lat = tr.estLat; lon = tr.estLon; err = tr.errM
+            }
             var bearing: Float? = null
-            if (d.selfLat != null && d.selfLon != null && fixLat != null && fixLon != null) {
-                val m = Geo.distanceM(fixLat, fixLon, d.selfLat!!, d.selfLon!!)
-                est = DistEst(m, m * 0.9, m * 1.1, "GPS position broadcast by the device")
-                bearing = Geo.bearingDeg(fixLat, fixLon, d.selfLat!!, d.selfLon!!).toFloat()
+            if (lat != null && lon != null && fixLat != null && fixLon != null) {
+                val m = Geo.distanceM(fixLat, fixLon, lat, lon)
+                bearing = Geo.bearingDeg(fixLat, fixLon, lat, lon).toFloat()
+                val half = (est.hi - est.lo) / 2
+                if (d.selfLat != null) {
+                    est = DistEst(m, m * 0.9, m * 1.1 + 5, "GPS position broadcast by the device")
+                } else if (err < half) {
+                    est = DistEst(m, (m - err).coerceAtLeast(0.1), m + err, "map fix from ${tr.obs.size} spots (±${err.toInt()} m)")
+                }
             }
             return DeviceView(
                 key = d.key, id = d.id, kind = d.kind, category = d.category, title = d.displayName(),
@@ -63,7 +91,8 @@ class Snapshot(
                 dist = est.meters, lo = est.lo, hi = est.hi, distSrc = est.source, score = d.score, level = d.level,
                 flags = d.flags, facts = d.facts.entries.map { it.key to it.value },
                 ageSec = (now - d.firstSeen) / 1000, lastSec = (now - d.lastSeen) / 1000, trusted = d.trusted,
-                angle = wedgeAngle(d.key, d.category), bearing = bearing,
+                angle = hashAngle(d.key), bearing = bearing, lat = lat, lon = lon, errM = err,
+                spots = tr.obs.size, spreadM = tr.spreadM,
             )
         }
 
@@ -83,7 +112,8 @@ class Snapshot(
                 score = if (h.dist < 300) 60 else 30, level = if (h.dist < 300) Level.HIGH else Level.MEDIUM,
                 flags = listOf("Mapped ${a.kindLabel()} ${fmtDist(h.dist)} m ${Geo.cardinal(h.bearing)}"),
                 facts = facts, ageSec = 0, lastSec = 0, trusted = false,
-                angle = h.bearing.toFloat(), bearing = h.bearing.toFloat(),
+                angle = h.bearing.toFloat(), bearing = h.bearing.toFloat(), lat = a.lat, lon = a.lon, errM = 5.0,
+                spots = 0, spreadM = 0.0,
             )
         }
     }

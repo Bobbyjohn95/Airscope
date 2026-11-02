@@ -124,7 +124,7 @@ class ScanService : Service() {
             if (hud == null) {
                 try {
                     val page = assets.open("hud.html").use { it.readBytes() }
-                    val server = HudServer(HUD_PORT, Engine.hudToken, page) { Engine.snapshotJson }
+                    val server = HudServer(HUD_PORT, Engine.hudToken, page, { Engine.snapshotJson }, { Engine.mapJson() })
                     server.start()
                     hud = server
                     Engine.post { Engine.publish(); Engine.store.log("SYS", "Web HUD on port $HUD_PORT") }

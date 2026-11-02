@@ -34,6 +34,7 @@ import android.view.WindowManager
 import android.widget.BaseAdapter
 import android.widget.Button
 import android.widget.EditText
+import android.widget.FrameLayout
 import android.widget.HorizontalScrollView
 import android.widget.LinearLayout
 import android.widget.ListView
@@ -56,7 +57,8 @@ class MainActivity : Activity(), SensorEventListener {
     private val ui = Handler(Looper.getMainLooper())
     private val timeFmt = SimpleDateFormat("HH:mm:ss", Locale.US)
 
-    private lateinit var radar: Radar3DView
+    private lateinit var radar: MapView3D
+    private lateinit var btnCompass: TextView
     private lateinit var status: TextView
     private lateinit var trackBar: TextView
     private lateinit var btnScan: Button
@@ -143,13 +145,16 @@ class MainActivity : Activity(), SensorEventListener {
         SensorManager.getOrientation(rot, orient)
         val az = ((Math.toDegrees(orient[0].toDouble()) + 360) % 360).toFloat()
         val prev = headingDeg
-        headingDeg = if (prev == null) az else {
-            // Circular low-pass so the radar doesn't jitter
+        val next = if (prev == null) az else {
+            // Circular low-pass + dead-band so the map doesn't jitter
             val a = Math.toRadians(prev.toDouble()); val b = Math.toRadians(az.toDouble())
-            val x = 0.85 * cos(a) + 0.15 * cos(b); val y = 0.85 * sin(a) + 0.15 * sin(b)
+            val x = 0.9 * cos(a) + 0.1 * cos(b); val y = 0.9 * sin(a) + 0.1 * sin(b)
             ((Math.toDegrees(atan2(y, x)) + 360) % 360).toFloat()
         }
-        radar.heading = headingDeg
+        if (prev == null || Geo.angleDiff(prev.toDouble(), next.toDouble()) > 0.8) {
+            headingDeg = next
+            radar.heading = next
+        }
     }
 
     override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {}
@@ -377,8 +382,9 @@ class MainActivity : Activity(), SensorEventListener {
     private fun showAbout() {
         AlertDialog.Builder(this).setTitle("About AirScope").setMessage(
             "Passive Wi-Fi + Bluetooth observer. It only listens; it never connects, jams or transmits to other devices.\n\n" +
-                "Limits:\n• Phones can't measure direction. Around the ring = device type, not compass bearing " +
-                "(except mapped ALPRs and drones that broadcast GPS).\n" +
+                "Map:\n• Phones can't measure the direction of a radio signal. AirScope places a device on the map by " +
+                "measuring it from several GPS spots as you walk or drive (hollow = not located yet, solid = located ±error circle).\n" +
+                "• Mapped ALPRs and Remote ID drones are placed at their exact positions.\n\nLimits:\n" +
                 "• Distance from signal strength is an estimate (shown as a range). Wi-Fi RTT gives real distance for access points that support it.\n" +
                 "• Android can't see Wi-Fi probe requests, so some Flock cameras are invisible over the air: mapped ALPR alerts (OpenStreetMap/DeFlock) cover those.\n" +
                 "• With the screen off Android pauses unfiltered BLE scans; trackers, Flock BLE, Raven and Remote ID keep working.\n\n" +
@@ -424,6 +430,10 @@ class MainActivity : Activity(), SensorEventListener {
             if (d.kind != Kind.MAP) appendLine("Signal: ${d.rssi} dBm now · ${d.avg} dBm smoothed")
             appendLine("Distance: ~${fmtDist(d.dist)} m (likely ${fmtDist(d.lo)}–${fmtDist(d.hi)} m)")
             appendLine("Method: ${d.distSrc}")
+            if (d.kind != Kind.MAP) appendLine(
+                if (d.located) String.format(Locale.US, "Map position: %.5f, %.5f (±%d m, from %d spots)", d.lat, d.lon, d.errM.toInt(), d.spots)
+                else "Map position: not located yet (measured from ${d.spots} spots, moved ${d.spreadM.toInt()} m)",
+            )
             if (d.kind != Kind.MAP) appendLine("Seen for: ${d.ageSec / 60} min ${d.ageSec % 60} s")
             appendLine("Score: ${d.score} (${d.level})")
             if (d.facts.isNotEmpty()) {
@@ -451,7 +461,7 @@ class MainActivity : Activity(), SensorEventListener {
     private fun refresh() {
         val s = Engine.snapshot
         val vis = s.devices.filter { mode.matches(it.category) }
-        radar.update(s.devices, selectedKey)
+        radar.update(s, Engine.geo.map, selectedKey)
 
         val wifiN = s.devices.count { it.kind == Kind.WIFI }
         val bleN = s.devices.count { it.kind == Kind.BLE }
@@ -461,6 +471,9 @@ class MainActivity : Activity(), SensorEventListener {
         sb.append("  WIFI $wifiN  BLE $bleN  HIGH ${s.devices.count { it.level == Level.HIGH }}")
         if (police > 0) sb.append("  POLICE $police")
         sb.append("\n").append(mode.label).append(": ").append(vis.size).append(" · ").append(Engine.env.label)
+        sb.append(" · ").append(if (s.hasFix) "GPS ±${s.myAccM.toInt()} m" else "no GPS")
+        val located = vis.count { it.located && it.kind != Kind.MAP }
+        if (vis.isNotEmpty()) sb.append(" · located $located/${vis.count { it.kind != Kind.MAP }}")
         if (Engine.alprOn && (mode == Mode.POLICE || mode == Mode.ALL) && s.alprStatus.isNotEmpty()) sb.append(" · ALPR map: ").append(s.alprStatus)
         if (Engine.hudOn && s.scanning) ScanService.hudUrls().firstOrNull()?.let { sb.append("\nHUD ").append(it) }
         s.warning?.let { sb.append("\n⚠ ").append(it) }
@@ -469,6 +482,7 @@ class MainActivity : Activity(), SensorEventListener {
 
         btnScan.text = if (s.scanning) "STOP" else "START"
         btnView.text = if (radar.threeD) "3D" else "2D"
+        btnCompass.text = if (radar.headingUp) "⬆" else "N"
         btnEnv.text = "ENV:" + Engine.env.name
         btnLog.text = if (showTimeline) "RADAR" else "LOG"
         btnWifi.alpha = if (Engine.wifiOn) 1f else 0.4f
@@ -495,13 +509,18 @@ class MainActivity : Activity(), SensorEventListener {
         }
         if (d.kind == Kind.MAP) {
             trackBar.text = "TRACK ${d.title.take(22)}  ${fmtDist(d.dist)} m ${Geo.cardinal(d.bearing!!.toDouble())}\n" +
-                (headingDeg?.let { "Turn until it's at the top of the radar" } ?: "Compass unavailable: shown north-up")
+                "Exact mapped position (OpenStreetMap)"
             trackBar.setTextColor(Ui.VIOLET)
             return
         }
         val bars = ((d.avg + 100).coerceIn(0, 70) * 12) / 70
+        val where = when {
+            d.located && d.bearing != null -> "on map ±${d.errM.toInt()} m · ${fmtDist(d.dist)} m ${Geo.cardinal(d.bearing.toDouble())} of you"
+            !s.hasFix -> "needs GPS to place on the map"
+            else -> "direction unknown: walk ~${maxOf(10, (d.dist * 0.4).toInt())} m around (moved ${d.spreadM.toInt()} m, ${d.spots} spots)"
+        }
         trackBar.text = "TRACK ${d.title.take(20)}  ${d.avg}dBm  ~${fmtDist(d.dist)}m (${fmtDist(d.lo)}–${fmtDist(d.hi)})\n" +
-            "[" + "█".repeat(bars) + "░".repeat(12 - bars) + "]  more bars = closer"
+            "[" + "█".repeat(bars) + "░".repeat(12 - bars) + "] " + where
         trackBar.setTextColor(Ui.levelColor(d.level))
     }
 
@@ -577,14 +596,29 @@ class MainActivity : Activity(), SensorEventListener {
         }
         root.addView(HorizontalScrollView(this).apply { isHorizontalScrollBarEnabled = false; addView(chipRow) })
 
-        radar = Radar3DView(this).apply {
-            onSelect = { d ->
-                select(d.key)
-                if (selectedKey == d.key) toast(d.title)
-            }
+        radar = MapView3D(this).apply {
+            onSelect = { d -> select(d.key) }
             mode = this@MainActivity.mode
         }
-        root.addView(radar, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1.25f))
+        val mapBox = FrameLayout(this)
+        mapBox.addView(radar, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+        val tools = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        fun mapBtn(t: String, onClick: () -> Unit) = TextView(this).apply {
+            text = t; textSize = 16f; gravity = Gravity.CENTER; setTextColor(Ui.CYAN)
+            background = GradientDrawable().apply { setColor(Color.argb(200, 5, 9, 12)); setStroke(dp(1), Ui.CYAN); cornerRadius = dp(20).toFloat() }
+            setOnClickListener { onClick() }
+        }.also { tools.addView(it, LinearLayout.LayoutParams(dp(40), dp(40)).apply { bottomMargin = dp(8) }) }
+        mapBtn("◎") { radar.follow = true; toast("Following your position") }
+        btnCompass = mapBtn("N") {
+            radar.headingUp = !radar.headingUp
+            toast(if (radar.headingUp) "Map turns with you (heading up)" else "North up")
+        }
+        mapBtn("＋") { radar.zoomBy(0.6) }
+        mapBtn("－") { radar.zoomBy(1.6) }
+        mapBox.addView(tools, FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.END or Gravity.TOP).apply {
+            topMargin = dp(6); rightMargin = dp(4)
+        })
+        root.addView(mapBox, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1.35f))
 
         trackBar = text("", 12f, Ui.DIM).apply { setPadding(0, dp(4), 0, dp(4)) }
         root.addView(trackBar)
@@ -593,6 +627,7 @@ class MainActivity : Activity(), SensorEventListener {
         btnView = button("3D") {
             radar.threeD = !radar.threeD
             Prefs.putBool(this, "view3d", radar.threeD)
+            toast(if (radar.threeD) "3D: two-finger drag up/down to tilt, twist to rotate" else "2D map")
         }
         btnEnv = button("ENV") { cycleEnv() }
         btnLog = button("LOG") { showTimeline = !showTimeline; lastListVersion = -1 }

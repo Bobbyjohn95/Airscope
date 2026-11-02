@@ -9,7 +9,7 @@ object Exporter {
     private val dateFmt = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US)
 
     const val DEVICE_HEADER =
-        "kind,id,category,label,name,vendor,avg_rssi,est_distance_m,dist_low_m,dist_high_m,dist_method,seen_sec,score,level,details,flags"
+        "kind,id,category,label,name,vendor,avg_rssi,est_distance_m,dist_low_m,dist_high_m,dist_method,lat,lon,pos_err_m,seen_sec,score,level,details,flags"
 
     private fun csv(s: String) = "\"" + s.replace("\"", "\"\"") + "\""
 
@@ -19,7 +19,9 @@ object Exporter {
             appendLine(
                 listOf(
                     d.kind.name, d.id, d.category.name, csv(d.title), csv(d.name), csv(d.vendor), d.avg,
-                    fmt1(d.dist), fmt1(d.lo), fmt1(d.hi), csv(d.distSrc), d.ageSec, d.score, d.level.name,
+                    fmt1(d.dist), fmt1(d.lo), fmt1(d.hi), csv(d.distSrc),
+                    d.lat?.let { String.format(Locale.US, "%.6f", it) } ?: "", d.lon?.let { String.format(Locale.US, "%.6f", it) } ?: "",
+                    if (d.located) d.errM.toInt().toString() else "", d.ageSec, d.score, d.level.name,
                     csv(d.facts.joinToString("; ") { "${it.first}: ${it.second}" }), csv(d.flags.joinToString("; ")),
                 ).joinToString(","),
             )
@@ -63,11 +65,28 @@ object Exporter {
         append(",\"level\":").append(json(d.level.name))
         append(",\"detail\":").append(json(d.detail))
         append(",\"angle\":").append(fmt1(d.angle.toDouble()))
+        append(",\"lat\":").append(d.lat?.let { String.format(Locale.US, "%.6f", it) } ?: "null")
+        append(",\"lon\":").append(d.lon?.let { String.format(Locale.US, "%.6f", it) } ?: "null")
+        append(",\"err\":").append(d.errM.toInt())
+        append(",\"spots\":").append(d.spots)
         append(",\"bearing\":").append(d.bearing?.let { fmt1(it.toDouble()) } ?: "null")
         append(",\"flags\":[").append(d.flags.joinToString(",") { json(it) }).append("]")
         append(",\"facts\":[").append(d.facts.joinToString(",") { "[${json(it.first)},${json(it.second)}]" }).append("]")
         append(",\"ageSec\":").append(d.ageSec)
         append("}")
+    }
+
+    private fun pts(a: FloatArray): String = a.joinToString(",", "[", "]") { (Math.round(it * 10) / 10.0).toString() }
+
+    /** Street-map geometry for the web HUD (local meters around lat/lon). */
+    fun mapJson(m: MapData?): String {
+        if (m == null) return "{\"lat\":null}"
+        return buildString {
+            append(String.format(Locale.US, "{\"lat\":%.6f,\"lon\":%.6f", m.lat0, m.lon0))
+            append(",\"roads\":[").append(m.roads.joinToString(",") { "[${it.cls},${json(it.name ?: "")},${pts(it.pts)}]" }).append("]")
+            append(",\"bld\":[").append(m.buildings.joinToString(",") { "[${fmt1(it.heightM.toDouble())},${pts(it.pts)}]" }).append("]")
+            append(",\"areas\":[").append(m.areas.joinToString(",") { "[${it.kind},${pts(it.pts)}]" }).append("]}")
+        }
     }
 
     fun snapshotJson(s: Snapshot): String = buildString {
@@ -76,6 +95,13 @@ object Exporter {
         append(",\"warning\":").append(s.warning?.let { json(it) } ?: "null")
         append(",\"env\":").append(json(s.env.label))
         append(",\"alpr\":").append(json(s.alprStatus))
+        append(",\"mapStatus\":").append(json(s.mapStatus))
+        append(",\"mapV\":").append(s.mapVersion)
+        append(",\"me\":")
+        if (s.myLat != null && s.myLon != null) {
+            append(String.format(Locale.US, "{\"lat\":%.6f,\"lon\":%.6f,\"acc\":%d,\"course\":%s}", s.myLat, s.myLon, s.myAccM.toInt(),
+                s.myCourse?.let { fmt1(it) } ?: "null"))
+        } else append("null")
         append(",\"devices\":[").append(s.devices.joinToString(",") { deviceJson(it) }).append("]")
         append(",\"timeline\":[")
         append(s.timeline.take(60).joinToString(",") { "{\"time\":${it.time},\"tag\":${json(it.tag)},\"text\":${json(it.text)}}" })
