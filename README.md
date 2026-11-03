@@ -79,13 +79,15 @@ broadcast. It never connects to, jams, deauths or transmits to anything.
 - **Setup checklist** (MORE → Setup & permissions) that requests every permission and setting the app needs.
 
 ## Install
-1. On the Pixel, open this repo's **Releases**, tap the newest **AirScope.apk**, and open it from Files.
+1. On the Pixel, open https://github.com/Bobbyjohn95/Airscope/releases/latest, tap **AirScope.apk**, and open it from Files.
+   (That link always points to the newest build that can update itself; builds marked "one-time key" can't.)
    Allow installs from Files when asked. Play Protect may warn about an unknown developer; that's expected for your own build.
 2. Open AirScope. The setup checklist appears: tap **FIX** on each item. It covers Location, Nearby devices, Notifications,
    battery unrestricted, Location and Bluetooth on, and allowing it to install its own updates.
 3. Tap **START**.
 
-**Upgrading from build 2 or earlier:** uninstall the old AirScope first (it was signed with a different key), then install the new one.
+**Coming from a "one-time key" build (2–8):** uninstall the old AirScope first (it was signed with a different key),
+then install the new one. This is needed only once.
 
 ## Automatic updates (one-time setup on github.com, no password in the app)
 Android only installs an update signed with the **same key** as the installed app. GitHub's build machines are wiped
