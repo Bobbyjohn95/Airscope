@@ -115,6 +115,8 @@ class GeoTracker {
     fun positionAt(tNanos: Long): PositionFilter.Pos? {
         if (!filter.initialized) return null
         if (SystemClock.elapsedRealtimeNanos() - filter.lastNanos > 6_000_000_000L) return null
+        // Heard more than 3 s after the last GPS fix: where you were is a guess (90+ m at highway speed).
+        if (tNanos - filter.lastNanos > 3_000_000_000L) return null
         val p = filter.at(tNanos) ?: return null
         return if (p.accM <= 20.0) p else null
     }
@@ -210,7 +212,9 @@ class GeoTracker {
             tLat = pr.lat(lead * Math.cos(Math.toRadians(c))); tLon = pr.lon(lead * Math.sin(Math.toRadians(c)))
         } else { tLat = la; tLon = lo }
         val covered = chunks.any { ch ->
-            Geo.distanceM(ch.lat0, ch.lon0, tLat, tLon) < ch.radiusM * 0.55 && (fast || !ch.fast) &&
+            // On foot / in town we need buildings around you, which only reach DETAIL_RADIUS from a chunk's center.
+            val reach = if (fast) ch.radiusM * 0.55 else minOf(ch.radiusM * 0.55, MapData.DETAIL_RADIUS - 150.0)
+            Geo.distanceM(ch.lat0, ch.lon0, tLat, tLon) < reach && (fast || !ch.fast) &&
                 now - ch.fetchedAt < 14L * 24 * 3_600_000
         }
         if (covered) return
@@ -320,6 +324,8 @@ class GeoTracker {
 
     // ---------------------------------------------------------------- network + cache
 
+    private val OVERPASS_ERROR = Regex("\"remark\"\\s*:\\s*\"[^\"]*(error|timed out|timeout|out of memory)", RegexOption.IGNORE_CASE)
+
     private fun download(query: String): String {
         val endpoints = listOf("https://overpass-api.de/api/interpreter", "https://overpass.kumi.systems/api/interpreter")
         var last: Exception? = null
@@ -334,7 +340,10 @@ class GeoTracker {
                 c.setRequestProperty("Content-Type", "application/x-www-form-urlencoded")
                 c.outputStream.use { it.write(("data=" + URLEncoder.encode(query, "UTF-8")).toByteArray()) }
                 if (c.responseCode != 200) throw IllegalStateException("HTTP ${c.responseCode}")
-                return c.inputStream.bufferedReader().use { it.readText() }
+                val body = c.inputStream.bufferedReader().use { it.readText() }
+                // Overpass reports timeouts / overload as HTTP 200 with a "remark" and partial data: not a success.
+                if (OVERPASS_ERROR.containsMatchIn(body)) throw IllegalStateException("Overpass busy")
+                return body
             } catch (e: Exception) {
                 last = e
             }

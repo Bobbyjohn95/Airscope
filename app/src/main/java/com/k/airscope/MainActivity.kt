@@ -43,6 +43,7 @@ import java.util.Locale
 class MainActivity : Activity() {
     companion object {
         private const val REQ_PERMS = 42
+        private const val REQ_START = 43
     }
 
     private val ui = Handler(Looper.getMainLooper())
@@ -69,6 +70,8 @@ class MainActivity : Activity() {
     private var lastListVersion = -1L
     private var lastListAt = 0L
     private var pendingStart = false
+    private var hudUrl: String? = null
+    private var hudUrlAt = 0L
 
     // Which way you're facing (true north, with accuracy)
     private lateinit var headingTracker: HeadingTracker
@@ -89,12 +92,18 @@ class MainActivity : Activity() {
         mode = runCatching { Mode.valueOf(Prefs.getString(this, "mode", Mode.ALL.name)) }.getOrDefault(Mode.ALL)
         setContentView(buildUi())
         radar.threeD = Prefs.getBool(this, "view3d", true)
+        radar.onViewChanged = { Prefs.putBool(this, "view3d", radar.threeD) }
         handleIntent(intent)
         headingTracker = HeadingTracker(this)
         radar.headingSource = headingTracker
         Updater.schedule(this)
         if (System.currentTimeMillis() - Prefs.getLong(this, Updater.PREF_LAST) > 3 * 3_600_000L) {
             Updater.checkAsync(this, manual = false)
+        }
+        // Scanning was on when the app last stopped (e.g. it was updated or Android closed it): pick it back up.
+        if (Prefs.getBool(this, "was_running", false) && !Engine.running && granted(Manifest.permission.ACCESS_FINE_LOCATION)) {
+            ScanService.start(this)
+            toast("Scanning resumed")
         }
         if (!Prefs.getBool(this, "setup_seen", false)) {
             Prefs.putBool(this, "setup_seen", true)
@@ -112,6 +121,23 @@ class MainActivity : Activity() {
             selectedKey = it
             showTimeline = false
         }
+    }
+
+    override fun onStart() {
+        super.onStart()
+        Updater.uiVisible = true
+    }
+
+    override fun onStop() {
+        super.onStop()
+        Updater.uiVisible = false
+        // A downloaded update installs now that you've left the app (if you're not scanning).
+        if (!Engine.running) Updater.installPendingAsync(this)
+    }
+
+    override fun onDestroy() {
+        ui.removeCallbacksAndMessages(null)
+        super.onDestroy()
     }
 
     override fun onResume() {
@@ -151,7 +177,7 @@ class MainActivity : Activity() {
 
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
-        if (requestCode != REQ_PERMS) return
+        if (requestCode != REQ_PERMS && requestCode != REQ_START) return
         if (!granted(Manifest.permission.ACCESS_FINE_LOCATION)) {
             toast("Location permission is required: Android only gives Wi-Fi/BLE scan results to apps with it.")
         }
@@ -159,7 +185,7 @@ class MainActivity : Activity() {
             pendingStart = false
             ScanService.start(this)
         }
-        ui.postDelayed({ showSetup(firstRun = false) }, 300)
+        if (requestCode == REQ_PERMS) ui.postDelayed({ showSetup(firstRun = false) }, 300)
     }
 
     private data class Check(val title: String, val ok: Boolean, val why: String, val fix: (() -> Unit)?)
@@ -221,6 +247,7 @@ class MainActivity : Activity() {
     }
 
     private fun showSetup(firstRun: Boolean) {
+        if (isFinishing || isDestroyed) return
         val items = checks()
         val box = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(18), dp(8), dp(18), dp(4)) }
         val dialog = AlertDialog.Builder(this)
@@ -265,8 +292,14 @@ class MainActivity : Activity() {
     private fun toggleScan() {
         if (Engine.running) {
             ScanService.stop(this)
-        } else if (requestRuntime()) {
+        } else if (granted(Manifest.permission.ACCESS_FINE_LOCATION)) {
             ScanService.start(this)
+            // Nice-to-have permissions (Nearby devices, notifications): ask once, never block scanning.
+            val optional = missingRuntime()
+            if (optional.isNotEmpty() && !Prefs.getBool(this, "asked_optional", false)) {
+                Prefs.putBool(this, "asked_optional", true)
+                requestPermissions(optional.toTypedArray(), REQ_START)
+            }
             val pm = getSystemService(PowerManager::class.java)
             if (!pm.isIgnoringBatteryOptimizations(packageName) && !Prefs.getBool(this, "asked_battery", false)) {
                 Prefs.putBool(this, "asked_battery", true)
@@ -274,6 +307,7 @@ class MainActivity : Activity() {
             }
         } else {
             pendingStart = true
+            requestPermissions(missingRuntime().toTypedArray(), REQ_START)
         }
     }
 
@@ -296,11 +330,19 @@ class MainActivity : Activity() {
         AlertDialog.Builder(this).setTitle("Web HUD for iPhone").setMessage(msg).setPositiveButton("OK", null).show()
     }
 
+    /** AUTO -> OPEN -> INDOOR -> DENSE -> CAR -> AUTO */
     private fun cycleEnv() {
         val all = Env.values()
-        Engine.env = all[(Engine.env.ordinal + 1) % all.size]
+        if (Engine.envAuto) {
+            Engine.envAuto = false
+            Engine.env = all[0]
+        } else if (Engine.env.ordinal == all.size - 1) {
+            Engine.envAuto = true
+        } else {
+            Engine.env = all[Engine.env.ordinal + 1]
+        }
         Prefs.save(this)
-        toast("Distance model: ${Engine.env.label}")
+        toast(if (Engine.envAuto) "Distance model: automatic (car when driving, outdoor/indoor from GPS)" else "Distance model: ${Engine.env.label}")
     }
 
     private fun setMode(m: Mode) {
@@ -364,9 +406,13 @@ class MainActivity : Activity() {
             .setNegativeButton("Close", null)
             .create()
         d.setOnShowListener {
-            d.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+            val btn = d.getButton(AlertDialog.BUTTON_POSITIVE)
+            btn.setOnClickListener {
                 result.text = "Checking…"
-                Updater.checkAsync(this, manual = true) { msg -> ui.post { result.text = "Result: $msg" } }
+                btn.isEnabled = false
+                Updater.checkAsync(this, manual = true) { msg ->
+                    ui.post { result.text = "Result: $msg"; btn.isEnabled = true }
+                }
             }
         }
         d.show()
@@ -478,7 +524,7 @@ class MainActivity : Activity() {
         sb.append(if (s.scanning) "● SCANNING" else "○ IDLE")
         sb.append("  WIFI $wifiN  BLE $bleN  HIGH ${s.devices.count { it.level == Level.HIGH }}")
         if (police > 0) sb.append("  POLICE $police")
-        sb.append("\n").append(mode.label).append(": ").append(vis.size).append(" · ").append(Engine.env.label)
+        sb.append("\n").append(mode.label).append(": ").append(vis.size).append(" · ").append(if (Engine.envAuto) "auto: " + Engine.env.label.lowercase() else Engine.env.label)
         sb.append(" · ").append(if (s.hasFix) "GPS ±${fmt1(s.myAccM)} m" else "no GPS")
         if (s.gnss.isNotEmpty()) sb.append(" · ").append(s.gnss)
         val spd = kotlin.math.hypot(s.myVx, s.myVy)
@@ -486,7 +532,11 @@ class MainActivity : Activity() {
         val located = vis.count { it.located && it.kind != Kind.MAP }
         if (vis.isNotEmpty()) sb.append(" · located $located/${vis.count { it.kind != Kind.MAP }}")
         if (Engine.alprOn && (mode == Mode.POLICE || mode == Mode.ALL) && s.alprStatus.isNotEmpty()) sb.append(" · ALPR map: ").append(s.alprStatus)
-        if (Engine.hudOn && s.scanning) ScanService.hudUrls().firstOrNull()?.let { sb.append("\nHUD ").append(it) }
+        if (Engine.hudOn && s.scanning) {
+            val now = System.currentTimeMillis()
+            if (now - hudUrlAt > 10_000) { hudUrlAt = now; hudUrl = ScanService.hudUrls().firstOrNull() }
+            hudUrl?.let { sb.append("\nHUD ").append(it) }
+        }
         headingTracker.label()?.let { sb.append("\n").append(it) }
         s.warning?.let { sb.append("\n⚠ ").append(it) }
         status.text = sb.toString()
@@ -495,7 +545,7 @@ class MainActivity : Activity() {
         btnScan.text = if (s.scanning) "STOP" else "START"
         btnView.text = if (radar.threeD) "3D" else "2D"
         btnCompass.text = if (radar.headingUp) "⬆" else "N"
-        btnEnv.text = "ENV:" + Engine.env.name
+        btnEnv.text = if (Engine.envAuto) "ENV:AUTO" else "ENV:" + Engine.env.name
         btnLog.text = if (showTimeline) "RADAR" else "LOG"
         btnWifi.alpha = if (Engine.wifiOn) 1f else 0.4f
         btnBle.alpha = if (Engine.bleOn) 1f else 0.4f
@@ -576,11 +626,13 @@ class MainActivity : Activity() {
             }
             when (val item = items[position]) {
                 is DeviceView -> {
+                    tv.tag = item
                     tv.text = deviceLine(item)
                     tv.setTextColor(if (item.kind == Kind.MAP) Ui.VIOLET else Ui.levelColor(item.level))
                     tv.setBackgroundColor(if (item.key == selectedKey) Ui.SELECT_BG else Color.TRANSPARENT)
                 }
                 is DeviceStore.LogEntry -> {
+                    tv.tag = null
                     tv.text = "${timeFmt.format(Date(item.time))} ${item.tag.padEnd(6)} ${item.text}"
                     tv.setTextColor(when (item.tag) { "HIGH" -> Ui.RED; "MEDIUM" -> Ui.AMBER; "SYS" -> Ui.CYAN; else -> Ui.DIM })
                     tv.setBackgroundColor(Color.TRANSPARENT)
@@ -640,8 +692,7 @@ class MainActivity : Activity() {
         }.also { tools.addView(it, LinearLayout.LayoutParams(dp(40), dp(40)).apply { bottomMargin = dp(8) }) }
         mapBtn("◎") { radar.follow = true; toast("Following your position") }
         btnCompass = mapBtn("N") {
-            radar.headingUp = !radar.headingUp
-            toast(if (radar.headingUp) "Map turns with you (heading up)" else "North up")
+            toast(if (radar.cycleOrientation()) "Map turns with you (heading up)" else "North up")
         }
         mapBtn("＋") { radar.zoomBy(0.6) }
         mapBtn("－") { radar.zoomBy(1.6) }
@@ -674,9 +725,11 @@ class MainActivity : Activity() {
             divider = ColorDrawable(Ui.GRID)
             dividerHeight = 1
             adapter = this@MainActivity.adapter
-            setOnItemClickListener { _, _, pos, _ -> (this@MainActivity.adapter.items.getOrNull(pos) as? DeviceView)?.let { select(it.key) } }
-            setOnItemLongClickListener { _, _, pos, _ ->
-                (this@MainActivity.adapter.items.getOrNull(pos) as? DeviceView)?.let { showDetails(it) }
+            setOnItemClickListener { _, v, _, _ -> (v.tag as? DeviceView)?.let { select(it.key) } }
+            setOnItemLongClickListener { _, v, _, _ ->
+                (v.tag as? DeviceView)?.let { tapped ->
+                    showDetails(Engine.snapshot.devices.firstOrNull { it.key == tapped.key } ?: tapped)
+                }
                 true
             }
         }

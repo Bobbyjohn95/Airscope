@@ -48,6 +48,7 @@ class SignalScanner(ctx: Context, private val handler: Handler) {
     var running = false
         private set
     private var bleActive = false
+    private var bleBackoffUntil = 0L
     private var bleError: String? = null
     private var lastWifiScanOk = true
     private val rttCandidates = HashMap<String, ScanResult>()
@@ -98,7 +99,12 @@ class SignalScanner(ctx: Context, private val handler: Handler) {
             handler.post { for (r in copy) handleBle(r) }
         }
         override fun onScanFailed(errorCode: Int) {
-            handler.post { bleError = "BLE scan failed (code $errorCode)" }
+            handler.post {
+                // Stop both scans and try again in 35 s (Android blocks more than 5 scan starts per 30 s).
+                bleError = "BLE scan failed (code $errorCode), retrying"
+                stopBle()
+                bleBackoffUntil = System.currentTimeMillis() + 35_000
+            }
         }
     }
 
@@ -131,7 +137,7 @@ class SignalScanner(ctx: Context, private val handler: Handler) {
 
     fun syncBle() {
         val want = running && Engine.bleOn && bt?.isEnabled == true
-        if (want && !bleActive) startBle()
+        if (want && !bleActive && System.currentTimeMillis() >= bleBackoffUntil) startBle()
         if (!want && bleActive) stopBle()
     }
 
@@ -185,6 +191,8 @@ class SignalScanner(ctx: Context, private val handler: Handler) {
         val addr = dev.address ?: return
         val now = System.currentTimeMillis()
         val d = store.upsert(addr, Kind.BLE, now)
+        // With the screen on, one advert can reach both the open and the filtered scan: count it once.
+        if (r.timestampNanos == d.lastRxNanos && d.lastRxNanos != 0L) return
         val raw = r.scanRecord?.bytes
         val h = raw?.contentHashCode() ?: 0
         if (h != d.dataHash || now - d.classifiedAt > 15_000) {
@@ -279,6 +287,8 @@ class SignalScanner(ctx: Context, private val handler: Handler) {
         val m = rtt ?: return
         if (rttBusy || !Engine.wifiOn || !m.isAvailable || rttCandidates.isEmpty()) return
         val now = System.currentTimeMillis()
+        // Forget access points not heard for 2 minutes (the list would otherwise grow all day)
+        rttCandidates.values.removeAll { store.devices["WIFI:" + it.BSSID.lowercase(Locale.US)]?.let { d -> now - d.lastSeen > 120_000 } != false }
         val fresh = rttCandidates.values.filter { store.devices["WIFI:" + it.BSSID.lowercase(Locale.US)]?.let { d -> now - d.lastSeen < 60_000 } == true }
             .sortedByDescending { it.level }
             .take(RangingRequest.getMaxPeers())

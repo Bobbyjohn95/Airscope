@@ -39,7 +39,30 @@ object Engine {
         private set
     @Volatile var wifiOn = true
     @Volatile var bleOn = true
+    /** Distance model in use. With [envAuto] it follows what you're doing; otherwise it's your choice. */
     @Volatile var env = Env.INDOOR
+    @Volatile var envAuto = true
+    private var drivingUntil = 0L
+    private var envCandidate = Env.INDOOR
+    private var envCandidateSince = 0L
+
+    /**
+     * Engine thread. Driving (over ~16 mph) -> car, and it stays "car" for a minute after you slow down (traffic lights).
+     * Otherwise a clear, fresh GPS fix means outdoors; a weak or missing one means indoors. Changes need 20 s to stick.
+     */
+    private fun updateAutoEnv(now: Long) {
+        if (!envAuto) return
+        val fresh = android.os.SystemClock.elapsedRealtimeNanos() - geo.fixNanos < 10_000_000_000L && geo.lat != null
+        if (fresh && geo.speed > 7.0) drivingUntil = now + 60_000
+        val want = when {
+            now < drivingUntil -> Env.CAR
+            fresh && geo.accuracy <= 8.0 -> Env.OPEN
+            else -> Env.INDOOR
+        }
+        if (want == Env.CAR) { env = Env.CAR; envCandidate = want; return } // switch to car right away
+        if (want != envCandidate) { envCandidate = want; envCandidateSince = now }
+        if (env != want && now - envCandidateSince >= 20_000) env = want
+    }
     @Volatile var alprOn = true
     @Volatile var hudOn = false
     /** Phone heading (true north) and its accuracy, set by the screen while it's open; shared with the HUD. */
@@ -141,16 +164,16 @@ object Engine {
             if (!running) return
             val now = System.currentTimeMillis()
             scanner?.syncBle()
+            updateAutoEnv(now)
             for (d in store.rescore(now)) deviceAlert?.invoke(d)
-            // Re-estimate map positions for devices with new GPS-tagged samples (a few per tick)
-            var budget = 20
-            for (d in store.devices.values) {
-                if (budget == 0) break
-                if (d.track.dirty && store.isActive(d, now)) {
-                    locate(d, now)
-                    budget--
-                }
-            }
+            // Re-estimate map positions for devices with new GPS-tagged samples: least recently estimated
+            // first, so a newly appeared device is never starved by busy older ones.
+            store.devices.values.asSequence()
+                .filter { it.track.dirty && store.isActive(it, now) }
+                .sortedBy { it.track.estAt }
+                .take(20)
+                .toList()
+                .forEach { locate(it, now) }
             if (now - lastHistoryTouch > 60_000) {
                 lastHistoryTouch = now
                 for (d in store.active(now)) if (HistoryDb.shouldTrack(d)) {
@@ -172,7 +195,7 @@ object Engine {
     private fun locate(d: Device, now: Long) {
         val tr = d.track
         if (d.followM > 300) { // it's moving with you: there is no fixed spot to find
-            tr.dirty = false; tr.located = false; tr.ambiguous = false
+            tr.dirty = false; tr.located = false; tr.ambiguous = false; tr.estAt = now
             return
         }
         val (prior, sigma) = Distance.locatorPrior(d)
@@ -203,13 +226,21 @@ object Engine {
     fun recordObservation(d: Device, rssi: Int, now: Long, rxNanos: Long) {
         val pos = geo.positionAt(rxNanos) ?: return
         Locator.add(d.track, pos.lat, pos.lon, rssi.toDouble(), now, pos.accM)
-        // Following: distance you moved while it stayed close and in continuous view
-        if (d.lastObsNanos > 0 && rxNanos - d.lastObsNanos in 1..45_000_000_000L && d.smoothRssi > -85) {
-            d.followM += Geo.distanceM(d.lastObsLat, d.lastObsLon, pos.lat, pos.lon)
-        } else if (d.lastObsNanos > 0 && rxNanos - d.lastObsNanos > 45_000_000_000L) {
-            d.followM = 0.0
+        // Following: how far you really traveled while it stayed close and in continuous view.
+        // Counted from an anchor point in 10 m+ steps, so GPS jitter while standing still adds nothing.
+        val gap = if (d.lastObsNanos > 0) rxNanos - d.lastObsNanos else -1L
+        when {
+            d.lastObsNanos == 0L || gap > 45_000_000_000L -> {
+                if (gap > 45_000_000_000L) d.followM = 0.0
+                d.lastObsLat = pos.lat; d.lastObsLon = pos.lon
+            }
+            gap > 0 && d.smoothRssi > -85 -> {
+                val moved = Geo.distanceM(d.lastObsLat, d.lastObsLon, pos.lat, pos.lon)
+                if (moved >= 10.0 + pos.accM) { d.followM += moved; d.lastObsLat = pos.lat; d.lastObsLon = pos.lon }
+            }
+            gap > 0 -> { d.lastObsLat = pos.lat; d.lastObsLon = pos.lon } // weak: not "with you" right now
         }
-        if (rxNanos > d.lastObsNanos) { d.lastObsNanos = rxNanos; d.lastObsLat = pos.lat; d.lastObsLon = pos.lon }
+        if (rxNanos > d.lastObsNanos) d.lastObsNanos = rxNanos
     }
 
     /** Engine thread: a measured Wi-Fi RTT distance. */

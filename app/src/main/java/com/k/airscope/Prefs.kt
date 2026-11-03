@@ -15,7 +15,10 @@ object Prefs {
         loaded = true
         val p = p(ctx)
         Engine.store.trustedKeys += p.getStringSet("trusted", emptySet()) ?: emptySet()
-        Engine.env = runCatching { Env.valueOf(p.getString("env", Env.INDOOR.name)!!) }.getOrDefault(Env.INDOOR)
+        // "env_mode" replaces the old "env" setting: everyone starts on AUTO once.
+        val mode = p.getString("env_mode", "AUTO")!!
+        Engine.envAuto = mode == "AUTO"
+        if (!Engine.envAuto) Engine.env = runCatching { Env.valueOf(mode) }.getOrDefault(Env.INDOOR)
         Engine.wifiOn = p.getBoolean("wifi", true)
         Engine.bleOn = p.getBoolean("ble", true)
         Engine.alprOn = p.getBoolean("alpr", true)
@@ -31,7 +34,7 @@ object Prefs {
 
     fun save(ctx: Context) {
         p(ctx).edit()
-            .putString("env", Engine.env.name)
+            .putString("env_mode", if (Engine.envAuto) "AUTO" else Engine.env.name)
             .putBoolean("wifi", Engine.wifiOn)
             .putBoolean("ble", Engine.bleOn)
             .putBoolean("alpr", Engine.alprOn)

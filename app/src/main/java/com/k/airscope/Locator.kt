@@ -44,6 +44,8 @@ class LocTrack {
     var altLon: Double? = null
     var rawErrM = 0.0
     var usedObs = 0
+    /** When the position was last estimated (ms), so every device gets its turn. */
+    var estAt = 0L
 }
 
 /**
@@ -105,6 +107,9 @@ object Locator {
      */
     fun estimate(tr: LocTrack, p0Prior: Double, p0Sigma: Double, env: Env, now: Long, windowMs: Long? = null) {
         tr.dirty = false
+        tr.estAt = now
+        // Results from an older fit must not survive an early return below
+        tr.ambiguous = false; tr.altLat = null; tr.altLon = null
         val p = tr.proj ?: return
         val o = if (windowMs == null) tr.obs else tr.obs.filter { now - it.t <= windowMs }
         tr.usedObs = o.size
@@ -235,17 +240,17 @@ object Locator {
 
         val a = DoubleArray(9); val g = DoubleArray(3)
         var cost = residuals(x, y, p0, a, g)
-        repeat(60) {
+        for (iter in 0 until 60) {
             val m = a.copyOf()
             for (k in 0..2) m[k * 4] = a[k * 4] * (1 + lambda) + 1e-9
-            val step = solve3(m, doubleArrayOf(-g[0], -g[1], -g[2])) ?: return@repeat
+            val step = solve3(m, doubleArrayOf(-g[0], -g[1], -g[2])) ?: break
             val nx = x + step[0]; val ny = y + step[1]; val np = (p0 + step[2]).coerceIn(-110.0, 10.0)
             val nc = residuals(nx, ny, np, null, null)
             if (nc < cost) {
                 x = nx; y = ny; p0 = np; cost = nc
                 lambda = max(lambda / 3, 1e-7)
                 residuals(x, y, p0, a, g)
-                if (hypot(step[0], step[1]) < 0.02 && abs(step[2]) < 0.01) return@repeat
+                if (hypot(step[0], step[1]) < 0.02 && abs(step[2]) < 0.01) break // converged
             } else {
                 lambda = min(lambda * 5, 1e7)
             }

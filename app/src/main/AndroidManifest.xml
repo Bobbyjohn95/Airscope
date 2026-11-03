@@ -37,6 +37,8 @@
 
     <!-- Self-updates from your GitHub releases -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+    <!-- Lets the app install its own updates silently (Android 12+), no "Install?" prompt each time. -->
+    <uses-permission android:name="android.permission.UPDATE_PACKAGES_WITHOUT_USER_ACTION" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
 
     <uses-feature android:name="android.hardware.bluetooth_le" android:required="false" />

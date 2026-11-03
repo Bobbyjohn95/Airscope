@@ -94,26 +94,38 @@
   }
 
   // ---------- data ----------
+  // fetch with a time limit: a phone that drops off Wi-Fi must not freeze the HUD
+  async function getJson(url, ms) {
+    const ctl = typeof AbortController !== "undefined" ? new AbortController() : null;
+    const timer = ctl ? setTimeout(() => ctl.abort(), ms) : null;
+    try {
+      const r = await fetch(url, ctl ? { cache:"no-store", signal:ctl.signal } : { cache:"no-store" });
+      if (!r.ok) throw new Error("HTTP " + r.status);
+      return await r.json();
+    } catch (e) {
+      throw new Error(e && e.name === "AbortError" ? "no answer" : (e && e.message) || "error");
+    } finally { if (timer) clearTimeout(timer); }
+  }
+  let lastOk = 0;
   async function poll() {
     try {
-      const r = await fetch("/api/state?k=" + encodeURIComponent(key), { cache:"no-store" });
-      if (!r.ok) throw new Error("HTTP " + r.status);
-      Object.assign(state, await r.json());
+      Object.assign(state, await getJson("/api/state?k=" + encodeURIComponent(key), 4000));
       // Time base for predicting your position between updates (smooth at highway speed)
       state.meAt = performance.now() - (state.me && state.me.ageMs ? state.me.ageMs : 0);
-      source = "live"; failures = 0;
+      source = "live"; failures = 0; lastOk = Date.now();
       if (state.mapV !== loadedMapV) {
-        loadedMapV = state.mapV;
-        const m = await (await fetch("/api/map?k=" + encodeURIComponent(key), { cache:"no-store" })).json();
+        const m = await getJson("/api/map?k=" + encodeURIComponent(key), 20000);
         setMap(m.lat == null ? null : m);
+        loadedMapV = state.mapV; // only after it worked, so a failed download is retried
       }
     } catch (e) {
       failures++;
-      if (failures > 2) state.warning = "Lost connection to the phone (" + e.message + "). Same Wi-Fi? Scan running?";
+      if (failures > 2 || Date.now() - lastOk > 6000) state.warning = "Lost connection to the phone (" + e.message + "). Same Wi-Fi? Scan running?";
+    } finally {
+      ensureFrame();
+      render();
+      setTimeout(poll, 1500);
     }
-    ensureFrame();
-    render();
-    setTimeout(poll, 1500);
   }
 
   function setMap(m) {
@@ -375,6 +387,7 @@
 
     // Devices
     const a = 1 - Math.exp(-dt / 0.45);
+    if (anim.size > 400) { const keep = new Set(state.devices.map((d) => d.key)); for (const k of anim.keys()) if (!keep.has(k)) anim.delete(k); }
     const items = visible().map((d) => {
       const placed = d.lat != null && frame;
       const cand = !placed && frame && d.cand ? d.cand : null;
@@ -426,7 +439,16 @@
       if (d.kind === "WIFI") ctx.arc(x, y, s, 0, 7);
       else if (d.kind === "MAP") ctx.rect(x - s, y - s * 0.8, s * 2, s * 1.6);
       else { ctx.moveTo(x, y - s * 1.25); ctx.lineTo(x + s * 1.25, y); ctx.lineTo(x, y + s * 1.25); ctx.lineTo(x - s * 1.25, y); ctx.closePath(); }
-      if (placed) { ctx.globalAlpha = 0.27 * an.a; ctx.fillStyle = col; ctx.save(); ctx.beginPath(); ctx.arc(x, y, s * 2, 0, 7); ctx.fill(); ctx.restore(); ctx.globalAlpha = an.a; ctx.fill(); ctx.globalAlpha = 1; }
+      if (placed) {
+        // halo first, then the marker's own shape on top (a canvas path can't be saved/restored)
+        const shapePath = new Path2D();
+        if (d.kind === "WIFI") shapePath.arc(x, y, s, 0, 7);
+        else if (d.kind === "MAP") shapePath.rect(x - s, y - s * 0.8, s * 2, s * 1.6);
+        else { shapePath.moveTo(x, y - s * 1.25); shapePath.lineTo(x + s * 1.25, y); shapePath.lineTo(x, y + s * 1.25); shapePath.lineTo(x - s * 1.25, y); shapePath.closePath(); }
+        ctx.fillStyle = col;
+        ctx.globalAlpha = 0.27 * an.a; ctx.beginPath(); ctx.arc(x, y, s * 2, 0, 7); ctx.fill();
+        ctx.globalAlpha = an.a; ctx.fill(shapePath); ctx.globalAlpha = 1;
+      }
       else { ctx.strokeStyle = col; ctx.lineWidth = 1.8; ctx.globalAlpha = 0.8 * an.a; ctx.stroke(); ctx.globalAlpha = 1; }
       if (sel) { ctx.strokeStyle = "#fff"; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(x, y, s + 7, 0, 7); ctx.stroke(); }
       if (sel || d.level === "HIGH" || d.cat === "POLICE") {
@@ -531,7 +553,7 @@
     const vis = visible();
     const wifi = state.devices.filter((d) => d.kind === "WIFI").length, ble = state.devices.filter((d) => d.kind === "BLE").length;
     const police = state.devices.filter((d) => d.cat === "POLICE").length, high = state.devices.filter((d) => d.level === "HIGH").length;
-    const src = source === "live" ? (state.scanning ? "● LIVE" : "○ PHONE IDLE") : source === "csv" ? "▣ EXPORT" : source === "demo" ? "◌ DEMO" : "… CONNECTING";
+    const src = source === "live" ? (Date.now() - lastOk > 6000 ? "◌ NO SIGNAL FROM PHONE" : state.scanning ? "● LIVE" : "○ PHONE IDLE") : source === "csv" ? "▣ EXPORT" : source === "demo" ? "◌ DEMO" : "… CONNECTING";
     const located = vis.filter((d) => d.lat != null && d.kind !== "MAP").length, radios = vis.filter((d) => d.kind !== "MAP").length;
     let s = `${src}  WIFI ${wifi}  BLE ${ble}  HIGH ${high}` + (police ? `  POLICE ${police}` : "");
     s += `\n${(MODES.find((m) => m[1] === mode) || MODES[0])[0]}: ${vis.length} · located ${located}/${radios}` + (state.me ? ` · GPS ±${Number(state.me.acc).toFixed(1)} m` + (state.me.gnss ? " · " + state.me.gnss : "") + (Math.hypot(state.me.vx || 0, state.me.vy || 0) > 1.5 ? " · " + Math.round(Math.hypot(state.me.vx, state.me.vy) * 2.23694) + " mph" : "") : " · no GPS") + (state.alpr ? " · ALPR: " + state.alpr : "");

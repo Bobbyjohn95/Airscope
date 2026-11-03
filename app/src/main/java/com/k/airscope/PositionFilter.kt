@@ -54,8 +54,13 @@ class PositionFilter {
             init(f)
             return
         }
-        val dt = ((f.tNanos - t) / 1e9).coerceIn(0.0, 10.0)
         if (f.tNanos <= t) return
+        val gap = (f.tNanos - t) / 1e9
+        if (gap > 5.0) { // tunnel / underpass / indoors: don't trust a 5+ s dead-reckoned guess, restart here
+            resume(f, pr)
+            return
+        }
+        val dt = gap
         val moving = (f.speed ?: hypot(vx, vy)) > 2.0
         predict(dt, if (moving) 3.0 else 1.2)
         val zx = pr.x(f.lon)
@@ -86,6 +91,21 @@ class PositionFilter {
             }
         }
         t = f.tNanos
+        pushHistory()
+    }
+
+    /** Restart at a fresh fix after a GPS gap, keeping the map projection and history (the gap stays a gap). */
+    private fun resume(f: Fix, pr: LocalProj) {
+        x = pr.x(f.lon); y = pr.y(f.lat)
+        val b = f.bearing
+        val s = f.speed
+        if (b != null && s != null && s > 0.5) { vx = s * sin(Math.toRadians(b)); vy = s * cos(Math.toRadians(b)) }
+        else if (s != null && s < 0.4) { vx = 0.0; vy = 0.0 }
+        p.fill(0.0)
+        val sg = max(f.accM * 0.75, 1.0)
+        p[0] = sg * sg; p[5] = sg * sg; p[10] = 9.0; p[15] = 9.0
+        t = f.tNanos
+        rejects = 0
         pushHistory()
     }
 
@@ -169,9 +189,11 @@ class PositionFilter {
         val last = hist.last()
         val sx: Double; val sy: Double; val svx: Double; val svy: Double; val sg: Double
         if (tNanos >= last.tNanos) {
-            val dt = ((tNanos - last.tNanos) / 1e9).coerceAtMost(3.0)
+            val full = (tNanos - last.tNanos) / 1e9
+            val dt = full.coerceAtMost(3.0)
             sx = last.x + last.vx * dt; sy = last.y + last.vy * dt; svx = last.vx; svy = last.vy
-            sg = last.sigma + 1.5 * dt
+            // Past 3 s we stop moving the guess, so the uncertainty has to grow with your speed instead.
+            sg = last.sigma + 1.5 * dt + hypot(last.vx, last.vy) * (full - dt)
         } else {
             if (tNanos < hist.first().tNanos) return null
             var a = hist.first(); var b = last
@@ -180,7 +202,9 @@ class PositionFilter {
             val u = if (span <= 0) 0.0 else (tNanos - a.tNanos) / span
             sx = a.x + (b.x - a.x) * u; sy = a.y + (b.y - a.y) * u
             svx = a.vx + (b.vx - a.vx) * u; svy = a.vy + (b.vy - a.vy) * u
-            sg = max(a.sigma, b.sigma)
+            // Between two fixes far apart in time (GPS gap) a straight line is only a guess: widen the error.
+            val near = min(tNanos - a.tNanos, b.tNanos - tNanos) / 1e9
+            sg = max(a.sigma, b.sigma) + if (span > 1.5e9) (1.5 + 0.5 * max(hypot(a.vx, a.vy), hypot(b.vx, b.vy))) * near else 0.0
         }
         return Pos(pr.lat(sy), pr.lon(sx), (sg * 1.33).coerceAtLeast(1.0), svx, svy)
     }

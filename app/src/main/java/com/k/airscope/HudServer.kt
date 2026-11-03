@@ -10,6 +10,9 @@ import java.net.NetworkInterface
 import java.net.ServerSocket
 import java.net.Socket
 import java.net.URLDecoder
+import java.util.concurrent.ArrayBlockingQueue
+import java.util.concurrent.ThreadPoolExecutor
+import java.util.concurrent.TimeUnit
 
 /**
  * Tiny read-only HTTP server for the web HUD (java.net only, no Android types).
@@ -24,6 +27,11 @@ class HudServer(
 ) {
     @Volatile
     private var socket: ServerSocket? = null
+
+    // A few worker threads; extra connections are dropped instead of piling up threads.
+    private val pool = ThreadPoolExecutor(3, 3, 30, TimeUnit.SECONDS, ArrayBlockingQueue(16)) { r ->
+        Thread(r, "hud-worker").apply { isDaemon = true }
+    }.apply { allowCoreThreadTimeOut(true) }
 
     val isRunning: Boolean get() = socket?.isClosed == false
 
@@ -43,6 +51,7 @@ class HudServer(
         } catch (_: IOException) {
         }
         socket = null
+        pool.shutdownNow()
     }
 
     private fun acceptLoop(ss: ServerSocket) {
@@ -52,19 +61,38 @@ class HudServer(
             } catch (_: IOException) {
                 break
             }
-            Thread { handle(client) }.apply { isDaemon = true }.start()
+            try {
+                pool.execute { handle(client) }
+            } catch (_: Exception) { // busy: drop this connection
+                try { client.close() } catch (_: IOException) { }
+            }
+        }
+    }
+
+    /** Reads one header line, at most [MAX_LINE] chars; null at end of stream. */
+    private fun readLineCapped(r: BufferedReader): String? {
+        val sb = StringBuilder()
+        while (true) {
+            val c = r.read()
+            if (c < 0) return if (sb.isEmpty()) null else sb.toString()
+            if (c == '\n'.code) return sb.toString().trimEnd('\r')
+            if (sb.length >= MAX_LINE) throw IOException("header line too long")
+            sb.append(c.toChar())
         }
     }
 
     private fun handle(s: Socket) {
+        // Never let a bad request take the app down: everything is caught here.
         try {
             s.use { sock ->
                 sock.soTimeout = 5000
                 val input = BufferedReader(InputStreamReader(sock.getInputStream(), Charsets.ISO_8859_1))
-                val requestLine = input.readLine() ?: return
+                val requestLine = readLineCapped(input) ?: return
+                var headers = 0
                 while (true) {
-                    val line = input.readLine() ?: break
+                    val line = readLineCapped(input) ?: break
                     if (line.isEmpty()) break
+                    if (++headers > MAX_HEADERS) return
                 }
                 val parts = requestLine.split(" ")
                 if (parts.size < 2) return
@@ -86,7 +114,7 @@ class HudServer(
                     else -> send(out, 404, "text/plain", "not found".toByteArray())
                 }
             }
-        } catch (_: IOException) {
+        } catch (_: Throwable) {
         }
     }
 
@@ -109,12 +137,14 @@ class HudServer(
     }
 
     companion object {
+        private const val MAX_LINE = 4096
+        private const val MAX_HEADERS = 64
+
+        /** Malformed escapes (e.g. "%") are skipped instead of throwing. */
         fun parseQuery(q: String): Map<String, String> =
-            q.split('&').filter { it.contains('=') }.associate {
-                val k = it.substringBefore('=')
-                val v = it.substringAfter('=')
-                URLDecoder.decode(k, "UTF-8") to URLDecoder.decode(v, "UTF-8")
-            }
+            q.split('&').filter { it.contains('=') }.mapNotNull {
+                runCatching { URLDecoder.decode(it.substringBefore('='), "UTF-8") to URLDecoder.decode(it.substringAfter('='), "UTF-8") }.getOrNull()
+            }.toMap()
 
         /** IPv4 addresses on Wi-Fi / hotspot interfaces, for showing the HUD link. */
         fun localIps(): List<String> = try {

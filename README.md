@@ -4,6 +4,21 @@ A personal signal-observation app for the Pixel 8 Pro (Android 10+, GrapheneOS-f
 It **only listens**. It reads Wi-Fi beacons and Bluetooth LE advertisements that devices already
 broadcast. It never connects to, jams, deauths or transmits to anything.
 
+## What's new in v2.3: tested on a real Android emulator, silent updates, fixes
+- **Every build is tested before it reaches your phone.** GitHub runs it on an Android 15 emulator: permissions,
+  walking and 70 mph GPS, every main screen, the web HUD, the updater and screen-off scanning. A build that crashes
+  or freezes is never released, so the auto-updater can't install a broken AirScope.
+- **Updates are really automatic now:** no "Install?" prompt. They install when you leave the app or stop scanning,
+  never while you're looking at it or mid-scan, and scanning resumes when you reopen it.
+- **Map touch fixed:** two-finger twist and tilt now stay where you put them (they used to spring back). The N button
+  returns a hand-rotated map to north. The map redraws at full speed only while something moves.
+- **ENV:AUTO (new default):** car model while driving, outdoor/indoor from GPS quality. Tap ENV to pick one yourself.
+- **GPS:** after a tunnel or underpass the position restarts at the first good fix instead of lagging or overshooting.
+- **Fewer false alarms:** GPS jitter while standing still no longer counts as "moved with you", and a tag seen this
+  morning and again this afternoon no longer counts as "stayed with you".
+- **Robustness:** a malformed request to the web HUD or a crafted drone broadcast can no longer crash or freeze the
+  app; alerts can't fill up Android's notification limit; BLE recovers by itself after a scan error.
+
 ## What's new in v2.2: GPS, placement, heading, details
 - **GPS built for speed:**
   - Full-rate (0.5 s), high-accuracy, dual-band (L1+L5) GPS with raw measurement tracking turned on.

@@ -44,6 +44,8 @@ class HeadingTracker(ctx: Context) : SensorEventListener {
     private var magAvg = 0.0
     private var declAt = 0L
     private var lastT = 0L
+    private var lastRaw: Double? = null
+    private var turnRate = 0.0 // deg/s, low-passed: how fast you are actually turning
     private val rot = FloatArray(9)
     private var running = false
 
@@ -51,6 +53,8 @@ class HeadingTracker(ctx: Context) : SensorEventListener {
         if (running || sm == null) return
         running = true
         lastT = 0L
+        lastRaw = null
+        turnRate = 0.0
         sm.getDefaultSensor(Sensor.TYPE_ROTATION_VECTOR)?.let { sm.registerListener(this, it, SensorManager.SENSOR_DELAY_GAME) }
             ?: sm.getDefaultSensor(Sensor.TYPE_GEOMAGNETIC_ROTATION_VECTOR)?.let { sm.registerListener(this, it, SensorManager.SENSOR_DELAY_GAME) }
         sm.getDefaultSensor(Sensor.TYPE_MAGNETIC_FIELD)?.let { sm.registerListener(this, it, SensorManager.SENSOR_DELAY_UI) }
@@ -81,11 +85,15 @@ class HeadingTracker(ctx: Context) : SensorEventListener {
                 val az = (raw + declination + 360) % 360
                 val dt = if (lastT == 0L) 0.02 else ((e.timestamp - lastT) / 1e9).coerceIn(0.001, 0.5)
                 lastT = e.timestamp
-                val prev = facing
-                facing = if (prev == null) az else {
-                    val rate = abs(Geo.signedDiff(prev, az)) / dt
-                    HeadingMath.blend(prev, az, HeadingMath.smoothAlpha(rate, dt))
+                // Turning speed from consecutive raw readings (not from the smoothed value, which would make
+                // every bit of hand tremor look like a fast turn and defeat the smoothing).
+                lastRaw?.let { r ->
+                    val raw = abs(Geo.signedDiff(r, az)) / dt
+                    turnRate += (raw - turnRate) * (1 - kotlin.math.exp(-dt / 0.12))
                 }
+                lastRaw = az
+                val prev = facing
+                facing = if (prev == null) az else HeadingMath.blend(prev, az, HeadingMath.smoothAlpha(turnRate, dt))
                 // values[4] = the sensor's own heading accuracy estimate (radians), when the device provides it
                 val est = if (e.values.size >= 5 && e.values[4] > 0f) Math.toDegrees(e.values[4].toDouble())
                 else HeadingMath.accuracyFromStatus(minOf(magStatus, rvStatus))

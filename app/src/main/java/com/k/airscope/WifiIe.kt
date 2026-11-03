@@ -111,7 +111,8 @@ object RemoteId {
         return info
     }
 
-    private fun parseMessage(d: ByteArray, o: Int, info: Info) {
+    /** [inPack]: a message pack may not contain another pack (spec), which also stops crafted infinite nesting. */
+    private fun parseMessage(d: ByteArray, o: Int, info: Info, inPack: Boolean = false) {
         if (o >= d.size) return
         val type = (d[o].toInt() and 0xF0) shr 4
         when (type) {
@@ -131,10 +132,10 @@ object RemoteId {
                 val sp = d[o + 3].toInt() and 0xFF
                 info.speedMs = if (mult == 0.75) sp * 0.75 + 255 * 0.25 else sp * 0.25
             }
-            0xF -> if (o + 3 <= d.size) { // Message pack
+            0xF -> if (!inPack && o + 3 <= d.size) { // Message pack
                 val size = d[o + 1].toInt() and 0xFF
                 val count = d[o + 2].toInt() and 0xFF
-                if (size in 1..25) for (k in 0 until count.coerceAtMost(9)) parseMessage(d, o + 3 + k * size, info)
+                if (size == 25) for (k in 0 until count.coerceAtMost(9)) parseMessage(d, o + 3 + k * size, info, inPack = true)
             }
         }
     }

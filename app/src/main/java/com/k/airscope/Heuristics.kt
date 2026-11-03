@@ -24,7 +24,8 @@ object Heuristics {
         for (x in d.findings) {
             s += x.points; f += x.text
         }
-        val present = now - d.firstSeen
+        // "Stayed with you" means continuously: a tag seen this morning and again this afternoon doesn't count.
+        val present = now - d.presentSince
         val mins = present / 60_000
 
         if (d.kind == Kind.WIFI) {

@@ -52,6 +52,8 @@ class Device(val id: String, val kind: Kind, now: Long) {
     var rssi: Int = -100
     val firstSeen: Long = now
     var lastSeen: Long = now
+    /** Start of the current continuous sighting (resets after a 2+ minute gap). */
+    var presentSince: Long = now
     var readings: Int = 0
     var lastWifiTs: Long = 0L
     val kalman = RssiKalman()
@@ -127,6 +129,7 @@ class Device(val id: String, val kind: Kind, now: Long) {
         }
 
     fun addReading(value: Int, now: Long, rxNanos: Long = 0L) {
+        if (now - lastSeen > 120_000) presentSince = now // it went away and came back: a new sighting
         rssi = value
         lastSeen = now
         readings++

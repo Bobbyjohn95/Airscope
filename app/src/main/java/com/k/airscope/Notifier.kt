@@ -79,9 +79,28 @@ object Notifier {
         } catch (_: SecurityException) { }
     }
 
-    private fun post(ctx: Context, channel: String, id: Int, title: String, text: String, intent: PendingIntent) {
+    // Android drops an app's notifications past ~50 active ones, so alerts reuse a small ring of ids
+    // (the oldest alert of that kind is replaced) instead of one id per device / camera.
+    private val slots = LinkedHashMap<String, Int>()
+
+    private fun slotId(base: Int, size: Int, key: String): Int = synchronized(slots) {
+        val k = "$base|$key"
+        slots.remove(k)?.let { slots[k] = it; return it } // refresh recency
+        val mine = slots.filterKeys { it.startsWith("$base|") }
+        val id = (base until base + size).firstOrNull { it !in mine.values } ?: run {
+            val oldest = mine.keys.first()
+            slots.remove(oldest)!!
+        }
+        slots[k] = id
+        id
+    }
+
+    private fun post(
+        ctx: Context, channel: String, id: Int, title: String, text: String, intent: PendingIntent,
+        timeoutMs: Long = 0L, group: String? = null,
+    ) {
         if (!canPost(ctx)) return
-        val n = Notification.Builder(ctx, channel)
+        val b = Notification.Builder(ctx, channel)
             .setSmallIcon(R.drawable.ic_stat_radar)
             .setContentTitle(title)
             .setContentText(text)
@@ -89,7 +108,9 @@ object Notifier {
             .setAutoCancel(true)
             .setCategory(Notification.CATEGORY_STATUS)
             .setContentIntent(intent)
-            .build()
+        if (timeoutMs > 0) b.setTimeoutAfter(timeoutMs)
+        if (group != null) b.setGroup(group)
+        val n = b.build()
         try { ctx.getSystemService(NotificationManager::class.java).notify(id, n) } catch (_: SecurityException) { }
     }
 
@@ -110,9 +131,9 @@ object Notifier {
         }
         val text = "${d.displayName()} · ${d.smoothRssi} dBm · $distText\n" + d.flags.joinToString(" · ") +
             "\n\nTap to open and track its signal."
-        val id = 1000 + (d.key.hashCode() and 0x7fffffff) % 100_000
+        val id = slotId(1000, 15, d.key)
         val ch = if (d.category == Category.POLICE || d.category == Category.DRONE) CH_POLICE else CH_ALERT
-        post(ctx, ch, id, title, text, openApp(ctx, id, d.key))
+        post(ctx, ch, id, title, text, openApp(ctx, id, d.key), group = "devices")
     }
 
     fun alprAlert(ctx: Context, h: AlprHit, course: Double?) {
@@ -124,8 +145,9 @@ object Notifier {
             a.direction?.let { "Camera faces: $it" },
             "Mapped on OpenStreetMap (DeFlock).",
         ).joinToString("\n")
-        val id = 200_000 + (a.id % 100_000).toInt()
-        post(ctx, CH_POLICE, id, title, text, openApp(ctx, id, "MAP:${a.id}"))
+        val id = slotId(200_000, 8, "MAP:${a.id}")
+        // A passed camera stops mattering after a while: the alert clears itself after 20 minutes.
+        post(ctx, CH_POLICE, id, title, text, openApp(ctx, id, "MAP:${a.id}"), timeoutMs = 20 * 60_000L, group = "alpr")
     }
 
     fun update(ctx: Context, title: String, text: String, intent: PendingIntent? = null) {

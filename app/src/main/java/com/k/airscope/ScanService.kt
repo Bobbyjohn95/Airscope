@@ -38,13 +38,14 @@ class ScanService : Service() {
         fun hudUrls(): List<String> = HudServer.localIps().map { "http://$it:$HUD_PORT/?k=${Engine.hudToken}" }
     }
 
-    private var wakeLock: PowerManager.WakeLock? = null
+    @Volatile private var wakeLock: PowerManager.WakeLock? = null
+    @Volatile private var stopping = false
     private var hud: HudServer? = null
     private var lastNotif = 0L
 
     private val notifTick = object : Runnable {
         override fun run() {
-            if (!Engine.running) return
+            if (!Engine.running || stopping) return
             val now = System.currentTimeMillis()
             if (now - lastNotif > 10_000) {
                 lastNotif = now
@@ -58,7 +59,7 @@ class ScanService : Service() {
                     "Wi-Fi $wifiN · BLE $bleN · $high high" + (if (police > 0) " · $police police/ALPR" else "") +
                         (s.warning?.let { "  ⚠ $it" } ?: ""),
                 )
-                wakeLock?.let { if (!it.isHeld) it.acquire(WAKE_MS) }
+                if (!stopping) wakeLock?.let { if (!it.isHeld) it.acquire(WAKE_MS) }
             }
             Engine.handler.postDelayed(this, 2_000)
         }
@@ -92,19 +93,27 @@ class ScanService : Service() {
     private fun granted(p: String) = checkSelfPermission(p) == PackageManager.PERMISSION_GRANTED
 
     private fun startScanning() {
-        try {
-            var type = 0
-            if (granted(Manifest.permission.ACCESS_FINE_LOCATION)) type = type or ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION
-            if (Build.VERSION.SDK_INT < 31 || granted(Manifest.permission.BLUETOOTH_SCAN)) {
-                type = type or ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE
-            }
-            if (type == 0) throw SecurityException("Location or Nearby devices permission is required")
-            startForeground(NOTIF_ID, Notifier.ongoing(this, "Starting…"), type)
-        } catch (e: Exception) {
-            Engine.post { Engine.store.log("SYS", "Could not start background scanning: ${e.message}") }
+        // connectedDevice is always allowed (CHANGE_WIFI_STATE is granted at install). Location is added when
+        // permitted; if Android refuses it (e.g. started from the background), fall back so we never crash with
+        // "did not call startForeground".
+        val cd = ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE
+        val loc = if (granted(Manifest.permission.ACCESS_FINE_LOCATION)) ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION else 0
+        var started = false
+        var err: Exception? = null
+        for (type in listOf(cd or loc, cd).distinct()) {
+            try {
+                startForeground(NOTIF_ID, Notifier.ongoing(this, "Starting…"), type)
+                started = true
+                if (type != (cd or loc)) Engine.post { Engine.store.log("SYS", "Started without location access: open AirScope to restore GPS") }
+                break
+            } catch (e: Exception) { err = e }
+        }
+        if (!started) {
+            Engine.post { Engine.store.log("SYS", "Could not start background scanning: ${err?.message}") }
             stopSelf()
             return
         }
+        stopping = false
         if (wakeLock == null) {
             wakeLock = getSystemService(PowerManager::class.java)
                 .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "AirScope:scan")
@@ -143,6 +152,7 @@ class ScanService : Service() {
     }
 
     private fun cleanup() {
+        stopping = true
         Prefs.putBool(this, "was_running", false)
         Engine.post {
             Engine.handler.removeCallbacks(notifTick)
@@ -157,6 +167,8 @@ class ScanService : Service() {
     override fun onDestroy() {
         if (Engine.running) cleanup()
         super.onDestroy()
+        // Scanning stopped: an update that was waiting for that can install now (unless you're looking at the app).
+        Updater.installPendingAsync(applicationContext)
     }
 
     override fun onBind(intent: Intent?): IBinder? = null

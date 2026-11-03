@@ -59,17 +59,33 @@ object Updater {
         try { js.schedule(job) } catch (_: Exception) { }
     }
 
+    private const val BUSY = "Already checking…"
+    private const val PREF_PENDING_BUILD = "update_pending_build"
+    private val busy = java.util.concurrent.atomic.AtomicBoolean(false)
+
+    /** True while the AirScope screen is in front of you: updates wait so the app never closes on you. */
+    @Volatile var uiVisible = false
+
     fun checkAsync(ctx: Context, manual: Boolean, done: ((String) -> Unit)? = null) {
         val app = ctx.applicationContext
         Thread {
             val msg = try { check(app, manual) } catch (e: Exception) { "Update check failed: ${e.message}" }
-            Prefs.putString(app, PREF_RESULT, msg)
+            if (msg != BUSY) Prefs.putString(app, PREF_RESULT, msg)
             done?.invoke(msg)
         }.apply { isDaemon = true }.start()
     }
 
-    /** Blocking. Returns a human-readable result. */
+    /** Blocking. Returns a human-readable result. Only one check/install runs at a time. */
     fun check(ctx: Context, manual: Boolean): String {
+        if (!busy.compareAndSet(false, true)) return BUSY
+        try {
+            return checkLocked(ctx, manual)
+        } finally {
+            busy.set(false)
+        }
+    }
+
+    private fun checkLocked(ctx: Context, manual: Boolean): String {
         Prefs.putLong(ctx, PREF_LAST, System.currentTimeMillis())
         // Public repo: no token or password at all. A token is only an optional fallback for a private repo.
         var token = cleanToken(Prefs.getString(ctx, PREF_TOKEN))
@@ -113,19 +129,56 @@ object Updater {
             Notifier.update(ctx, "AirScope build ${rel.build} is ready", "Tap to allow AirScope to install its own updates, then check again.", pi)
             return "Build ${rel.build} downloaded: allow \"Install unknown apps\" for AirScope"
         }
-        if (Engine.running && !manual) {
-            // Don't interrupt an active scan (installing restarts the app): ask first.
+        Prefs.putLong(ctx, PREF_PENDING_BUILD, rel.build.toLong())
+        if (!manual && Engine.running) {
+            // Don't interrupt an active scan (installing restarts the app): it installs when you stop, or tap now.
             val pi = PendingIntent.getBroadcast(
                 ctx, 78,
                 Intent(ctx, UpdateReceiver::class.java).setAction(UpdateReceiver.ACTION_INSTALL)
                     .putExtra("path", file.absolutePath).putExtra("build", rel.build),
                 PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
             )
-            Notifier.update(ctx, "AirScope build ${rel.build} is ready", "Tap to install now (scanning restarts after the update).", pi)
-            return "Build ${rel.build} ready: tap the notification to install"
+            Notifier.update(
+                ctx, "AirScope build ${rel.build} is ready",
+                "It installs by itself when you stop scanning. Tap to install now (you'll need to reopen AirScope).", pi,
+            )
+            return "Build ${rel.build} ready: installs when you stop scanning"
         }
+        if (!manual && uiVisible) return "Build ${rel.build} ready: installs as soon as you leave AirScope"
         install(ctx, file, rel.build)
         return "Installing build ${rel.build}…"
+    }
+
+    /**
+     * Installs an already-downloaded, verified update if nothing is in the way (not scanning, app not on screen).
+     * Called when you leave the app and when scanning stops.
+     */
+    fun installPendingAsync(ctx: Context) {
+        val app = ctx.applicationContext
+        Thread {
+            Thread.sleep(1500) // let a stopping scan finish first
+            if (Engine.running || uiVisible || !busy.compareAndSet(false, true)) return@Thread
+            try {
+                val build = Prefs.getLong(app, PREF_PENDING_BUILD).toInt()
+                if (build <= 0 || build <= installedBuild(app) || !app.packageManager.canRequestPackageInstalls()) return@Thread
+                val file = File(updatesDir(app), "AirScope-$build.apk")
+                if (!file.exists() || verify(app, file, build) != null) return@Thread
+                Prefs.putString(app, PREF_RESULT, "Installing build $build…")
+                install(app, file, build)
+            } catch (e: Exception) {
+                Prefs.putString(app, PREF_RESULT, "Update install failed: ${e.message}")
+            } finally {
+                busy.set(false)
+            }
+        }.apply { isDaemon = true }.start()
+    }
+
+    fun updatesDir(ctx: Context) = File(ctx.filesDir, "updates").apply { mkdirs() }
+
+    /** After an update: forget the pending build and delete downloaded files. */
+    fun clearPending(ctx: Context) {
+        Prefs.putLong(ctx, PREF_PENDING_BUILD, 0L)
+        updatesDir(ctx).listFiles()?.forEach { it.delete() }
     }
 
     private fun open(url: String, token: String, accept: String): HttpURLConnection {
@@ -141,9 +194,11 @@ object Updater {
     }
 
     private fun download(ctx: Context, rel: UpdateCheck.Release, token: String): File? {
-        val dir = File(ctx.cacheDir, "updates").apply { mkdirs() }
-        dir.listFiles()?.forEach { it.delete() }
+        val dir = updatesDir(ctx)
         val out = File(dir, "AirScope-${rel.build}.apk")
+        dir.listFiles()?.forEach { if (it.name != out.name) it.delete() }
+        if (out.exists() && verify(ctx, out, rel.build) == null) return out // already downloaded earlier
+        val part = File(dir, out.name + ".part")
         var url = if (token.isNotEmpty()) rel.apiAssetUrl else rel.browserUrl
         url ?: return null
         var c = open(url, token, "application/octet-stream")
@@ -154,7 +209,9 @@ object Updater {
             c = open(url, "", "application/octet-stream")
         }
         if (c.responseCode != 200) return null
-        c.inputStream.use { inp -> out.outputStream().use { inp.copyTo(it) } }
+        c.inputStream.use { inp -> part.outputStream().use { inp.copyTo(it) } }
+        // Complete files only: a half-finished download is never mistaken for the update.
+        if (!part.renameTo(out)) return null
         return out
     }
 
@@ -166,7 +223,7 @@ object Updater {
     }
 
     /** Same package, expected build, same signing key. Returns a problem description or null. */
-    private fun verify(ctx: Context, file: File, build: Int): String? {
+    fun verify(ctx: Context, file: File, build: Int): String? {
         val pm = ctx.packageManager
         val archive = pm.getPackageArchiveInfo(file.absolutePath, PackageManager.GET_SIGNING_CERTIFICATES)
             ?: return "Downloaded file isn't a valid APK"
@@ -188,14 +245,19 @@ object Updater {
         params.setAppPackageName(ctx.packageName)
         if (Build.VERSION.SDK_INT >= 31) params.setRequireUserAction(PackageInstaller.SessionParams.USER_ACTION_NOT_REQUIRED)
         val id = installer.createSession(params)
-        installer.openSession(id).use { session ->
-            session.openWrite("base.apk", 0, file.length()).use { out ->
-                file.inputStream().use { it.copyTo(out) }
-                session.fsync(out)
+        try {
+            installer.openSession(id).use { session ->
+                session.openWrite("base.apk", 0, file.length()).use { out ->
+                    file.inputStream().use { it.copyTo(out) }
+                    session.fsync(out)
+                }
+                val status = Intent(ctx, UpdateReceiver::class.java).setAction(UpdateReceiver.ACTION_STATUS).putExtra("build", build)
+                val pi = PendingIntent.getBroadcast(ctx, id, status, PendingIntent.FLAG_MUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
+                session.commit(pi.intentSender)
             }
-            val status = Intent(ctx, UpdateReceiver::class.java).setAction(UpdateReceiver.ACTION_STATUS).putExtra("build", build)
-            val pi = PendingIntent.getBroadcast(ctx, id, status, PendingIntent.FLAG_MUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
-            session.commit(pi.intentSender)
+        } catch (e: Exception) {
+            try { installer.abandonSession(id) } catch (_: Exception) { }
+            throw e
         }
     }
 }
@@ -215,7 +277,12 @@ class UpdateReceiver : BroadcastReceiver() {
                 val build = intent.getIntExtra("build", 0)
                 val pending = goAsync()
                 Thread {
-                    try { Updater.install(ctx, File(path), build) } catch (e: Exception) {
+                    try {
+                        val f = File(path)
+                        val problem = if (!f.exists()) "The downloaded update is gone; it will download again." else Updater.verify(ctx, f, build)
+                        if (problem != null) Notifier.update(ctx, "AirScope update didn't install", problem)
+                        else Updater.install(ctx, f, build)
+                    } catch (e: Exception) {
                         Notifier.update(ctx, "AirScope update failed", e.message ?: "unknown error")
                     }
                     pending.finish()
@@ -244,6 +311,7 @@ class UpdateReceiver : BroadcastReceiver() {
                 }
             }
             Intent.ACTION_MY_PACKAGE_REPLACED -> {
+                Updater.clearPending(ctx)
                 val b = try { Updater.installedBuild(ctx) } catch (_: Exception) { 0L }
                 val resume = Prefs.getBool(ctx, "was_running", false)
                 Notifier.update(

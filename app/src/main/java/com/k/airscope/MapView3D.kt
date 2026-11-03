@@ -58,10 +58,13 @@ class MapView3D(ctx: Context) : View(ctx) {
     var headingAcc: Float = 25f
     /** Read every frame for a smooth needle. */
     var headingSource: HeadingTracker? = null
+    private var keepPitch = false
     var threeD: Boolean = true
-        set(v) { field = v; tgtPitch = if (v) 52f else 0f }
+        set(v) { field = v; if (!keepPitch) tgtPitch = if (v) 52f else 0f }
+    /** Called when a gesture changes 2D/3D, so the choice can be saved. */
+    var onViewChanged: (() -> Unit)? = null
     var headingUp: Boolean = false
-        set(v) { field = v; if (!v) tgtYaw = 0f }
+        set(v) { val was = field; field = v; if (was && !v) tgtYaw = 0f }
     var follow: Boolean = true
         set(v) { field = v; if (v) { flingX = 0.0; flingY = 0.0 } }
 
@@ -117,6 +120,13 @@ class MapView3D(ctx: Context) : View(ctx) {
     private val label = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.WHITE; textSize = 11f * dp; typeface = Typeface.MONOSPACE }
     private val roadLabel = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.parseColor("#8FD9E6"); textSize = 9.5f * dp; typeface = Typeface.MONOSPACE }
 
+    private val cWater = Color.parseColor("#0B2A44")
+    private val cPark = Color.parseColor("#0C2A1E")
+    private val cBldFill = Color.parseColor("#0F2E38")
+    private val cBldEdge = Color.parseColor("#1E5A68")
+    private val cBldWall = Color.parseColor("#2A8A9C")
+    private val cBldRoof = Color.parseColor("#123C48")
+    private val cBldRoofEdge = Color.parseColor("#3FB7CC")
     private val roadColors = intArrayOf(
         Color.parseColor("#36D6F0"), Color.parseColor("#2AA6BA"), Color.parseColor("#1E7486"),
         Color.parseColor("#174F5C"), Color.parseColor("#2E5A47"),
@@ -125,10 +135,12 @@ class MapView3D(ctx: Context) : View(ctx) {
 
     /** [cs] = street-map chunks, newest first (the newest one defines the drawing frame). */
     fun update(s: Snapshot, cs: List<MapData>, selected: String?) {
+        if (s !== snap || selected != selectedKey || cs !== chunks) invalidate()
         snap = s
         selectedKey = selected
         if (cs !== chunks) {
             chunks = cs
+            bldCache.clear()
             val nf = cs.firstOrNull()?.proj
             val old = frame
             if (nf != null && (old == null || old.lat0 != nf.lat0 || old.lon0 != nf.lon0)) {
@@ -156,7 +168,18 @@ class MapView3D(ctx: Context) : View(ctx) {
 
     private val speed: Double get() = hypot(snap.myVx, snap.myVy)
 
-    fun zoomBy(f: Double) { tgtRange = (tgtRange * f).coerceIn(MIN_RANGE, MAX_RANGE) }
+    fun zoomBy(f: Double) { tgtRange = (tgtRange * f).coerceIn(MIN_RANGE, MAX_RANGE); invalidate() }
+
+    /** Compass button: hand-rotated map -> north up; north up <-> heading up. Returns true when heading-up. */
+    fun cycleOrientation(): Boolean {
+        when {
+            headingUp -> headingUp = false
+            abs(Geo.signedDiff(yaw.toDouble(), 0.0)) > 2 -> tgtYaw = 0f
+            else -> headingUp = true
+        }
+        invalidate()
+        return headingUp
+    }
 
     // ------------------------------------------------------------------ projection
 
@@ -223,8 +246,19 @@ class MapView3D(ctx: Context) : View(ctx) {
         drawUser(c, ux, uy, now)
         drawDevices(c, f, ux, uy, dt)
         drawOverlay(c, w, h)
-        postInvalidateOnAnimation()
+        // Full frame rate only while something is moving; otherwise ~20 fps (saves battery, keeps the phone cool).
+        val hd = heading
+        val headingMoved = hd != null && abs(Geo.signedDiff(lastDrawnHeading.toDouble(), hd.toDouble())) > 0.4
+        if (hd != null) lastDrawnHeading = hd
+        val busy = touching || flingX != 0.0 || flingY != 0.0 || settling || headingMoved ||
+            abs(ln(rangeM / tgtRange)) > 0.002 || abs(Geo.signedDiff(yaw.toDouble(), tgtYaw.toDouble())) > 0.1 ||
+            abs(pitch - tgtPitch) > 0.1 || (follow && me != null && (speed > 0.3 || hypot(camX - me.first, camY - me.second) > 0.05))
+        if (busy) postInvalidateOnAnimation() else postInvalidateDelayed(IDLE_FRAME_MS)
     }
+
+    private var touching = false
+    private var settling = false
+    private var lastDrawnHeading = 0f
 
     private inline fun withChunk(f: LocalProj, m: MapData, block: () -> Unit) {
         offX = f.x(m.lon0); offY = f.y(m.lat0)
@@ -271,6 +305,26 @@ class MapView3D(ctx: Context) : View(ctx) {
         path.close()
     }
 
+    /**
+     * Ground wedge with its tip at (x, y) and an arc from a0 to a1 degrees at radius len.
+     * Starts at the first point that projects, so a tip behind the camera never draws a wedge from the screen corner.
+     */
+    private fun fanPath(x: Double, y: Double, a0: Double, a1: Double, len: Double, n: Int): Boolean {
+        path.reset()
+        var count = 0
+        for (k in -1..n) {
+            val px: Double; val py: Double
+            if (k < 0) { px = x; py = y } else {
+                val a = Math.toRadians(a0 + (a1 - a0) * k / n)
+                px = x + len * sin(a); py = y + len * cos(a)
+            }
+            if (!project(px, py, 0.0)) continue
+            if (count++ == 0) path.moveTo(pr[0], pr[1]) else path.lineTo(pr[0], pr[1])
+        }
+        if (count >= 3) path.close()
+        return count >= 3
+    }
+
     private fun polyPath(pts: FloatArray, z: Double): Boolean {
         path.reset()
         var any = false
@@ -294,7 +348,7 @@ class MapView3D(ctx: Context) : View(ctx) {
         for (a in m.areas) {
             if (!visible(a.minX, a.minY, a.maxX, a.maxY, ext)) continue
             if (!polyPath(a.pts, 0.0)) continue
-            fill.color = if (a.kind == 0) Color.parseColor("#0B2A44") else Color.parseColor("#0C2A1E")
+            fill.color = if (a.kind == 0) cWater else cPark
             fill.alpha = 255
             c.drawPath(path, fill)
         }
@@ -326,29 +380,42 @@ class MapView3D(ctx: Context) : View(ctx) {
         }
     }
 
+    /** Which buildings to draw (far to near), recomputed only when the camera has moved or zoomed noticeably. */
+    private class BldCache(val cx: Double, val cy: Double, val ext: Double, val list: List<MapData.Building>)
+    private val bldCache = java.util.IdentityHashMap<MapData, BldCache>()
+
     private fun drawBuildings(c: Canvas, m: MapData, ext: Double, f: LocalProj, idx: Int) {
         if (rangeM > 1200 || m.buildings.isEmpty()) return
         val cx = camX - offX; val cy = camY - offY
-        // Skip buildings a newer chunk already covers (overlapping chunks)
-        val newer = chunks.subList(0, idx).filter { it.buildings.isNotEmpty() }
-            .map { Triple(f.x(it.lon0) - offX, f.y(it.lat0) - offY, MapData.DETAIL_RADIUS * 0.92) }
-        val near = m.buildings.filter { b ->
-            abs(b.cx - cx) < ext && abs(b.cy - cy) < ext && newer.none { (nx, ny, r) -> hypot(b.cx - nx, b.cy - ny) < r }
+        val cached = bldCache[m]
+        val near = if (cached != null && hypot(cached.cx - cx, cached.cy - cy) < ext * 0.12 && abs(cached.ext / ext - 1) < 0.15) {
+            cached.list
+        } else {
+            val e = ext * 1.15
+            // Skip buildings a newer chunk already covers (overlapping chunks)
+            val newer = chunks.subList(0, idx).filter { it.buildings.isNotEmpty() }
+                .map { Triple(f.x(it.lon0) - offX, f.y(it.lat0) - offY, MapData.DETAIL_RADIUS * 0.92) }
+            m.buildings.asSequence()
+                .filter { b -> abs(b.cx - cx) < e && abs(b.cy - cy) < e && newer.none { (nx, ny, r) -> hypot(b.cx - nx, b.cy - ny) < r } }
+                .map { it to hypot(it.cx - cx, it.cy - cy) }
+                .sortedByDescending { it.second }
+                .map { it.first }
+                .toList()
+                .takeLast(500)
+                .also { bldCache[m] = BldCache(cx, cy, ext, it) }
         }
-            .sortedByDescending { hypot(it.cx - cx, it.cy - cy) }
-            .takeLast(500)
         val tall = pitch > 8f
         for (b in near) {
             if (!polyPath(b.pts, 0.0)) continue
-            fill.color = Color.parseColor("#0F2E38"); fill.alpha = 255
+            fill.color = cBldFill; fill.alpha = 255
             c.drawPath(path, fill)
             if (!tall) {
-                stroke.color = Color.parseColor("#1E5A68"); stroke.strokeWidth = 1f * dp; stroke.alpha = 255
+                stroke.color = cBldEdge; stroke.strokeWidth = 1f * dp; stroke.alpha = 255
                 c.drawPath(path, stroke)
                 continue
             }
             // Extruded walls (edges) + roof
-            stroke.color = Color.parseColor("#2A8A9C"); stroke.strokeWidth = 0.8f * dp; stroke.alpha = 150
+            stroke.color = cBldWall; stroke.strokeWidth = 0.8f * dp; stroke.alpha = 150
             val hgt = b.heightM.toDouble()
             var i = 0
             while (i < b.pts.size) {
@@ -360,9 +427,9 @@ class MapView3D(ctx: Context) : View(ctx) {
                 i += 2
             }
             if (polyPath(b.pts, hgt)) {
-                fill.color = Color.parseColor("#123C48"); fill.alpha = 225
+                fill.color = cBldRoof; fill.alpha = 225
                 c.drawPath(path, fill)
-                stroke.alpha = 255; stroke.color = Color.parseColor("#3FB7CC")
+                stroke.alpha = 255; stroke.color = cBldRoofEdge
                 c.drawPath(path, stroke)
             }
         }
@@ -423,16 +490,11 @@ class MapView3D(ctx: Context) : View(ctx) {
         // Facing cone: its width IS the compass uncertainty (narrow = sure, wide = unsure)
         heading?.let { hd ->
             val half = headingAcc.coerceIn(5f, 60f).toDouble()
-            val a0 = Math.toRadians(hd - half); val a1 = Math.toRadians(hd + half); val len = rangeM * 0.26
-            path.reset()
-            if (project(ux, uy, 0.0)) path.moveTo(pr[0], pr[1])
-            for (k in 0..10) {
-                val a = a0 + (a1 - a0) * k / 10
-                if (project(ux + len * sin(a), uy + len * cos(a), 0.0)) path.lineTo(pr[0], pr[1])
+            val len = rangeM * 0.26
+            if (fanPath(ux, uy, hd - half, hd + half, len, 10)) {
+                fill.color = Ui.CYAN; fill.alpha = 60
+                c.drawPath(path, fill)
             }
-            path.close()
-            fill.color = Ui.CYAN; fill.alpha = 60
-            c.drawPath(path, fill)
             // Center line = best estimate
             if (project(ux, uy, 0.0)) {
                 val bx = pr[0]; val by = pr[1]
@@ -475,6 +537,7 @@ class MapView3D(ctx: Context) : View(ctx) {
 
     private fun drawDevices(c: Canvas, f: LocalProj?, ux: Double, uy: Double, dt: Double) {
         hitX.clear(); hitY.clear(); hitD.clear()
+        settling = false
         val list = snap.devices.filter { mode.matches(it.category) }
         val a = 1 - exp(-dt / 0.45)
 
@@ -505,6 +568,7 @@ class MapView3D(ctx: Context) : View(ctx) {
                 if (rel) { an.x -= ux; an.y -= uy } else { an.x += ux; an.y += uy }
                 an.rel = rel
             }
+            if (abs(tx - an.x) > 0.05 || abs(ty - an.y) > 0.05 || abs(tz - an.z) > 0.05 || an.a < 0.99f) settling = true
             an.x += (tx - an.x) * a; an.y += (ty - an.y) * a; an.z += (tz - an.z) * a
             an.a += ((1f - an.a) * a).toFloat()
             items += Item(d, if (rel) an.x + ux else an.x, if (rel) an.y + uy else an.y, an.z, placed)
@@ -523,16 +587,10 @@ class MapView3D(ctx: Context) : View(ctx) {
                 // Uncertainty halo / camera view cone on the ground
                 if (d.kind == Kind.MAP) {
                     Geo.parseDirection(d.facts.firstOrNull { f2 -> f2.first == "Camera faces" }?.second)?.let { dir ->
-                        val a0 = Math.toRadians(dir - 22); val a1 = Math.toRadians(dir + 22); val len = 45.0
-                        path.reset()
-                        if (project(it.x, it.y, 0.0)) path.moveTo(pr[0], pr[1])
-                        for (k in 0..6) {
-                            val aa = a0 + (a1 - a0) * k / 6
-                            if (project(it.x + len * sin(aa), it.y + len * cos(aa), 0.0)) path.lineTo(pr[0], pr[1])
+                        if (fanPath(it.x, it.y, dir - 22, dir + 22, 45.0, 6)) {
+                            fill.color = Ui.VIOLET; fill.alpha = (60 * alpha).toInt()
+                            c.drawPath(path, fill)
                         }
-                        path.close()
-                        fill.color = Ui.VIOLET; fill.alpha = (60 * alpha).toInt()
-                        c.drawPath(path, fill)
                     }
                 } else if (d.errM > 0) {
                     groundCircle(it.x, it.y, d.errM, 32)
@@ -725,6 +783,10 @@ class MapView3D(ctx: Context) : View(ctx) {
 
     override fun onTouchEvent(e: MotionEvent): Boolean {
         parent?.requestDisallowInterceptTouchEvent(true)
+        when (e.actionMasked) {
+            MotionEvent.ACTION_DOWN -> { touching = true; postInvalidateOnAnimation() }
+            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> touching = false
+        }
         scaler.onTouchEvent(e)
         when (e.actionMasked) {
             MotionEvent.ACTION_POINTER_DOWN -> if (e.pointerCount == 2) {
@@ -747,8 +809,8 @@ class MapView3D(ctx: Context) : View(ctx) {
                     else if (abs(accTilt) > 28 * dp && spanChange < 40 * dp) tilting = true
                 }
                 if (rotating) {
+                    headingUp = false // must come first: turning heading-up off resets the target to north
                     yaw = (yaw - da + 360) % 360; tgtYaw = yaw
-                    headingUp = false
                 }
                 if (tilting) {
                     pitch = (pitch - dfy * 0.22f).coerceIn(0f, 65f); tgtPitch = pitch
@@ -756,7 +818,11 @@ class MapView3D(ctx: Context) : View(ctx) {
             }
             MotionEvent.ACTION_POINTER_UP -> if (e.pointerCount - 1 < 2) {
                 twoFinger = false
-                if (tilting) threeD = pitch > 6f
+                if (tilting) {
+                    // Keep the tilt you chose; just record whether that counts as 3D.
+                    keepPitch = true; threeD = pitch > 6f; keepPitch = false
+                    onViewChanged?.invoke()
+                }
                 rotating = false; tilting = false
             }
             MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> { twoFinger = false; rotating = false; tilting = false }
@@ -783,6 +849,7 @@ class MapView3D(ctx: Context) : View(ctx) {
     companion object {
         private const val CAM = 3.4f
         private const val Z_EXAG = 1.6f
+        private const val IDLE_FRAME_MS = 50L
         const val MIN_RANGE = 20.0
         const val MAX_RANGE = 3000.0
     }

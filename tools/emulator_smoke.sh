@@ -14,14 +14,39 @@ SUMMARY="$OUT/summary.txt"
 FAIL=0
 
 note() { echo "$*" | tee -a "$SUMMARY"; }
-shot() { adb exec-out screencap -p > "$OUT/$1.png" 2>/dev/null; note "screenshot $1"; }
+shot() { clear_anr_dialogs; adb exec-out screencap -p > "$OUT/$1.png" 2>/dev/null; note "screenshot $1"; }
 alive() { adb shell pidof "$PKG" >/dev/null 2>&1; }
+
+dump_ui() {
+  adb shell uiautomator dump /sdcard/ui.xml >/dev/null 2>&1
+  adb pull /sdcard/ui.xml "$OUT/ui.xml" >/dev/null 2>&1
+}
+
+# Another app's "isn't responding" dialog (the emulator's own apps are slow) blocks taps: close it.
+# The same dialog for AirScope is a real failure.
+clear_anr_dialogs() {
+  for _ in 1 2 3; do
+    dump_ui
+    grep -q "isn't responding" "$OUT/ui.xml" 2>/dev/null || return 0
+    if grep -q "AirScope isn't responding" "$OUT/ui.xml"; then note "FAIL: AirScope isn't responding (ANR dialog)"; FAIL=1; fi
+    local xy
+    xy=$(python3 - "$OUT/ui.xml" <<'EOF'
+import re, sys, xml.etree.ElementTree as ET
+for n in ET.parse(sys.argv[1]).getroot().iter("node"):
+    if (n.get("text") or "").strip() in ("Close app", "Wait"):
+        x1, y1, x2, y2 = map(int, re.findall(r"\d+", n.get("bounds"))); print((x1 + x2) // 2, (y1 + y2) // 2); break
+EOF
+)
+    [ -n "$xy" ] && adb shell input tap $xy
+    sleep 1
+  done
+}
 
 # Find a view by its text (exact, then "contains") in the UI hierarchy and tap its center.
 tap() {
   local want="$1" mode="${2:-exact}" long="${3:-}"
-  adb shell uiautomator dump /sdcard/ui.xml >/dev/null 2>&1
-  adb pull /sdcard/ui.xml "$OUT/ui.xml" >/dev/null 2>&1
+  clear_anr_dialogs
+  dump_ui
   local xy
   xy=$(python3 - "$OUT/ui.xml" "$want" "$mode" <<'EOF'
 import re, sys, xml.etree.ElementTree as ET
@@ -93,6 +118,8 @@ adb shell dumpsys deviceidle whitelist +"$PKG" >/dev/null 2>&1 || true
 adb shell appops set "$PKG" REQUEST_INSTALL_PACKAGES allow >/dev/null 2>&1 || true
 adb shell settings put secure location_mode 3 >/dev/null 2>&1 || true
 adb shell svc wifi enable >/dev/null 2>&1 || true
+# The emulator's Messages app often freezes on CI and covers the screen with a dialog.
+adb shell pm disable-user --user 0 com.google.android.apps.messaging >/dev/null 2>&1 || true
 gps "$LAT0" "$LON0"
 
 note "-- launch (first run shows the setup checklist)"
