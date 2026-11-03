@@ -24,7 +24,7 @@ Delivery: normal auto-installing releases, one feature group at a time, each thr
    BLE spam flooders moved to part 2 (they're detected by rate, not by name).*
 3. **Security part 2 (v2.9)** — home/work baseline + new-device alert at a marked place; Wi-Fi disruption watch
    (all networks vanishing, own connection dropping: indicator, not proof); BLE spoof/spam detection; security incident
-   report export. *Status: after v2.8.*
+   report export. *Status: built, in CI.*
 All of it stays passive: nothing is sent to any device.
 
 ## Asked by K (2026-11-03): Windows and Linux beta versions

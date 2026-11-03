@@ -32,6 +32,8 @@ object Heuristics {
         val sec = ArrayList<String>()
         var s = 0
         if (d.attackTool) sec += "attack-tool"
+        if (d.placeNote.startsWith("Never seen")) { s += 25; f += d.placeNote + " (new fixed gear here? visitors' phones can't be remembered, so this is not about people)"; sec += "new-here" }
+        else if (d.placeNote.isNotBlank()) f += d.placeNote
         if (d.priority > 0) { s += 40; f += "On your watch list" }
         for (x in d.findings) {
             s += x.points; f += x.text
@@ -112,7 +114,7 @@ object Heuristics {
 
     /** Should this device trigger a pop-up alert (once)? Security tags alert at MEDIUM unless alerts are "critical only". */
     fun wantsAlert(d: Device): Boolean = !d.trusted && d.priority >= 0 && (d.priority > 0 ||
-        (alertLevel >= 1 && d.level >= Level.MEDIUM && ("attack-tool" in d.secTags || "evil-twin" in d.secTags || "following" in d.secTags)) ||
+        (alertLevel >= 1 && d.level >= Level.MEDIUM && ("attack-tool" in d.secTags || "evil-twin" in d.secTags || "following" in d.secTags || "new-here" in d.secTags)) ||
         (alertLevel >= 2 && d.level >= Level.MEDIUM) ||
         (alertLevel >= 1 && d.level == Level.HIGH) ||
             (d.bleType in Classifier.TRACKERS && d.level >= Level.MEDIUM) ||

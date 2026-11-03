@@ -116,6 +116,9 @@ class LanDirectory {
 
     fun rows(now: Long): List<LanRow> = active(now).map { LanRow(it.title(), it.owner, it.ip, it.host, it.what(), it.firstSeen, it.lastSeen) }
 
+    /** Everything heard this session (last 30 min), most recent first, for the dialog's "heard earlier" part. */
+    fun rowsAll(now: Long): List<LanRow> = entries.values.sortedByDescending { it.lastSeen }.map { LanRow(it.title(), it.owner, it.ip, it.host, it.what(), it.firstSeen, it.lastSeen) }
+
     companion object {
         const val MAX_ENTRIES = 300
         private val GENERIC = setOf("iphone", "ipad", "macbook", "macbookpro", "macbookair", "appletv", "homepod", "galaxy", "pixel", "android",

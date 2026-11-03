@@ -195,10 +195,13 @@ class SignalScanner(ctx: Context, private val handler: Handler) {
         if (r.timestampNanos == d.lastRxNanos && d.lastRxNanos != 0L) return
         val raw = r.scanRecord?.bytes
         val h = raw?.contentHashCode() ?: 0
+        val firstPacket = d.readings == 0
         if (h != d.dataHash || now - d.classifiedAt > 15_000) {
             d.dataHash = h
             d.classifiedAt = now
             val adv = AdvParser.parse(raw)
+            // Pairing pop-up spam (Flipper-style): many brand-new addresses per second advertising "earbuds"
+            if (firstPacket && Engine.bleSpam.isPopupKind(adv)) Engine.bleSpam.onNewPopupDevice(r.rssi, now)?.let { Engine.securityEvent("BLE-SPAM", it, now) }
             r.scanRecord?.deviceName?.takeIf { it.isNotBlank() }?.let { if (adv.name == null) adv.name = it }
             adv.name?.let { d.name = it }
             val random: Boolean? = if (Build.VERSION.SDK_INT >= 35) {
@@ -244,9 +247,11 @@ class SignalScanner(ctx: Context, private val handler: Handler) {
         val results = try { wifi.scanResults } catch (_: SecurityException) { return } ?: return
         val now = System.currentTimeMillis()
         val bootNow = SystemClock.elapsedRealtime()
+        var heard = 0
         for (r in results) {
             val bssid = r.BSSID?.lowercase(Locale.US) ?: continue
             if (bootNow - r.timestamp / 1000 > 60_000) continue // stale cached result
+            heard++
             val d = store.upsert(bssid, Kind.WIFI, now)
             if (r.timestamp == d.lastWifiTs) continue
             d.lastWifiTs = r.timestamp
@@ -285,6 +290,14 @@ class SignalScanner(ctx: Context, private val handler: Handler) {
             d.addReading(r.level, now, r.timestamp * 1000)
             Engine.recordObservation(d, r.level, now, r.timestamp * 1000)
         }
+        // Only a scan we started counts for the disruption watch (a throttled/failed scan returns the old list)
+        if (lastWifiScanOk && results.isNotEmpty() || heard > 0) Engine.disruption.onScan(heard, Engine.geo.speed, now)?.let { Engine.securityEvent("WIFI-DISRUPT", it, now) }
+    }
+
+    /** Called by the service when the phone's own Wi-Fi connection drops (engine thread). */
+    fun onWifiLost() {
+        val now = System.currentTimeMillis()
+        Engine.disruption.onConnectionLost(Engine.geo.speed, now)?.let { Engine.securityEvent("WIFI-DISRUPT", it, now) }
     }
 
     /** Wi-Fi RTT (802.11mc FTM): real measured distance to access points that support it. */

@@ -28,6 +28,34 @@ object Exporter {
         }
     }
 
+    /** Plain-text security incident report: events, then every device with a security finding, with what/when/where. */
+    fun securityReport(now: Long, events: List<SecurityEvent>, devices: List<DeviceView>, sessionStart: Long, me: Pair<Double, Double>?): String = buildString {
+        val tf = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.US)
+        appendLine("AirScope security report · ${tf.format(java.util.Date(now))}")
+        if (sessionStart > 0) appendLine("Scan session since ${tf.format(java.util.Date(sessionStart))}")
+        me?.let { appendLine(String.format(java.util.Locale.US, "Position now: %.5f, %.5f", it.first, it.second)) }
+        appendLine("Everything below is passive observation (names and addresses devices broadcast). Hints, not proof.")
+        appendLine()
+        appendLine("== Events (${events.size}) ==")
+        if (events.isEmpty()) appendLine("none")
+        for (e in events) {
+            append(tf.format(java.util.Date(e.time))).append("  ").append(e.kind).append("  ").append(e.text)
+            if (e.lat != null && e.lon != null) append(String.format(java.util.Locale.US, "  @ %.5f, %.5f", e.lat, e.lon))
+            appendLine()
+        }
+        val flagged = devices.filter { it.secTags.isNotEmpty() }.sortedByDescending { it.score }
+        appendLine()
+        appendLine("== Devices with security findings (${flagged.size}) ==")
+        if (flagged.isEmpty()) appendLine("none right now")
+        for (d in flagged) {
+            appendLine("${d.title} [${d.kind.name} ${d.id}] · ${d.secTags.joinToString(", ")} · score ${d.score} (${d.level})")
+            appendLine("  ${d.avg} dBm · ~${fmtDist(d.dist)} m (${fmtDist(d.lo)}–${fmtDist(d.hi)}) · seen ${d.ageSec / 60} min · last ${d.lastSec} s ago" +
+                (if (d.located) String.format(java.util.Locale.US, " · at %.5f, %.5f ±%d m", d.lat, d.lon, d.errM.toInt()) else ""))
+            for (f in d.flags) appendLine("  - $f")
+            for ((k, v) in d.facts) if (k in setOf("Security grade", "Owner", "Earlier addresses", "BSSID", "Address", "MAC vendor", "History", "First seen")) appendLine("  $k: $v")
+        }
+    }
+
     fun sessionCsv(rows: List<Engine.SessionRow>): String = buildString {
         appendLine("kind,id,category,name,vendor,times_seen,first_seen,last_seen,best_rssi,first_spots_apart_m,score")
         for (r in rows) {

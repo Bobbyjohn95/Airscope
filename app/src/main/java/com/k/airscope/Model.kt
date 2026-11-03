@@ -183,6 +183,9 @@ class Device(val id: String, val kind: Kind, now: Long) {
     var secTags: List<String> = emptyList()
     /** The classifier found attack/audit-hardware evidence (Threats). */
     var attackTool: Boolean = false
+    /** Place context from Places.learn ("Never seen at Home before"), else "". */
+    var placeNote: String = ""
+    var placeAlerted: Boolean = false
     var flags: List<String> = emptyList()
     var score: Int = 0
     var maxLevelLogged: Int = 0

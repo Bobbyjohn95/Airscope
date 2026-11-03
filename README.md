@@ -4,6 +4,24 @@ A personal signal-observation app for the Pixel 8 Pro (Android 10+, GrapheneOS-f
 It **only listens**. It reads Wi-Fi beacons and Bluetooth LE advertisements that devices already
 broadcast. It never connects to, jams, deauths or transmits to anything.
 
+## What's new in v2.9: security part 2 (places, disruption watch, pairing spam, report)
+- **Places (MORE → Places: home / work):** mark where you are (150 m around the spot). After you've been there on 3
+  different days AirScope knows what's normally there; from then on a device with a stable identity that was never
+  seen there, present for 3+ minutes, gets a **"new here"** alert (SECURITY chip, `sec:new`). Visitors' phones use
+  random addresses and can't be remembered, so this is about new fixed gear (a camera, a hub, a tag left behind), not
+  people. Everything stays on the phone.
+- **Wi-Fi disruption watch:** when all the networks that were steadily visible vanish at once while you're standing
+  still, or your own Wi-Fi connection drops 3+ times in 10 minutes while still, you get a notification and a Security
+  log entry with time and place. A phone can't see deauth frames, so it says what it is: an indicator with ordinary
+  explanations too (power cut, flaky router), never proof.
+- **Bluetooth pairing spam:** a flood of 15+ brand-new "AirPods / Fast Pair / Swift Pair" addresses within 10 s (the
+  Flipper-style pop-up prank) raises an alert with the strongest signal level as the best guess of how close the
+  source is. The packets themselves can't say who sent them.
+- **Security log & report (MORE → Security log):** all such events this session, plus **Save report**: a plain-text
+  file in Downloads/AirScope with the events and every device that currently has a security finding (what, when,
+  where, signal) to keep or send on.
+- MORE → On your Wi-Fi now also lists names heard earlier in the session, not only the last 10 minutes.
+
 ## What's new in v2.8: security part 1 (attack tools, evil twins, network grades, "following you")
 - **SECURITY chip** (last chip in the row; scroll the row) shows only devices with a security finding. Search terms:
   `sec:attack`, `sec:evil`, `sec:weak`, `sec:follow`, or `sec:` for all of them. The web HUD has the same chip.

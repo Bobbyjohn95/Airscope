@@ -137,6 +137,17 @@ object Notifier {
         post(ctx, ch, id, title, text, openApp(ctx, id, d.key), group = "devices")
     }
 
+    /** A security event that isn't about one device (BLE spam flood, Wi-Fi disruption). */
+    fun eventAlert(ctx: Context, e: SecurityEvent) {
+        val title = when (e.kind) {
+            "BLE-SPAM" -> "Bluetooth pairing spam nearby"
+            "WIFI-DISRUPT" -> "Wi-Fi disruption (indicator, not proof)"
+            else -> "Security event"
+        }
+        val id = slotId(300_000, 8, e.kind + e.time)
+        post(ctx, CH_ALERT, id, title, e.text + "\n\nMORE → Security log has the details.", openApp(ctx, id, null), timeoutMs = 30 * 60_000L, group = "security")
+    }
+
     fun alprAlert(ctx: Context, h: AlprHit, course: Double?) {
         val a = h.alpr
         val where = if (course != null && Geo.angleDiff(h.bearing, course) <= 45) "ahead" else Geo.cardinal(h.bearing)

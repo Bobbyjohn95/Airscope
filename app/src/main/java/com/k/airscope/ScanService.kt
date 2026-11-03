@@ -42,6 +42,7 @@ class ScanService : Service() {
     @Volatile private var stopping = false
     private var hud: HudServer? = null
     private var lastNotif = 0L
+    private var netCallback: android.net.ConnectivityManager.NetworkCallback? = null
 
     private val notifTick = object : Runnable {
         override fun run() {
@@ -75,6 +76,15 @@ class ScanService : Service() {
             Notifier.deviceAlert(app, d, "~${fmtDist(est.meters)} m (${fmtDist(est.lo)}–${fmtDist(est.hi)})")
         }
         Engine.alprAlert = { h -> Notifier.alprAlert(app, h, Engine.geo.course) }
+        Engine.eventAlert = { e -> Notifier.eventAlert(app, e) }
+        // Disruption watch: the phone's own Wi-Fi connection dropping again and again while standing still
+        try {
+            val cm = getSystemService(android.net.ConnectivityManager::class.java)
+            val req = android.net.NetworkRequest.Builder().addTransportType(android.net.NetworkCapabilities.TRANSPORT_WIFI).build()
+            netCallback = object : android.net.ConnectivityManager.NetworkCallback() {
+                override fun onLost(network: android.net.Network) { Engine.post { Engine.onWifiLost() } }
+            }.also { cm.registerNetworkCallback(req, it) }
+        } catch (_: Exception) { }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -178,6 +188,8 @@ class ScanService : Service() {
 
     override fun onDestroy() {
         if (Engine.running) cleanup()
+        try { netCallback?.let { getSystemService(android.net.ConnectivityManager::class.java).unregisterNetworkCallback(it) } } catch (_: Exception) { }
+        netCallback = null
         super.onDestroy()
         // Scanning stopped: an update that was waiting for that can install now (unless you're looking at the app).
         Updater.installPendingAsync(applicationContext)

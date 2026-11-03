@@ -22,6 +22,19 @@ object Engine {
     val history = HistoryDb()
     /** Networks you've spent time near: best security + makers, for evil-twin checks (saved on the phone only). */
     val ssids = SsidMemory()
+    /** Marked places (home, work) and what is normally there; security events; disruption and BLE-spam watches. */
+    val places = Places()
+    val secLog = SecurityLog()
+    val disruption = DisruptionWatch()
+    val bleSpam = BleSpamWatch()
+    /** Called on the engine thread for a security event that isn't about one device. */
+    @Volatile var eventAlert: ((SecurityEvent) -> Unit)? = null
+    @Volatile var lanRowsAll: List<LanDirectory.LanRow> = emptyList()
+        private set
+    /** Immutable copy of the marked places for the UI thread. */
+    class PlaceView(val name: String, val lat: Double, val lon: Double, val days: Int, val known: Int, val learned: Boolean)
+    @Volatile var placeViews: List<PlaceView> = emptyList()
+        private set
     /** Names announced on the Wi-Fi network you're joined to (mDNS / SSDP), receive-only. */
     val lan = LanDirectory()
     private var lanListener: LanListener? = null
@@ -153,12 +166,17 @@ object Engine {
             val f = java.io.File(app.filesDir, "ssids.tsv")
             if (f.exists()) ssids.load(f.readText())
         } catch (_: Exception) { }
+        try {
+            val f = java.io.File(app.filesDir, "places.tsv")
+            if (f.exists()) places.load(f.readText())
+        } catch (_: Exception) { }
         Heuristics.ssidMemory = ssids
     }
 
     private fun saveHistory() {
         if (history.dirty) try { java.io.File(app.filesDir, "history.tsv").writeText(history.dump()); history.dirty = false } catch (_: Exception) { }
         if (ssids.dirty) try { java.io.File(app.filesDir, "ssids.tsv").writeText(ssids.dump()); ssids.dirty = false } catch (_: Exception) { }
+        if (places.dirty) try { java.io.File(app.filesDir, "places.tsv").writeText(places.dump()); places.dirty = false } catch (_: Exception) { }
     }
 
     /** Engine thread. */
@@ -195,6 +213,9 @@ object Engine {
         if (!want && lanListener != null) { lanListener?.stop(); lanListener = null }
     }
 
+    /** Engine thread: the phone's own Wi-Fi connection went away (disruption watch). */
+    fun onWifiLost() { if (running) scanner?.onWifiLost() }
+
     fun setLan(on: Boolean) = post {
         lanOn = on
         syncLan()
@@ -213,6 +234,8 @@ object Engine {
         if (now - lastLanRows < 2_000 && lanRows.isNotEmpty() == lan.entries.isNotEmpty()) return
         lastLanRows = now
         lanRows = if (lanOn) lan.rows(now) else emptyList()
+        lanRowsAll = if (lanOn) lan.rowsAll(now) else emptyList()
+        placeViews = places.places.map { PlaceView(it.name, it.lat, it.lon, it.days, it.known.size, it.learned) }
         lanStatusText = if (!lanOn) "off" else lan.status + (lanListener?.error?.let { " · $it" } ?: "") + " · ${lan.entries.size} known · ${lanListener?.packets ?: 0} packets"
     }
 
@@ -228,6 +251,24 @@ object Engine {
             if (d.owner.isBlank() && e.owner.isNotBlank()) { d.owner = e.owner; d.ownerFromLan = true }
         }
     }
+
+    /** Engine thread: record a security event, log it and raise the notification. */
+    fun securityEvent(kind: String, text: String, now: Long = System.currentTimeMillis()) {
+        val e = secLog.add(kind, text, now, geo.lat, geo.lon)
+        store.log("SEC", text, now)
+        eventAlert?.invoke(e)
+    }
+
+    fun addPlace(name: String): Boolean {
+        val la = geo.lat; val lo = geo.lon
+        if (la == null || lo == null) return false
+        post { places.add(name, la, lo); saveHistory(); publish() }
+        return true
+    }
+
+    fun removePlace(name: String) = post { places.remove(name); saveHistory(); publish() }
+
+    fun clearSecurityLog() = post { secLog.clear(); publish() }
 
     fun setAlpr(on: Boolean) = post {
         alprOn = on
@@ -255,6 +296,8 @@ object Engine {
             Heuristics.myLat = geo.lat; Heuristics.myLon = geo.lon
             refreshSession(now)
             store.linkRotated(now) // same device under a new random address: keep its history in one place
+            val here = places.at(geo.lat, geo.lon)
+            for (d in places.learn(here, store.active(now), now)) store.log("PLACE", "${d.displayName()} [${d.id}]: ${d.placeNote}", now)
             if (store.choicesChanged) { store.choicesChanged = false; Prefs.savePriorities(app, store.priorities); Prefs.saveTrusted(app, store.trustedKeys) }
             matchLanNames(now)
             for (d in store.rescore(now)) if (withinRadius(d, now) && d.priority >= 0) deviceAlert?.invoke(d)

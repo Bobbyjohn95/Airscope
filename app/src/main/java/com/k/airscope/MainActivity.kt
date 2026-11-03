@@ -449,6 +449,8 @@ class MainActivity : Activity() {
         pm.menu.add(0, 5, 0, "Clear session")
         pm.menu.add(0, 7, 0, "Session log (seen again)")
         pm.menu.add(0, 13, 0, "On your Wi-Fi (${Engine.lanRows.size} named)…")
+        pm.menu.add(0, 14, 0, "Security log (${Engine.secLog.snapshot.size}) & report…")
+        pm.menu.add(0, 15, 0, "Places: home / work (${Engine.placeViews.size})…")
         pm.menu.add(0, 11, 0, "Watch rules…")
         pm.menu.add(0, 12, 0, "Alerts: " + arrayOf("critical only", "normal", "everything")[Heuristics.alertLevel] + " (tap to change)")
         pm.menu.add(0, 8, 0, "Diagnostics")
@@ -470,18 +472,86 @@ class MainActivity : Activity() {
                 11 -> showWatchRules()
                 12 -> cycleAlerts()
                 13 -> showLan()
+                14 -> showSecurityLog()
+                15 -> showPlaces()
             }
             true
         }
         pm.show()
     }
 
+    /** Security events (BLE spam, Wi-Fi disruption) plus the report export. */
+    private fun showSecurityLog() {
+        val events = Engine.secLog.snapshot
+        val tf = SimpleDateFormat("HH:mm:ss", Locale.US)
+        val s = Engine.snapshot
+        val flagged = s.devices.count { it.secTags.isNotEmpty() }
+        val sb = StringBuilder()
+        sb.append("Events this session: ${events.size} · devices with security findings right now: $flagged (SECURITY chip).\n")
+        sb.append("A phone can't see raw Wi-Fi frames, so disruption events are indicators, never proof.\n\n")
+        if (events.isEmpty()) sb.append("No events. BLE pairing-spam floods and Wi-Fi disruption (all networks vanishing, your connection dropping repeatedly while still) show up here.\n")
+        for (e in events.take(100)) sb.append(tf.format(Date(e.time))).append("  ").append(e.kind).append('\n').append("    ").append(e.text).append('\n')
+        val tv = text(sb.toString(), 11.5f, Color.LTGRAY).apply { setPadding(dp(16), dp(8), dp(16), dp(8)); setTextIsSelectable(true) }
+        AlertDialog.Builder(this).setTitle("Security log")
+            .setView(ScrollView(this).apply { addView(tv) })
+            .setPositiveButton("Close", null)
+            .setNeutralButton("Save report") { _, _ -> exportSecurityReport() }
+            .setNegativeButton("Clear") { _, _ -> Engine.clearSecurityLog() }
+            .show()
+    }
+
+    private fun exportSecurityReport() {
+        val stamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
+        val s = Engine.snapshot
+        try {
+            saveToDownloads("airscope_security_$stamp.txt", Exporter.securityReport(System.currentTimeMillis(), Engine.secLog.snapshot, s.devices, Engine.sessionStartedAt,
+                if (s.myLat != null && s.myLon != null) s.myLat to s.myLon else null), "text/plain")
+            toast("Saved airscope_security_$stamp.txt to Downloads/AirScope")
+        } catch (e: Exception) {
+            toast("Export failed: ${e.message}")
+        }
+    }
+
+    /** Marked places (home, work): what is normally there is learned over 3 days; new fixed gear then alerts. */
+    private fun showPlaces() {
+        val list = Engine.placeViews
+        val s = Engine.snapshot
+        val sb = StringBuilder()
+        sb.append("Mark where you are as a place. After you've been there on 3 different days AirScope knows what's normally there, " +
+            "and a device with a stable identity that was never seen there before gets a \"new here\" alert. Visitors' phones use random " +
+            "addresses and can't be remembered, so this is about new fixed gear (a camera, a hub, a tag left behind), not people.\n\n")
+        if (list.isEmpty()) sb.append("No places yet.\n")
+        for (p in list) {
+            val here = s.myLat != null && s.myLon != null && Geo.distanceM(s.myLat, s.myLon, p.lat, p.lon) <= Places.RADIUS_M
+            sb.append("• ").append(p.name).append(if (here) "  (you're here)" else "").append('\n')
+            sb.append("    ").append(if (p.learned) "learned" else "learning: day ${p.days} of ${Places.LEARN_DAYS}").append(" · ${p.known} devices known\n")
+        }
+        val tv = text(sb.toString(), 11.5f, Color.LTGRAY).apply { setPadding(dp(16), dp(8), dp(16), dp(8)) }
+        val b = AlertDialog.Builder(this).setTitle("Places (${list.size})")
+            .setView(ScrollView(this).apply { addView(tv) })
+            .setPositiveButton("Close", null)
+            .setNeutralButton("Add this place…") { _, _ ->
+                val input = EditText(this).apply { hint = "name (Home, Work, Mom's)"; setText(if (list.none { it.name == "Home" }) "Home" else "") }
+                AlertDialog.Builder(this).setTitle("Mark this place").setView(input)
+                    .setPositiveButton("Save") { _, _ ->
+                        val n = input.text.toString().trim()
+                        if (n.isEmpty()) toast("Give the place a name") else if (!Engine.addPlace(n)) toast("No GPS fix yet: try again in a moment") else toast("Saved $n (150 m around here)")
+                    }.setNegativeButton("Cancel", null).show()
+            }
+        if (list.isNotEmpty()) b.setNegativeButton("Remove…") { _, _ ->
+            AlertDialog.Builder(this).setTitle("Remove which place?").setItems(list.map { it.name }.toTypedArray()) { _, i -> Engine.removePlace(list[i].name); toast("Removed ${list[i].name}") }.show()
+        }
+        b.show()
+    }
+
     /** Devices announcing themselves (Bonjour / UPnP) on the Wi-Fi network the phone is joined to. */
     private fun showLan() {
-        val rows = Engine.lanRows
+        val active = Engine.lanRows
+        val rows = Engine.lanRowsAll
         val tf = SimpleDateFormat("HH:mm", Locale.US)
         val sb = StringBuilder()
         sb.append(if (Engine.lanOn) "Listening: ${Engine.lanStatusText}\n" else "OFF (tap the button below to turn it on)\n")
+        if (rows.size > active.size) sb.append("${active.size} heard in the last 10 min, ${rows.size - active.size} earlier this session.\n")
         sb.append("These are names devices on your current Wi-Fi network announce themselves (Bonjour / UPnP). " +
             "AirScope only receives them; it never asks or connects. Nothing shows on mobile data or on a network that blocks multicast.\n\n")
         if (rows.isEmpty()) sb.append(if (Engine.lanOn) "Nothing heard yet. Announcements are occasional: give it a few minutes on a home Wi-Fi.\n" else "")
@@ -496,7 +566,7 @@ class MainActivity : Activity() {
             sb.append("\n    heard ").append(tf.format(Date(e.firstSeen))).append("–").append(tf.format(Date(e.lastSeen))).append('\n')
         }
         val tv = text(sb.toString(), 11.5f, Color.LTGRAY).apply { setPadding(dp(16), dp(8), dp(16), dp(8)); setTextIsSelectable(true) }
-        AlertDialog.Builder(this).setTitle("On your Wi-Fi (${rows.size})")
+        AlertDialog.Builder(this).setTitle("On your Wi-Fi (${active.size})")
             .setView(ScrollView(this).apply { addView(tv) })
             .setPositiveButton("Close", null)
             .setNeutralButton(if (Engine.lanOn) "Turn off" else "Turn on") { _, _ -> val on = !Engine.lanOn; Engine.setLan(on); toast(if (on) "Wi-Fi names on (while scanning)" else "Wi-Fi names off") }
@@ -786,10 +856,10 @@ class MainActivity : Activity() {
         }
     }
 
-    private fun saveToDownloads(name: String, content: String) {
+    private fun saveToDownloads(name: String, content: String, mime: String = "text/csv") {
         val values = ContentValues().apply {
             put(MediaStore.MediaColumns.DISPLAY_NAME, name)
-            put(MediaStore.MediaColumns.MIME_TYPE, "text/csv")
+            put(MediaStore.MediaColumns.MIME_TYPE, mime)
             put(MediaStore.MediaColumns.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS + "/AirScope")
         }
         val uri = contentResolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values) ?: throw IllegalStateException("could not create file")

@@ -50,7 +50,8 @@ in the run summary so K can say yes or no. Don't start it unasked.
 - `app/src/main/java/com/k/airscope/` — app. Pure-logic files (no `android.*` imports) are unit-testable:
   Locator, PositionFilter, HeadingFusion, HeadingMath, RoutePredictor, TileManager, VectorTile, MapData, Classifier,
   Signatures, Heuristics, DeviceStore, Model, Geo, Exporter, HudServer, MiniJson, UpdateCheck, WifiIe, AdvParser,
-  Names, LanParser, LanDirectory, Threats (+ WifiSecurity, SsidMemory).
+  Names, LanParser, LanDirectory, Threats (+ WifiSecurity, SsidMemory), SecurityWatch (Places, DisruptionWatch,
+  BleSpamWatch, SecurityLog).
 - `tests/jvm/` — logic/tile suites (run by Gradle in CI and by `tools/dev_check.sh` locally), placement benchmark.
 - `tests/hud/` — the iPhone web HUD simulator + Playwright test (needs Node/Playwright; optional).
 - `tools/emulator_smoke.sh` — what CI does on the emulator; add a step when you add UI.

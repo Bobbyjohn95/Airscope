@@ -964,6 +964,72 @@ fun main() {
             Mode.SECURITY.matches(v) && !Mode.SECURITY.matches(Snapshot.view(wps, Env.OPEN, t0, null, null)))
     }
 
+
+    // ---- Security part 2: places baseline, disruption watch, BLE spam, report
+    run {
+        val day = 86_400_000L
+        val pl = Places()
+        val home = pl.add("Home", 33.75, -84.39)
+        check("places: at/not at", pl.at(33.7505, -84.39) === home && pl.at(33.76, -84.39) == null && pl.at(null, null) == null)
+        fun dev(mac: String, name: String = "", random: Boolean = false, since: Long = t0 - 10 * 60_000) = Device(mac, Kind.BLE, since).also { it.name = name; it.randomAddr = random; it.vendor = "Acme"; it.presentSince = since; it.addReading(-60, t0) }
+        val cam = dev("00:aa:bb:cc:dd:01")
+        val visitor = dev("4a:aa:bb:cc:dd:02", random = true)
+        val named = dev("4a:aa:bb:cc:dd:03", "Sarah's AirPods", random = true)
+        check("places: identity", Places.identity(cam) == "BLE:00:aa:bb:cc:dd:01" && Places.identity(visitor) == null && Places.identity(named)!!.contains("sarah's airpods"))
+        // Day 1..3: learning, nothing is "new"
+        var t = t0
+        for (d in 0 until 3) { t = t0 + d * day; check("places: learning day ${d + 1} gives no alerts", pl.learn(pl.at(33.75, -84.39), listOf(cam, named), t).isEmpty()) }
+        check("places: learned after 3 days", home.learned && home.known.size == 2, "${home.days} ${home.known}")
+        // Day 4: a new fixed device appears, present 5 min -> new here; the visitor's random phone never
+        t = t0 + 3 * day + 61_000
+        val hub = dev("00:aa:bb:cc:dd:09", since = t - 5 * 60_000)
+        val fresh = pl.learn(pl.at(33.75, -84.39), listOf(cam, named, visitor, hub), t)
+        check("places: new fixed device flagged once", fresh == listOf(hub) && hub.placeNote.startsWith("Never seen at Home") && cam.placeNote.isEmpty() && visitor.placeNote.isEmpty(), "${fresh.size} ${hub.placeNote}")
+        val again = pl.learn(pl.at(33.75, -84.39), listOf(hub), t + 61_000)
+        check("places: not flagged twice", again.isEmpty() && hub.placeNote.isEmpty())
+        val passer = dev("00:aa:bb:cc:dd:10", since = t + 120_000 - 30_000)
+        check("places: passer-by (present < 3 min) ignored", pl.learn(pl.at(33.75, -84.39), listOf(passer), t + 122_000).isEmpty() && passer.placeNote.isEmpty())
+        Heuristics.score(hub.also { it.placeNote = "Never seen at Home before" }, listOf(hub), t)
+        check("places: new-here scores MEDIUM + alerts", "new-here" in hub.secTags && hub.level >= Level.MEDIUM && Heuristics.wantsAlert(hub), "${hub.score}")
+        val pl2 = Places(); pl2.load(pl.dump())
+        check("places: round trip", pl2.places.size == 1 && pl2.places[0].name == "Home" && pl2.places[0].known == home.known && pl2.places[0].days == home.days)
+        pl.remove("home")
+        check("places: remove (case-insensitive)", pl.places.isEmpty() && pl.dirty)
+
+        val dw = DisruptionWatch()
+        var n: String? = null
+        for (i in 0 until 6) n = dw.onScan(8, 0.3, t0 + i * 8_000)
+        check("disruption: steady networks -> nothing", n == null)
+        n = dw.onScan(0, 0.3, t0 + 48_000); val n2 = dw.onScan(0, 0.3, t0 + 70_000)
+        check("disruption: all vanished while still -> event once", n == null && n2 != null && n2.contains("8 nearby"), n2)
+        check("disruption: no repeat within 10 min", dw.onScan(0, 0.3, t0 + 100_000) == null)
+        val dw2 = DisruptionWatch()
+        for (i in 0 until 6) dw2.onScan(8, 25.0, t0 + i * 8_000)
+        check("disruption: driving away -> nothing", dw2.onScan(0, 25.0, t0 + 48_000) == null && dw2.onScan(0, 25.0, t0 + 70_000) == null)
+        val dw3 = DisruptionWatch()
+        check("disruption: 3 connection drops in 10 min -> event", dw3.onConnectionLost(0.0, t0) == null && dw3.onConnectionLost(0.0, t0 + 60_000) == null && dw3.onConnectionLost(0.0, t0 + 120_000) != null)
+        check("disruption: drops while driving ignored", DisruptionWatch().let { it.onConnectionLost(20.0, t0) == null && it.onConnectionLost(20.0, t0) == null && it.onConnectionLost(20.0, t0) == null })
+
+        val bs = BleSpamWatch()
+        val popup = AdvParser.parse(ad(mfr(0x004C, 0x07, 0x19, 0x01, 0x0E, 0x20, 0x55)))
+        check("spam: proximity pairing is a pop-up kind; Nearby Info is not", bs.isPopupKind(popup) && !bs.isPopupKind(AdvParser.parse(ad(mfr(0x004C, 0x10, 0x05, 0x01)))))
+        var ev: String? = null
+        for (i in 0 until 14) ev = bs.onNewPopupDevice(-70 + i, t0 + i * 300)
+        check("spam: 14 in 10 s is not a flood", ev == null && !bs.flooding)
+        ev = bs.onNewPopupDevice(-40, t0 + 4_500)
+        check("spam: 15th -> event with strongest signal", ev != null && ev.contains("15 new") && ev.contains("-40 dBm") && bs.flooding, ev)
+        check("spam: no second event for 5 min", bs.onNewPopupDevice(-50, t0 + 5_000) == null)
+        val bs2 = BleSpamWatch()
+        for (i in 0 until 20) ev = bs2.onNewPopupDevice(-60, t0 + i * 2_000)
+        check("spam: 20 real earbuds over 40 s is not a flood", !bs2.flooding)
+
+        val log = SecurityLog()
+        log.add("BLE-SPAM", "x", t0, 1.0, 2.0); log.add("WIFI-DISRUPT", "y", t0 + 1, null, null)
+        val view = Snapshot.view(hub, Env.INDOOR, t, null, null)
+        val rep = Exporter.securityReport(t, log.snapshot, listOf(view), t0, 33.75 to -84.39)
+        check("report: events + flagged device", rep.contains("== Events (2) ==") && rep.contains("WIFI-DISRUPT  y") && rep.contains("@ 1.00000, 2.00000") && rep.contains("new-here") && rep.contains("Never seen at Home"), rep.take(400))
+    }
+
     println(if (failures == 0) "ALL LOGIC TESTS PASSED" else "$failures FAILURE(S)")
     if (failures > 0) throw AssertionError("$failures test failure(s)")
 }
