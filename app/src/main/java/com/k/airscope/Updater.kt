@@ -93,7 +93,10 @@ object Updater {
         if (code != 200) return "GitHub returned HTTP $code"
         val rel = UpdateCheck.parse(c.inputStream.bufferedReader().use { it.readText() }) ?: return "Couldn't read the latest release"
         val installed = installedBuild(ctx)
-        if (rel.build <= installed) return "Up to date (build $installed)"
+        if (rel.build <= installed) {
+            return if (signingKind(ctx) == "stable") "Up to date (build $installed)"
+            else "Connected ✓, but this install has a one-time key, so it can't auto-update. See the steps above."
+        }
 
         val file = download(ctx, rel, token) ?: return "Build ${rel.build} found but download failed"
         val problem = verify(ctx, file, rel.build)

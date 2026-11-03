@@ -89,8 +89,8 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          # Builds 3-5 predate this rule and used one-time keys: keep them out of the updater's way.
-          for t in build-3 build-4 build-5; do
+          # Builds 2-5 predate this rule and used one-time keys: keep them out of the updater's way.
+          for t in build-2 build-3 build-4 build-5; do
             gh release edit "$t" --prerelease --title "AirScope $t (one-time key)" >/dev/null 2>&1 || true
           done
           if [ "$AIRSCOPE_STABLE_KEY" = "1" ]; then
