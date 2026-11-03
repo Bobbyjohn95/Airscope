@@ -380,7 +380,8 @@ class MainActivity : Activity() {
         val build = try { Updater.installedBuild(this) } catch (_: Exception) { 0L }
         val stable = Updater.signingKind(this) == "stable"
         box.addView(text("Installed build: $build\nSource: github.com/${UpdateCheck.OWNER}/${UpdateCheck.REPO} (Releases)\n" +
-            "Checks every ~6 hours when online and installs by itself when you're not scanning. No password needed.", 12.5f, Color.LTGRAY))
+            "Checks every ~6 hours when online. Installs by itself, without asking, when you leave the app or stop " +
+            "scanning, never while you're using it. No password needed.", 12.5f, Color.LTGRAY))
         box.addView(text(
             if (stable) "\n✓ Signed with your permanent key: this install can update itself."
             else "\n⚠ This install was signed with a one-time key, so it can't update itself. After GitHub has the " +
@@ -391,12 +392,14 @@ class MainActivity : Activity() {
             button("SET SECRET") { openUrl(Updater.SECRET_URL) },
             button("RELEASES") { openUrl(Updater.RELEASES_URL) },
         ))
-        box.addView(text(
-            "\nIf the result says the repo is private: REPO SETTINGS → scroll to Danger Zone → Change visibility → Public. " +
-                "Then the app can download updates with no token or password.",
-            12f, Color.LTGRAY,
-        ))
-        box.addView(row(button("REPO SETTINGS") { openUrl(Updater.REPO_SETTINGS_URL) }))
+        if (Prefs.getString(this, Updater.PREF_RESULT).contains("private")) {
+            box.addView(text(
+                "\nThe GitHub repo is private: REPO SETTINGS → scroll to Danger Zone → Change visibility → Public. " +
+                    "Then the app can download updates with no token or password.",
+                12f, Color.LTGRAY,
+            ))
+            box.addView(row(button("REPO SETTINGS") { openUrl(Updater.REPO_SETTINGS_URL) }))
+        }
         val result = text("Last result: " + Prefs.getString(this, Updater.PREF_RESULT, "never checked"), 12.5f, Ui.AMBER)
         box.addView(result)
         val d = AlertDialog.Builder(this)

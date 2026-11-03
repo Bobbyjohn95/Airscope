@@ -469,7 +469,7 @@
     ctx.strokeStyle = "#fff"; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(10, h - 22); ctx.lineTo(10 + px, h - 22); ctx.stroke();
     ctx.fillText((nice >= 1000 ? nice / 1000 + " km" : nice + " m"), 10, h - 28);
     ctx.fillStyle = "rgba(5,9,12,0.8)"; ctx.fillRect(0, h - 18, w, 18);
-    ctx.fillStyle = "#4f8a99"; ctx.fillText("● located  ○ unknown  ┄ 2 possible spots", 10, h - 6);
+    ctx.fillStyle = "#4f8a99"; const lg = ["● located  ○ unknown  ┄ 2 possible spots", "● located  ○ unknown  ┄ 2 spots", "● located  ○ unknown"].find((t) => ctx.measureText(t).width < w - 150); if (lg) ctx.fillText(lg, 10, h - 6);
     const attr = "© OpenStreetMap"; ctx.fillText(attr, w - ctx.measureText(attr).width - 6, h - 6);
     const msg = !state.me && source === "live" ? "Waiting for the phone's GPS…" : !mapData && source === "live" ? "Street map loading on the phone…" : null;
     if (msg) { ctx.fillStyle = "#ffc400"; ctx.font = "11px ui-monospace, Menlo, monospace"; ctx.fillText(msg, w / 2 - ctx.measureText(msg).width / 2, 20); }

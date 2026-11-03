@@ -39,6 +39,15 @@ class PositionFilter {
     private val p = DoubleArray(16) // 4x4 covariance, row-major
     private var t = 0L
     private var rejects = 0
+    // Raw fix-to-fix movement, to catch a GPS that reports speed 0 (or nothing) while you're clearly moving
+    private var rawLat = 0.0
+    private var rawLon = 0.0
+    private var rawT = 0L
+    private var rawVx = 0.0
+    private var rawVy = 0.0
+    private var rawVOk = false
+    /** After the speed field was caught contradicting real movement, ignore it for a few seconds. */
+    private var distrustSpeedUntil = 0L
     private val hist = ArrayDeque<State>()
 
     val initialized: Boolean get() = proj != null
@@ -61,11 +70,27 @@ class PositionFilter {
             return
         }
         val dt = gap
-        val moving = (f.speed ?: hypot(vx, vy)) > 2.0
-        predict(dt, if (moving) 3.0 else 1.2)
         val zx = pr.x(f.lon)
         val zy = pr.y(f.lat)
         val sigma = max(f.accM * 0.75, 1.0)
+        // Two fixes in a row moving the same way at the same speed = real movement, whatever the speed field says.
+        val motion = rawMotion(f, pr)
+        val badSpeed = motion != null && (f.speed == null || f.speed < 0.5 * hypot(motion.first, motion.second))
+        if (badSpeed) distrustSpeedUntil = f.tNanos + 5_000_000_000L
+        val distrust = f.tNanos < distrustSpeedUntil
+        if (badSpeed && motion != null) {
+            val mx = motion.first; val my = motion.second
+            val gate = hypot(zx - (x + vx * dt), zy - (y + vy * dt))
+            if (gate > 3 * sigma + 5) { // the filter was still assuming you were stopped: catch up in one step
+                x = zx; y = zy; vx = mx; vy = my
+                p.fill(0.0); p[0] = sigma * sigma; p[5] = sigma * sigma; p[10] = 9.0; p[15] = 9.0
+                t = f.tNanos; rejects = 0
+                pushHistory()
+                return
+            }
+        }
+        val moving = (if (distrust) null else f.speed ?: hypot(vx, vy))?.let { it > 2.0 } ?: true
+        predict(dt, if (moving) 3.0 else 1.2)
         // Outlier gate on the position innovation
         val ix = zx - x; val iy = zy - y
         val sxx = p[0] + sigma * sigma; val syy = p[5] + sigma * sigma
@@ -80,7 +105,11 @@ class PositionFilter {
         rejects = 0
         updatePos(zx, zy, sigma)
         val sp = f.speed
-        if (sp != null) {
+        if (badSpeed && motion != null) {
+            updateVel(motion.first, motion.second, 3.0)
+        } else if (distrust) {
+            // speed field not trusted right now: velocity comes from the positions alone
+        } else if (sp != null) {
             if (sp < 0.4) {
                 updateVel(0.0, 0.0, 0.35) // standing still: stop drift and wander
             } else if (f.bearing != null) {
@@ -94,8 +123,34 @@ class PositionFilter {
         pushHistory()
     }
 
+    /**
+     * Velocity from the last two raw fixes, returned only when it agrees with the fix before
+     * (same direction within 30°, speed within 35%, faster than 5 m/s, decent accuracy).
+     * A one-off GPS jump never passes; steady travel does.
+     */
+    private fun rawMotion(f: Fix, pr: LocalProj): Pair<Double, Double>? {
+        var out: Pair<Double, Double>? = null
+        if (rawT > 0) {
+            val rdt = (f.tNanos - rawT) / 1e9
+            if (rdt in 0.2..3.0 && f.accM < 15) {
+                val vx2 = (pr.x(f.lon) - pr.x(rawLon)) / rdt
+                val vy2 = (pr.y(f.lat) - pr.y(rawLat)) / rdt
+                val s2 = hypot(vx2, vy2)
+                if (rawVOk) {
+                    val s1 = hypot(rawVx, rawVy)
+                    val cosA = if (s1 * s2 > 0) (vx2 * rawVx + vy2 * rawVy) / (s1 * s2) else -1.0
+                    if (s2 > 5 && s1 > 5 && cosA > 0.866 && s2 / s1 in 0.65..1.35) out = vx2 to vy2
+                }
+                rawVx = vx2; rawVy = vy2; rawVOk = true
+            } else rawVOk = false
+        }
+        rawLat = f.lat; rawLon = f.lon; rawT = f.tNanos
+        return out
+    }
+
     /** Restart at a fresh fix after a GPS gap, keeping the map projection and history (the gap stays a gap). */
     private fun resume(f: Fix, pr: LocalProj) {
+        rawLat = f.lat; rawLon = f.lon; rawT = f.tNanos; rawVOk = false
         x = pr.x(f.lon); y = pr.y(f.lat)
         val b = f.bearing
         val s = f.speed
@@ -110,6 +165,7 @@ class PositionFilter {
     }
 
     private fun init(f: Fix) {
+        rawLat = f.lat; rawLon = f.lon; rawT = f.tNanos; rawVOk = false
         val pr = LocalProj(f.lat, f.lon)
         proj = pr
         x = 0.0; y = 0.0

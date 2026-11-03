@@ -143,6 +143,11 @@ shot 04-highway-mid
 drive 25
 shot 05-highway
 screen_text > "$OUT/05-highway.txt"
+if grep -q "mph" "$OUT/05-highway.txt" && grep -qi "inside a car" "$OUT/05-highway.txt"; then
+  note "  highway detected ✓ ($(grep -o '[0-9]* mph' "$OUT/05-highway.txt" | head -1), car distance model)"
+else
+  note "  highway NOT detected (no speed / car model in the status line)"
+fi
 
 note "-- modes, 2D view, log"
 tap "POLICE/ALPR"; shot 06-mode-police

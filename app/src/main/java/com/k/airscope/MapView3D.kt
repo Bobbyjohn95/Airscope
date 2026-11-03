@@ -700,8 +700,12 @@ class MapView3D(ctx: Context) : View(ctx) {
         c.drawRect(0f, h - 18 * dp, w, h, fill)
         text.color = Ui.DIM
         val attr = "© OpenStreetMap"
-        c.drawText(attr, w - text.measureText(attr) - 6 * dp, h - 6 * dp, text)
-        c.drawText("● located  ○ walk to locate  ┄ 2 possible spots", 10 * dp, h - 6 * dp, text)
+        val attrW = text.measureText(attr)
+        c.drawText(attr, w - attrW - 6 * dp, h - 6 * dp, text)
+        // Legend: the longest version that fits beside the attribution
+        val room = w - attrW - 24 * dp
+        listOf("● located  ○ walk to locate  ┄ 2 possible spots", "● located  ○ unknown  ┄ 2 spots", "● located  ○ unknown")
+            .firstOrNull { text.measureText(it) <= room }?.let { c.drawText(it, 10 * dp, h - 6 * dp, text) }
 
         val msg = when {
             snap.myLat == null -> "Waiting for GPS… (go outside or near a window)"
