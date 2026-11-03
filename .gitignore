@@ -9,3 +9,9 @@ local.properties
 __pycache__/
 *.pyc
 app/src/main/assets/db/
+desktop/airscope_desktop/hud.html
+desktop/airscope_desktop/db/
+desktop/build/
+desktop/dist/
+__pycache__/
+*.spec

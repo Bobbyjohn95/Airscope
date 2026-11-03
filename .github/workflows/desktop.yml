@@ -1,0 +1,78 @@
+name: Desktop beta
+
+# Windows + Linux beta of AirScope desktop (desktop/). Produces downloadable builds as workflow artifacts; nothing is
+# published as a release and nothing auto-installs anywhere.
+on:
+  push:
+    paths:
+      - "desktop/**"
+      - "app/src/main/assets/hud.html"
+      - "tools/fetch_vendor_db.py"
+      - ".github/workflows/desktop.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Unit tests
+        run: python -m unittest discover -s desktop/tests -v
+      - name: One scan with this runner's radios (whatever it has; must not crash)
+        working-directory: desktop
+        run: python -m airscope_desktop --once --no-ble
+
+  build:
+    needs: test
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            name: linux
+          - os: windows-latest
+            name: windows
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Vendor tables (same source as the app)
+        shell: bash
+        run: |
+          mkdir -p desktop/airscope_desktop/db
+          python tools/fetch_vendor_db.py desktop/airscope_desktop || true
+          ls -la desktop/airscope_desktop/db || true
+      - name: Bundle the web HUD
+        shell: bash
+        run: cp app/src/main/assets/hud.html desktop/airscope_desktop/hud.html
+      - name: Build
+        shell: bash
+        working-directory: desktop
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install pyinstaller bleak
+          SEP=":"; [ "${{ matrix.name }}" = "windows" ] && SEP=";"
+          pyinstaller --noconfirm --onedir --name airscope-desktop \
+            --add-data "airscope_desktop/hud.html${SEP}." \
+            --add-data "airscope_desktop/db${SEP}db" \
+            --collect-all bleak \
+            airscope_desktop/__main__.py
+          cp README.md dist/airscope-desktop/README.md
+      - name: Smoke the build
+        shell: bash
+        working-directory: desktop/dist/airscope-desktop
+        run: ./airscope-desktop --once --no-ble || ./airscope-desktop.exe --once --no-ble
+      - uses: actions/upload-artifact@v4
+        with:
+          name: airscope-desktop-${{ matrix.name }}
+          path: desktop/dist/airscope-desktop

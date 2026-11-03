@@ -1,0 +1,2 @@
+# Only needed for Bluetooth on the desktop beta (Wi-Fi works with the standard library alone).
+bleak>=0.22
