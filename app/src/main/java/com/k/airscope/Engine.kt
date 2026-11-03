@@ -19,6 +19,9 @@ object Engine {
     val store = DeviceStore()
     val db = VendorDb()
     val geo = GeoTracker()
+    val history = HistoryDb()
+    private var lastHistorySave = 0L
+    private var lastHistoryTouch = 0L
 
     @Volatile var snapshot: Snapshot = Snapshot.EMPTY
         private set
@@ -39,6 +42,9 @@ object Engine {
     @Volatile var env = Env.INDOOR
     @Volatile var alprOn = true
     @Volatile var hudOn = false
+    /** Phone heading (true north) and its accuracy, set by the screen while it's open; shared with the HUD. */
+    @Volatile var heading: Double? = null
+    @Volatile var headingAcc: Double = 45.0
     @Volatile var hudToken = ""
     @Volatile var dbStatus = "built-in tables"
 
@@ -57,6 +63,8 @@ object Engine {
         t.start()
         thread = t
         handler = Handler(t.looper)
+        Exporter.elapsedNanos = { android.os.SystemClock.elapsedRealtimeNanos() }
+        Exporter.heading = { heading?.let { it to headingAcc } }
         handler.post {
             loadDb()
             publish()
@@ -77,6 +85,15 @@ object Engine {
         lines("ble_companies.tsv")?.let { db.loadCompanies(it) }
         lines("ble_uuids.tsv")?.let { db.loadUuids(it) }
         dbStatus = if (db.ouiCount > 0) "${db.ouiCount} MAC vendors · ${db.companyCount} BLE companies" else "built-in tables (full vendor DB not bundled)"
+        try {
+            val f = java.io.File(app.filesDir, "history.tsv")
+            if (f.exists()) history.load(f.readLines().asSequence())
+        } catch (_: Exception) { }
+    }
+
+    private fun saveHistory() {
+        if (!history.dirty) return
+        try { java.io.File(app.filesDir, "history.tsv").writeText(history.dump()); history.dirty = false } catch (_: Exception) { }
     }
 
     /** Engine thread. */
@@ -98,6 +115,7 @@ object Engine {
         scanner?.stop()
         scanner = null
         geo.stop()
+        saveHistory()
         publish()
     }
 
@@ -124,25 +142,80 @@ object Engine {
             val now = System.currentTimeMillis()
             scanner?.syncBle()
             for (d in store.rescore(now)) deviceAlert?.invoke(d)
-            // Re-estimate map positions for devices with new GPS-tagged samples (cheap, a few per tick)
-            var budget = 25
+            // Re-estimate map positions for devices with new GPS-tagged samples (a few per tick)
+            var budget = 20
             for (d in store.devices.values) {
                 if (budget == 0) break
                 if (d.track.dirty && store.isActive(d, now)) {
-                    Locator.estimate(d.track, Distance.reference(d).first.toDouble(), env)
+                    locate(d, now)
                     budget--
                 }
             }
+            if (now - lastHistoryTouch > 60_000) {
+                lastHistoryTouch = now
+                for (d in store.active(now)) if (HistoryDb.shouldTrack(d)) {
+                    val r = history.touch(d.key, now)
+                    d.firstEver = r.first; d.daysSeen = r.days
+                }
+            }
+            if (now - lastHistorySave > 5 * 60_000) { lastHistorySave = now; saveHistory() }
             if (alprOn) for (h in geo.dueAlerts(now)) alprAlert?.invoke(h)
             publish()
             handler.postDelayed(this, 500)
         }
     }
 
-    /** Engine thread: tag a fresh signal reading with the current GPS position. */
-    fun recordObservation(d: Device, rssi: Int, now: Long) {
-        if (!geo.goodFix(now)) return
-        Locator.add(d.track, geo.lat!!, geo.lon!!, rssi.toDouble(), now)
+    private val MOBILE = setOf(Category.PHONE, Category.WEARABLE, Category.TRACKER, Category.VEHICLE)
+    private val FIXED = setOf(Category.NETWORK, Category.CAMERA_IOT)
+
+    /** Engine thread: estimate where a device is, using the street map to settle ambiguous cases. */
+    private fun locate(d: Device, now: Long) {
+        val tr = d.track
+        if (d.followM > 300) { // it's moving with you: there is no fixed spot to find
+            tr.dirty = false; tr.located = false; tr.ambiguous = false
+            return
+        }
+        val (prior, sigma) = Distance.locatorPrior(d)
+        Locator.estimate(tr, prior, sigma, env, now, if (d.category in MOBILE) 120_000L else null)
+        d.sideFromMap = false
+        // Two equally good spots? Wi-Fi gear and IoT devices sit inside buildings: pick the side with one.
+        if (tr.ambiguous && d.category in FIXED && tr.altLat != null) {
+            val a = geo.buildingAt(tr.estLat, tr.estLon, 4.0)
+            val b = geo.buildingAt(tr.altLat!!, tr.altLon!!, 4.0)
+            if ((a != null) != (b != null)) {
+                if (b != null) { val la = tr.estLat; val lo = tr.estLon; tr.estLat = tr.altLat!!; tr.estLon = tr.altLon!!; tr.altLat = la; tr.altLon = lo }
+                tr.errM = tr.rawErrM
+                tr.located = tr.rawErrM < 40
+                tr.ambiguous = !tr.located
+                d.sideFromMap = tr.located
+            }
+        }
+        d.building = if (tr.located && d.category in FIXED + Category.POLICE) {
+            geo.buildingAt(tr.estLat, tr.estLon, minOf(tr.errM, 15.0))?.let { it.label ?: "a building" }
+        } else null
+    }
+
+    /**
+     * Engine thread: tag a reading with where you were at its exact reception time (Wi-Fi results
+     * can arrive seconds after the beacon was heard: ~90 m at highway speed), and track whether the
+     * device is traveling with you.
+     */
+    fun recordObservation(d: Device, rssi: Int, now: Long, rxNanos: Long) {
+        val pos = geo.positionAt(rxNanos) ?: return
+        Locator.add(d.track, pos.lat, pos.lon, rssi.toDouble(), now, pos.accM)
+        // Following: distance you moved while it stayed close and in continuous view
+        if (d.lastObsNanos > 0 && rxNanos - d.lastObsNanos in 1..45_000_000_000L && d.smoothRssi > -85) {
+            d.followM += Geo.distanceM(d.lastObsLat, d.lastObsLon, pos.lat, pos.lon)
+        } else if (d.lastObsNanos > 0 && rxNanos - d.lastObsNanos > 45_000_000_000L) {
+            d.followM = 0.0
+        }
+        if (rxNanos > d.lastObsNanos) { d.lastObsNanos = rxNanos; d.lastObsLat = pos.lat; d.lastObsLon = pos.lon }
+    }
+
+    /** Engine thread: a measured Wi-Fi RTT distance. */
+    fun recordRange(d: Device, meters: Double, std: Double, now: Long, rxNanos: Long) {
+        val pos = geo.positionAt(rxNanos) ?: return
+        Locator.addRtt(d.track, pos.lat, pos.lon, meters, std, now, pos.accM)
     }
 
     /** Builds the immutable snapshot (engine thread). */
@@ -151,16 +224,21 @@ object Engine {
         val lat = geo.lat
         val lon = geo.lon
         val views = ArrayList<DeviceView>()
-        for (d in store.active(now)) {
+        val active = store.active(now)
+        val ssidCount = HashMap<String, Int>()
+        for (d in active) if (d.kind == Kind.WIFI && d.name.isNotBlank()) ssidCount[d.name] = (ssidCount[d.name] ?: 0) + 1
+        // Your position predicted to "now" so the list/HUD match the map
+        val me = geo.filter.at(android.os.SystemClock.elapsedRealtimeNanos())
+        for (d in active) {
             if ((d.kind == Kind.WIFI && !wifiOn) || (d.kind == Kind.BLE && !bleOn)) continue
-            views += Snapshot.view(d, env, now, lat, lon)
+            views += Snapshot.view(d, env, now, me?.lat ?: lat, me?.lon ?: lon, if (d.kind == Kind.WIFI) ssidCount[d.name] ?: 0 else 0)
         }
         if (alprOn && lat != null && lon != null) for (h in geo.hits()) views += Snapshot.alprView(h, now)
         views.sortWith(compareByDescending<DeviceView> { it.score }.thenBy { it.dist })
         val warning = if (running) scanner?.warning() ?: geo.warning() else null
         val s = Snapshot(
             now, running, warning, views, ArrayList(store.timeline.take(200)), env, geo.status, geo.mapStatus, ++version,
-            lat, lon, geo.accuracy, geo.course, geo.mapVersion,
+            lat, lon, geo.accuracy, geo.course, geo.mapVersion, geo.vx, geo.vy, geo.fixNanos, geo.gnss,
         )
         snapshot = s
         if (hudOn) snapshotJson = Exporter.snapshotJson(s)

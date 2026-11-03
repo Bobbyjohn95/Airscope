@@ -46,9 +46,20 @@ object Distance {
     fun meters(ref: Double, rssi: Double, env: Env): Double =
         10.0.pow((ref - (rssi + env.extraLoss)) / (10 * env.n)).coerceIn(0.1, 500.0)
 
-    /** Expected RSSI at 1 m, and where that number came from. */
+    /** Expected RSSI at 1 m, and where that number came from (advertised > learned from map fix > default). */
     fun reference(d: Device): Pair<Int, String> {
         d.refAt1m?.let { return it to d.refSource.ifEmpty { "advertised" } }
+        d.track.p0?.let { return Math.round(it).toInt() to "learned from map fix" }
+        return defaultReference(d)
+    }
+
+    /** Prior for the locator: never the learned value (that would reinforce itself). Returns (ref, sigma dB). */
+    fun locatorPrior(d: Device): Pair<Double, Double> {
+        d.refAt1m?.let { return it.toDouble() to 4.0 }
+        return defaultReference(d).first.toDouble() to 8.0
+    }
+
+    fun defaultReference(d: Device): Pair<Int, String> {
         return when (d.kind) {
             Kind.WIFI -> {
                 val base = when {

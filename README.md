@@ -4,6 +4,31 @@ A personal signal-observation app for the Pixel 8 Pro (Android 10+, GrapheneOS-f
 It **only listens**. It reads Wi-Fi beacons and Bluetooth LE advertisements that devices already
 broadcast. It never connects to, jams, deauths or transmits to anything.
 
+## What's new in v2.2: GPS, placement, heading, details
+- **GPS built for speed:**
+  - Full-rate (0.5 s), high-accuracy, dual-band (L1+L5) GPS with raw measurement tracking turned on.
+  - A Kalman filter smooths the fix, rejects jumps and predicts your position between fixes, so the map moves
+    smoothly at 70+ mph instead of stepping. The status line shows accuracy, satellites used, bands and speed.
+- **Device placement:**
+  - Every reading is stamped with the moment the radio actually heard it (not when Android delivered it) and matched
+    to where you were at that instant. At highway speed that alone cuts placement error by about two thirds.
+  - The locator also learns each device's signal strength, uses Wi-Fi RTT (measured distance) when the access point
+    supports it, and breaks left/right-of-road ties with the street map. When two spots fit equally well it shows both
+    (dashed line) instead of guessing.
+  - Things that move with you (your car, a passenger's phone, a following tracker) are recognized and not "placed".
+- **Which way you're facing:**
+  - A fused gyro + compass heading converted to *true* north, reading the back camera when you hold the phone up and
+    the top edge when it's flat.
+  - The cone on the map is as wide as the compass uncertainty, and the app warns about magnetic interference or
+    calibration.
+  - Tracking a device gives "turn left 30°" / "dead ahead" guidance on foot and "at 2 o'clock" while driving (the map
+    turns with your GPS course at speed, since a compass inside a car is unreliable).
+- **More device detail:**
+  - Signal stats and advertising interval, connectable / long-range Bluetooth, and AirPods battery levels.
+  - iBeacon / Eddystone decoding, Fast Pair and Swift Pair.
+  - Wi-Fi AP name, number of connected clients and channel load, country, roaming and Passpoint support.
+  - How many access points share a network name, first seen and days seen, and the building a device is likely in.
+
 ## What's new in v2
 - **Search modes:** ALL · PHONES · WEAR/AUDIO · TRACKERS · CAMS/IOT · VEHICLES · DRONES · POLICE/ALPR · NETWORKS.
 - **Police / ALPR detection**
@@ -111,6 +136,10 @@ The HUD has the same modes and 3D radar. The `k=` key keeps other people on the 
 - **Direction:** phones can't measure where a radio signal comes from. Devices get a map position only after you've
   measured them from spots far enough apart (walking a loop works best; a straight line can't tell which side of the
   road something is on, so it stays uncertain). Mapped ALPRs and Remote ID drones are exact.
+- **GPS:** a phone fix is typically 1–3 m under open sky and worse in cities, tunnels or deep inside a car.
+  Nothing on a phone makes it "perfect"; the filter makes it steadier and honest about its error.
+- **Heading:** compasses are thrown off by cars, steel and magnetic cases. The app detects this and widens the cone,
+  but it can't remove the interference.
 - **Distance:** distance from signal strength is an estimate, so it's shown as a range. Bodies, walls and pockets change it.
   Wi-Fi RTT and GPS-based items are measured.
 - **Flock cameras over the air:** phones can't capture Wi-Fi probe requests, which is how ESP32 detectors catch most of them.

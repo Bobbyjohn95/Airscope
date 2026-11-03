@@ -14,11 +14,29 @@ class MapData(
     val buildings: List<Building>,
     val areas: List<Area>,
     val fetchedAt: Long,
+    /** Radius the chunk covers (m); fast = roads-only chunk fetched ahead of you at highway speed. */
+    val radiusM: Double = ROAD_RADIUS.toDouble(),
+    val fast: Boolean = false,
 ) {
+    /** Building containing the point (local meters), or the nearest one within maxM. */
+    fun buildingAt(x: Double, y: Double, maxM: Double = 0.0): Building? {
+        var best: Building? = null
+        var bd = Double.MAX_VALUE
+        for (b in buildings) {
+            if (kotlin.math.abs(b.cx - x) > b.radius + maxM + 1 || kotlin.math.abs(b.cy - y) > b.radius + maxM + 1) continue
+            if (inside(b.pts, x, y)) return b
+            if (maxM > 0) {
+                val d = kotlin.math.hypot(b.cx - x, b.cy - y) - b.radius
+                if (d < maxM && d < bd) { bd = d; best = b }
+            }
+        }
+        return best
+    }
+
     /** cls: 0 highway/primary, 1 secondary/tertiary, 2 residential/local, 3 service, 4 foot/cycle path. */
     class Road(val cls: Int, val name: String?, val pts: FloatArray, val minX: Float, val minY: Float, val maxX: Float, val maxY: Float)
 
-    class Building(val pts: FloatArray, val heightM: Float, val cx: Float, val cy: Float, val radius: Float)
+    class Building(val pts: FloatArray, val heightM: Float, val cx: Float, val cy: Float, val radius: Float, val label: String?)
 
     /** kind: 0 water, 1 park/green. */
     class Area(val kind: Int, val pts: FloatArray, val minX: Float, val minY: Float, val maxX: Float, val maxY: Float)
@@ -29,6 +47,28 @@ class MapData(
         const val ROAD_RADIUS = 1500
         const val DETAIL_RADIUS = 650
         const val REFETCH_M = 700.0
+
+        const val FAST_RADIUS = 3000
+
+        /** Point-in-polygon (ray casting) on a flat x,y array. */
+        fun inside(p: FloatArray, x: Double, y: Double): Boolean {
+            var c = false
+            var j = p.size - 2
+            var i = 0
+            while (i < p.size) {
+                val xi = p[i]; val yi = p[i + 1]; val xj = p[j]; val yj = p[j + 1]
+                if ((yi > y) != (yj > y) && x < (xj - xi) * (y - yi) / (yj - yi) + xi) c = !c
+                j = i; i += 2
+            }
+            return c
+        }
+
+        /** Roads only, big radius: fetched ahead of you at highway speed. */
+        fun fastQuery(lat: Double, lon: Double): String {
+            val a = String.format(Locale.US, "(around:%d,%.6f,%.6f)", FAST_RADIUS, lat, lon)
+            return "[out:json][timeout:40];(way[\"highway\"~\"^(motorway|trunk|primary|secondary|tertiary|unclassified|residential|" +
+                "motorway_link|trunk_link|primary_link|secondary_link|tertiary_link)$\"]$a;way[\"natural\"=\"water\"]$a;);out geom qt;"
+        }
 
         fun query(lat: Double, lon: Double): String {
             fun around(r: Int) = String.format(Locale.US, "(around:%d,%.6f,%.6f)", r, lat, lon)
@@ -51,7 +91,7 @@ class MapData(
             else -> 4
         }
 
-        fun parse(json: String, lat0: Double, lon0: Double, now: Long): MapData {
+        fun parse(json: String, lat0: Double, lon0: Double, now: Long, fast: Boolean = false): MapData {
             val p = LocalProj(lat0, lon0)
             val roads = ArrayList<Road>()
             val buildings = ArrayList<Building>()
@@ -84,14 +124,17 @@ class MapData(
                         val h = (tags["height"] as? String)?.replace("m", "")?.trim()?.toFloatOrNull()
                             ?: levels?.let { it * 3.2f } ?: 6f
                         val cx = (minX + maxX) / 2; val cy = (minY + maxY) / 2
-                        buildings += Building(xy, h.coerceIn(2.5f, 120f), cx, cy, maxOf(maxX - minX, maxY - minY) / 2)
+                        val addr = listOfNotNull(tags["addr:housenumber"] as? String, tags["addr:street"] as? String).joinToString(" ").ifEmpty { null }
+                        val kind = (tags["building"] as? String)?.takeIf { it != "yes" }?.replace('_', ' ')
+                        val label = listOfNotNull(tags["name"] as? String, addr, kind).joinToString(" · ").ifEmpty { null }
+                        buildings += Building(xy, h.coerceIn(2.5f, 120f), cx, cy, maxOf(maxX - minX, maxY - minY) / 2, label)
                     }
                     tags["natural"] == "water" -> areas += Area(0, xy, minX, minY, maxX, maxY)
                     else -> areas += Area(1, xy, minX, minY, maxX, maxY)
                 }
             }
             roads.sortBy { -it.cls } // draw minor roads first, highways on top
-            return MapData(lat0, lon0, roads, buildings, areas, now)
+            return MapData(lat0, lon0, roads, buildings, areas, now, if (fast) FAST_RADIUS.toDouble() else ROAD_RADIUS.toDouble(), fast)
         }
     }
 }

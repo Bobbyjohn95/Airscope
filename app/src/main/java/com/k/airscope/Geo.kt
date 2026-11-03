@@ -56,6 +56,86 @@ object Geo {
         val names = arrayOf("N", "NE", "E", "SE", "S", "SW", "W", "NW")
         return names[(((deg % 360) + 360) % 360 / 45 + 0.5).toInt() % 8]
     }
+
+    private val CARD16 = arrayOf("N", "NNE", "NE", "ENE", "E", "ESE", "SE", "SSE", "S", "SSW", "SW", "WSW", "W", "WNW", "NW", "NNW")
+
+    fun cardinal16(deg: Double): String = CARD16[(((deg % 360) + 360) % 360 / 22.5 + 0.5).toInt() % 16]
+
+    /** Signed difference b - a in -180..180 (positive = b is clockwise / to the right of a). */
+    fun signedDiff(a: Double, b: Double): Double = ((b - a) % 360 + 540) % 360 - 180
+}
+
+/**
+ * Pure heading math (unit-tested): which way the phone is "looking", how sure we are,
+ * and turn-by-turn guidance toward a device.
+ */
+object HeadingMath {
+    /**
+     * Look direction (deg clockwise from the matrix's north) from a 3x3 row-major device->world rotation matrix
+     * (SensorManager.getRotationMatrixFromVector). Phone flat: where the top edge points. Phone upright:
+     * where the back camera points. In between (normal hand-held tilt) both agree and are blended.
+     */
+    fun lookAzimuth(r: FloatArray): Double? {
+        val up = r[8].toDouble() // world-up component of the screen normal: +-1 flat, 0 upright
+        val wTop = (up * up).coerceIn(0.0, 1.0)
+        val wCam = 1 - wTop
+        var e = 0.0; var n = 0.0
+        val hTop = kotlin.math.hypot(r[1].toDouble(), r[4].toDouble())
+        if (hTop > 0.05) { e += wTop * r[1] / hTop; n += wTop * r[4] / hTop }
+        val hCam = kotlin.math.hypot(r[2].toDouble(), r[5].toDouble())
+        if (hCam > 0.05) { e -= wCam * r[2] / hCam; n -= wCam * r[5] / hCam }
+        if (kotlin.math.hypot(e, n) < 1e-3) return null
+        return (Math.toDegrees(atan2(e, n)) + 360) % 360
+    }
+
+    /** Heading accuracy (deg) from an Android sensor accuracy status (3 high .. 0 unreliable). */
+    fun accuracyFromStatus(status: Int): Double = when (status) {
+        3 -> 10.0
+        2 -> 20.0
+        1 -> 35.0
+        else -> 60.0
+    }
+
+    /** True when the measured magnetic field strength (uT) is far from Earth's field here: metal/magnets nearby. */
+    fun interference(measuredUt: Double, expectedUt: Double): Boolean =
+        expectedUt > 1 && abs(measuredUt / expectedUt - 1) > 0.25
+
+    /** Rough GPS course accuracy (deg) from speed and position error over ~1 s of travel. */
+    fun courseAccuracy(speed: Double, posErrM: Double): Double =
+        if (speed < 0.5) 180.0 else Math.toDegrees(atan2(posErrM.coerceIn(0.5, 10.0) * 0.35, speed)).coerceIn(1.0, 90.0)
+
+    /** Smoothing factor: follows quick turns immediately, steadies the needle when you hold still. */
+    fun smoothAlpha(rateDegPerS: Double, dt: Double): Double {
+        val tau = when {
+            rateDegPerS > 90 -> 0.04
+            rateDegPerS > 30 -> 0.10
+            rateDegPerS > 8 -> 0.22
+            else -> 0.45
+        }
+        return 1 - kotlin.math.exp(-dt / tau)
+    }
+
+    /** Circular blend from prev toward next by a (0..1). */
+    fun blend(prev: Double, next: Double, a: Double): Double = (prev + Geo.signedDiff(prev, next) * a + 360) % 360
+
+    /** "turn right 40°" style guidance from where you're facing to a target bearing. */
+    fun turn(bearing: Double, facing: Double, accDeg: Double): String {
+        val d = Geo.signedDiff(facing, bearing)
+        val tol = maxOf(8.0, accDeg * 0.8).coerceAtMost(30.0)
+        return when {
+            abs(d) <= tol -> "▲ dead ahead"
+            abs(d) >= 180 - tol -> "▼ behind you: turn around"
+            d > 0 -> "↻ turn right ${Math.round(d)}°"
+            else -> "↺ turn left ${Math.round(-d)}°"
+        }
+    }
+
+    /** Clock position (12 = straight ahead) of a bearing relative to your direction of travel. */
+    fun clock(bearing: Double, travel: Double): Int {
+        val d = ((bearing - travel) % 360 + 360) % 360
+        val h = Math.round(d / 30).toInt() % 12
+        return if (h == 0) 12 else h
+    }
 }
 
 /** A mapped surveillance device from OpenStreetMap (DeFlock tagging). */
@@ -114,9 +194,10 @@ object AlprLogic {
             .filter { it.dist <= maxM }
             .sortedBy { it.dist }
 
-    /** Driving: alert when it's ahead within 400 m. Walking/standing: within 150 m. */
+    /** Driving: alert ~25 s before reaching it (400-1200 m) when it's ahead. Walking/standing: within 150 m. */
     fun shouldAlert(h: AlprHit, speedMs: Double?, courseDeg: Double?): Boolean {
         val moving = speedMs != null && speedMs >= 3.0 && courseDeg != null
-        return if (moving) h.dist <= 400 && Geo.angleDiff(h.bearing, courseDeg!!) <= 45 else h.dist <= 150
+        val reach = if (moving) (speedMs!! * 25).coerceIn(400.0, 1200.0) else 150.0
+        return if (moving) h.dist <= reach && Geo.angleDiff(h.bearing, courseDeg!!) <= 40 else h.dist <= reach
     }
 }

@@ -57,7 +57,16 @@ object Heuristics {
                 }
             }
             if (d.smoothRssi > -45) { s += 10; f += "Very close (about 1 m)" }
+            if (d.followM > 400) {
+                val km = String.format(java.util.Locale.US, "%.1f", d.followM / 1000)
+                when {
+                    d.bleType in Classifier.TRACKERS -> { s += 35; f += "Tracker has moved with you for $km km" }
+                    d.category == Category.POLICE -> { s += 15; f += "Has moved with you for $km km" }
+                    else -> { s += 10; f += "Has moved with you for $km km (yours or a passenger's?)" }
+                }
+            }
         }
+        if (d.kind == Kind.WIFI && d.followM > 600) { s += 10; f += "Hotspot moving with you (${(d.followM / 1000).let { String.format(java.util.Locale.US, "%.1f", it) }} km)" }
 
         d.score = s.coerceIn(0, 100)
         d.flags = f

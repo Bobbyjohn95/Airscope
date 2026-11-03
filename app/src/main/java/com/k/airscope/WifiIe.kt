@@ -13,6 +13,14 @@ class WifiIeInfo {
     var remoteId: Boolean = false
     var djiDroneId: Boolean = false
     val vendorOuis = LinkedHashSet<String>()
+    var stations: Int? = null
+    var channelUtil: Int? = null
+    var country: String? = null
+    var rrm = false
+    var bssTransition = false
+    var fastRoaming = false
+    var passpoint = false
+    var apName: String? = null
 
     fun wpsLabel(): String? {
         val parts = listOfNotNull(wpsManufacturer, wpsModel ?: wpsModelNumber)
@@ -34,6 +42,21 @@ object WifiIe {
     fun parse(ies: List<Ie>): WifiIeInfo {
         val info = WifiIeInfo()
         for (ie in ies) {
+            val v = ie.data
+            when (ie.id) {
+                11 -> if (v.size >= 3) { // BSS Load: station count (LE16), channel utilization (0-255)
+                    info.stations = (v[0].toInt() and 0xFF) or ((v[1].toInt() and 0xFF) shl 8)
+                    info.channelUtil = ((v[2].toInt() and 0xFF) * 100 + 127) / 255
+                }
+                7 -> if (v.size >= 2) String(v, 0, 2, Charsets.US_ASCII).takeIf { s -> s.all { it in 'A'..'Z' } }?.let { info.country = it }
+                70 -> info.rrm = true
+                54 -> info.fastRoaming = true
+                127 -> if (v.size >= 3 && (v[2].toInt() and 0x08) != 0) info.bssTransition = true
+                133 -> if (v.size >= 26) { // Cisco Aironet element: AP name at offset 10
+                    val n = String(v, 10, 16, Charsets.US_ASCII).replace("\u0000", "").trim()
+                    if (n.length >= 2 && n.all { it in ' '..'~' }) info.apName = n
+                }
+            }
             if (ie.id != 221 || ie.data.size < 4) continue
             val d = ie.data
             val oui = String.format("%02x:%02x:%02x", d[0].toInt() and 0xFF, d[1].toInt() and 0xFF, d[2].toInt() and 0xFF)
@@ -43,6 +66,7 @@ object WifiIe {
                 oui == "00:50:f2" && type == 0x04 -> parseWps(d, info)
                 oui == "fa:0b:bc" && type == 0x0D -> info.remoteId = true // ASTM F3411 Remote ID beacon
                 oui == "26:37:12" -> info.djiDroneId = true // DJI proprietary DroneID
+                oui == "50:6f:9a" && type == 0x10 -> info.passpoint = true
             }
         }
         return info

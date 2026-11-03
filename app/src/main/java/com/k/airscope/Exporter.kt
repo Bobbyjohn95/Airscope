@@ -69,6 +69,7 @@ object Exporter {
         append(",\"lon\":").append(d.lon?.let { String.format(Locale.US, "%.6f", it) } ?: "null")
         append(",\"err\":").append(d.errM.toInt())
         append(",\"spots\":").append(d.spots)
+        if (d.candA != null && d.candB != null) append(String.format(Locale.US, ",\"cand\":[[%.6f,%.6f],[%.6f,%.6f]]", d.candA.first, d.candA.second, d.candB.first, d.candB.second))
         append(",\"bearing\":").append(d.bearing?.let { fmt1(it.toDouble()) } ?: "null")
         append(",\"flags\":[").append(d.flags.joinToString(",") { json(it) }).append("]")
         append(",\"facts\":[").append(d.facts.joinToString(",") { "[${json(it.first)},${json(it.second)}]" }).append("]")
@@ -89,6 +90,13 @@ object Exporter {
         }
     }
 
+    /** Monotonic clock matching Location.elapsedRealtimeNanos (overridable in tests). */
+    /** Phone heading (deg true, +-deg) when known; set by the Engine. */
+    @Volatile var heading: () -> Pair<Double, Double>? = { null }
+
+    @Volatile var elapsedNanos: () -> Long = { System.nanoTime() }
+    private fun android_elapsedNanos() = elapsedNanos()
+
     fun snapshotJson(s: Snapshot): String = buildString {
         append("{\"time\":").append(s.time)
         append(",\"scanning\":").append(s.scanning)
@@ -99,8 +107,11 @@ object Exporter {
         append(",\"mapV\":").append(s.mapVersion)
         append(",\"me\":")
         if (s.myLat != null && s.myLon != null) {
-            append(String.format(Locale.US, "{\"lat\":%.6f,\"lon\":%.6f,\"acc\":%d,\"course\":%s}", s.myLat, s.myLon, s.myAccM.toInt(),
-                s.myCourse?.let { fmt1(it) } ?: "null"))
+            val age = if (s.fixNanos > 0) ((android_elapsedNanos() - s.fixNanos) / 1_000_000).coerceAtLeast(0) else 0
+            val hd = heading()
+            append(String.format(Locale.US, "{\"lat\":%.7f,\"lon\":%.7f,\"acc\":%.1f,\"course\":%s,\"vx\":%.2f,\"vy\":%.2f,\"ageMs\":%d,\"gnss\":%s,\"hdg\":%s,\"hdgAcc\":%d}",
+                s.myLat, s.myLon, s.myAccM, s.myCourse?.let { fmt1(it) } ?: "null", s.myVx, s.myVy, age, json(s.gnss),
+                hd?.first?.let { fmt1(it) } ?: "null", (hd?.second ?: 0.0).toInt()))
         } else append("null")
         append(",\"devices\":[").append(s.devices.joinToString(",") { deviceJson(it) }).append("]")
         append(",\"timeline\":[")

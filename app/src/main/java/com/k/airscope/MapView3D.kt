@@ -53,8 +53,11 @@ object Ui {
 class MapView3D(ctx: Context) : View(ctx) {
     var onSelect: ((DeviceView) -> Unit)? = null
     var mode: Mode = Mode.ALL
-    /** Phone compass heading (deg, smoothed by the activity). */
+    /** Where the phone points (deg true north, smoothed by HeadingTracker) and how sure (+- deg). */
     var heading: Float? = null
+    var headingAcc: Float = 25f
+    /** Read every frame for a smooth needle. */
+    var headingSource: HeadingTracker? = null
     var threeD: Boolean = true
         set(v) { field = v; tgtPitch = if (v) 52f else 0f }
     var headingUp: Boolean = false
@@ -66,9 +69,14 @@ class MapView3D(ctx: Context) : View(ctx) {
 
     // Data
     private var snap: Snapshot = Snapshot.EMPTY
-    private var map: MapData? = null
+    private var chunks: List<MapData> = emptyList()
+    private val map: MapData? get() = chunks.firstOrNull()
     private var selectedKey: String? = null
     private var frame: LocalProj? = null
+    /** Offset (m) of the chunk being drawn, relative to the drawing frame. */
+    private var offX = 0.0
+    private var offY = 0.0
+    private var roadLabelCount = 0
 
     // Camera (meters in `frame`)
     private var camX = 0.0
@@ -95,7 +103,8 @@ class MapView3D(ctx: Context) : View(ctx) {
     private val hitX = ArrayList<Float>()
     private val hitY = ArrayList<Float>()
     private val hitD = ArrayList<DeviceView>()
-    private class Anim(var x: Double, var y: Double, var z: Double, var a: Float)
+    /** rel = position stored relative to you (unplaced devices ride along with you, no lag at speed). */
+    private class Anim(var x: Double, var y: Double, var z: Double, var a: Float, var rel: Boolean)
     private val anim = HashMap<String, Anim>()
 
     private val fill = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
@@ -114,17 +123,20 @@ class MapView3D(ctx: Context) : View(ctx) {
     )
     private val roadWidths = floatArrayOf(4.2f, 3.0f, 2.0f, 1.3f, 1.0f)
 
-    fun update(s: Snapshot, m: MapData?, selected: String?) {
+    /** [cs] = street-map chunks, newest first (the newest one defines the drawing frame). */
+    fun update(s: Snapshot, cs: List<MapData>, selected: String?) {
         snap = s
         selectedKey = selected
-        if (m !== map) {
+        if (cs !== chunks) {
+            chunks = cs
+            val nf = cs.firstOrNull()?.proj
             val old = frame
-            map = m
-            if (m != null) {
-                val nf = m.proj
-                if (old != null && !follow) { // keep looking at the same place
-                    val la = old.lat(camY); val lo = old.lon(camX)
-                    camX = nf.x(lo); camY = nf.y(la)
+            if (nf != null && (old == null || old.lat0 != nf.lat0 || old.lon0 != nf.lon0)) {
+                if (old != null) {
+                    // Re-express everything in the new frame so nothing jumps
+                    val sx = old.x(nf.lon0); val sy = old.y(nf.lat0)
+                    camX -= sx; camY -= sy
+                    for (an in anim.values) if (!an.rel) { an.x -= sx; an.y -= sy }
                 }
                 frame = nf
             }
@@ -132,12 +144,24 @@ class MapView3D(ctx: Context) : View(ctx) {
         if (frame == null && s.myLat != null) frame = LocalProj(s.myLat, s.myLon!!).also { camX = 0.0; camY = 0.0 }
     }
 
+    private val nowNanos: Long get() = SystemClock.elapsedRealtimeNanos()
+
+    /** Your position predicted to this exact frame from the last fix + velocity (smooth at highway speed). */
+    private fun userXY(f: LocalProj): Pair<Double, Double>? {
+        val la = snap.myLat ?: return null
+        val lo = snap.myLon ?: return null
+        val age = if (snap.fixNanos > 0) ((nowNanos - snap.fixNanos) / 1e9).coerceIn(0.0, 3.0) else 0.0
+        return (f.x(lo) + snap.myVx * age) to (f.y(la) + snap.myVy * age)
+    }
+
+    private val speed: Double get() = hypot(snap.myVx, snap.myVy)
+
     fun zoomBy(f: Double) { tgtRange = (tgtRange * f).coerceIn(MIN_RANGE, MAX_RANGE) }
 
     // ------------------------------------------------------------------ projection
 
     private fun project(x: Double, y: Double, z: Double): Boolean {
-        val dx = (x - camX).toFloat(); val dy = (y - camY).toFloat()
+        val dx = (x + offX - camX).toFloat(); val dy = (y + offY - camY).toFloat()
         val xr = dx * cY - dy * sY
         val yr = dx * sY + dy * cY
         val r = rangeM.toFloat()
@@ -160,6 +184,7 @@ class MapView3D(ctx: Context) : View(ctx) {
         val now = SystemClock.uptimeMillis()
         val dt = if (lastFrame == 0L) 0.016 else ((now - lastFrame) / 1000.0).coerceAtMost(0.1)
         lastFrame = now
+        headingSource?.let { h -> heading = h.facing?.toFloat(); headingAcc = h.facingAcc.toFloat() }
         stepCamera(dt)
 
         val w = width.toFloat(); val h = height.toFloat()
@@ -173,8 +198,9 @@ class MapView3D(ctx: Context) : View(ctx) {
 
         c.drawColor(Ui.BG)
         val f = frame
-        val ux = if (f != null && snap.myLat != null) f.x(snap.myLon!!) else camX
-        val uy = if (f != null && snap.myLat != null) f.y(snap.myLat!!) else camY
+        val me = f?.let { userXY(it) }
+        val ux = me?.first ?: camX
+        val uy = me?.second ?: camY
         val ext = rangeM * (if (pitch > 20f) 3.2 else 1.7)
 
         // Ground plate + horizon fade in 3D
@@ -184,13 +210,15 @@ class MapView3D(ctx: Context) : View(ctx) {
             c.drawPath(path, fill)
         }
 
-        map?.let { m ->
-            drawAreas(c, m, ext)
-            drawRoads(c, m, ext)
-            drawBuildings(c, m, ext)
-            drawRoadLabels(c, m, ext)
-        }
-        if (map == null) drawGrid(c)
+        if (f != null && chunks.isNotEmpty()) {
+            // Older chunks first so the newest (most detailed, nearest you) draws on top
+            val order = chunks.asReversed()
+            for (m in order) withChunk(f, m) { drawAreas(c, m, ext) }
+            for (m in order) withChunk(f, m) { drawRoads(c, m, ext) }
+            for ((i, m) in chunks.withIndex()) withChunk(f, m) { drawBuildings(c, m, ext, f, i) }
+            val seen = HashSet<String>(); roadLabelCount = 0
+            for (m in chunks) withChunk(f, m) { drawRoadLabels(c, m, ext, seen) }
+        } else drawGrid(c)
 
         drawUser(c, ux, uy, now)
         drawDevices(c, f, ux, uy, dt)
@@ -198,12 +226,20 @@ class MapView3D(ctx: Context) : View(ctx) {
         postInvalidateOnAnimation()
     }
 
+    private inline fun withChunk(f: LocalProj, m: MapData, block: () -> Unit) {
+        offX = f.x(m.lon0); offY = f.y(m.lat0)
+        block()
+        offX = 0.0; offY = 0.0
+    }
+
     private fun stepCamera(dt: Double) {
         val f = frame
-        if (follow && f != null && snap.myLat != null) {
-            val ux = f.x(snap.myLon!!); val uy = f.y(snap.myLat!!)
-            val a = 1 - exp(-dt / 0.35)
-            camX += (ux - camX) * a; camY += (uy - camY) * a
+        val me = f?.let { userXY(it) }
+        if (follow && me != null) {
+            // Move with your velocity, then close any remaining gap: no trailing lag at speed
+            camX += snap.myVx * dt; camY += snap.myVy * dt
+            val a = 1 - exp(-dt / 0.25)
+            camX += (me.first - camX) * a; camY += (me.second - camY) * a
         } else if (flingX != 0.0 || flingY != 0.0) {
             camX += flingX * dt; camY += flingY * dt
             val decay = exp(-dt / 0.35)
@@ -212,7 +248,11 @@ class MapView3D(ctx: Context) : View(ctx) {
         }
         val a = (1 - exp(-dt / 0.22)).toFloat()
         rangeM = exp(ln(rangeM) + (ln(tgtRange) - ln(rangeM)) * a)
-        if (headingUp) heading?.let { tgtYaw = it }
+        if (headingUp) {
+            // Driving: turn the map with your GPS course (a compass inside a car is unreliable)
+            val crs = snap.myCourse
+            if (speed > 5.0 && crs != null) tgtYaw = crs.toFloat() else heading?.let { tgtYaw = it }
+        }
         var dy = ((tgtYaw - yaw) % 360 + 540) % 360 - 180
         if (abs(dy) < 0.05f) dy = 0f
         yaw = (yaw + dy * a + 360) % 360
@@ -245,8 +285,10 @@ class MapView3D(ctx: Context) : View(ctx) {
         return any
     }
 
-    private fun visible(minX: Float, minY: Float, maxX: Float, maxY: Float, ext: Double): Boolean =
-        maxX >= camX - ext && minX <= camX + ext && maxY >= camY - ext && minY <= camY + ext
+    private fun visible(minX: Float, minY: Float, maxX: Float, maxY: Float, ext: Double): Boolean {
+        val cx = camX - offX; val cy = camY - offY
+        return maxX >= cx - ext && minX <= cx + ext && maxY >= cy - ext && minY <= cy + ext
+    }
 
     private fun drawAreas(c: Canvas, m: MapData, ext: Double) {
         for (a in m.areas) {
@@ -284,10 +326,16 @@ class MapView3D(ctx: Context) : View(ctx) {
         }
     }
 
-    private fun drawBuildings(c: Canvas, m: MapData, ext: Double) {
-        if (rangeM > 1200) return
-        val near = m.buildings.filter { abs(it.cx - camX) < ext && abs(it.cy - camY) < ext }
-            .sortedByDescending { hypot(it.cx - camX, it.cy - camY) }
+    private fun drawBuildings(c: Canvas, m: MapData, ext: Double, f: LocalProj, idx: Int) {
+        if (rangeM > 1200 || m.buildings.isEmpty()) return
+        val cx = camX - offX; val cy = camY - offY
+        // Skip buildings a newer chunk already covers (overlapping chunks)
+        val newer = chunks.subList(0, idx).filter { it.buildings.isNotEmpty() }
+            .map { Triple(f.x(it.lon0) - offX, f.y(it.lat0) - offY, MapData.DETAIL_RADIUS * 0.92) }
+        val near = m.buildings.filter { b ->
+            abs(b.cx - cx) < ext && abs(b.cy - cy) < ext && newer.none { (nx, ny, r) -> hypot(b.cx - nx, b.cy - ny) < r }
+        }
+            .sortedByDescending { hypot(it.cx - cx, it.cy - cy) }
             .takeLast(500)
         val tall = pitch > 8f
         for (b in near) {
@@ -320,13 +368,12 @@ class MapView3D(ctx: Context) : View(ctx) {
         }
     }
 
-    private fun drawRoadLabels(c: Canvas, m: MapData, ext: Double) {
+    private fun drawRoadLabels(c: Canvas, m: MapData, ext: Double, seen: HashSet<String>) {
         if (rangeM > 1500) return
-        val seen = HashSet<String>()
-        var count = 0
         val labelExt = rangeM * 0.9
+        val camX = this.camX - offX; val camY = this.camY - offY // chunk-local camera
         for (r in m.roads.asReversed()) {
-            if (count >= 12) break
+            if (roadLabelCount >= 12) break
             val name = r.name ?: continue
             if (r.cls > 2 || name in seen || !visible(r.minX, r.minY, r.maxX, r.maxY, labelExt)) continue
             // Point along this road nearest the camera (projected onto each segment)
@@ -343,7 +390,7 @@ class MapView3D(ctx: Context) : View(ctx) {
             }
             if (bd > labelExt || !project(bx, by, 0.0)) continue
             seen += name
-            count++
+            roadLabelCount++
             val tw = roadLabel.measureText(name)
             fill.color = Ui.BG; fill.alpha = 170
             c.drawRect(pr[0] - tw / 2 - 3 * dp, pr[1] - 10 * dp, pr[0] + tw / 2 + 3 * dp, pr[1] + 3 * dp, fill)
@@ -373,25 +420,57 @@ class MapView3D(ctx: Context) : View(ctx) {
             stroke.color = Ui.CYAN; stroke.strokeWidth = 1.5f * dp; stroke.alpha = (160 * (1 - pulse)).toInt()
             c.drawPath(path, stroke)
         }
-        // Heading cone
+        // Facing cone: its width IS the compass uncertainty (narrow = sure, wide = unsure)
         heading?.let { hd ->
-            val a0 = Math.toRadians(hd - 28.0); val a1 = Math.toRadians(hd + 28.0); val len = rangeM * 0.22
+            val half = headingAcc.coerceIn(5f, 60f).toDouble()
+            val a0 = Math.toRadians(hd - half); val a1 = Math.toRadians(hd + half); val len = rangeM * 0.26
             path.reset()
             if (project(ux, uy, 0.0)) path.moveTo(pr[0], pr[1])
-            for (k in 0..8) {
-                val a = a0 + (a1 - a0) * k / 8
+            for (k in 0..10) {
+                val a = a0 + (a1 - a0) * k / 10
                 if (project(ux + len * sin(a), uy + len * cos(a), 0.0)) path.lineTo(pr[0], pr[1])
             }
             path.close()
-            fill.color = Ui.CYAN; fill.alpha = 55
+            fill.color = Ui.CYAN; fill.alpha = 60
             c.drawPath(path, fill)
+            // Center line = best estimate
+            if (project(ux, uy, 0.0)) {
+                val bx = pr[0]; val by = pr[1]
+                val a = Math.toRadians(hd.toDouble())
+                if (project(ux + len * 1.15 * sin(a), uy + len * 1.15 * cos(a), 0.0)) {
+                    stroke.color = Ui.CYAN; stroke.strokeWidth = 1.4f * dp; stroke.alpha = 200
+                    c.drawLine(bx, by, pr[0], pr[1], stroke)
+                }
+            }
         }
-        if (project(ux, uy, 0.0)) {
-            fill.color = Color.WHITE; fill.alpha = 255
-            c.drawCircle(pr[0], pr[1], 7.5f * dp, fill)
-            fill.color = Ui.CYAN
-            c.drawCircle(pr[0], pr[1], 5.5f * dp, fill)
+        if (!project(ux, uy, 0.0)) return
+        val px = pr[0]; val py = pr[1]
+        val crs = snap.myCourse
+        if (crs != null && speed > 1.5) {
+            // Moving: navigation arrow along your GPS course
+            val a = Math.toRadians(crs)
+            if (project(ux + sin(a) * rangeM * 0.05, uy + cos(a) * rangeM * 0.05, 0.0)) {
+                var dx = pr[0] - px; var dy = pr[1] - py
+                val l = hypot(dx, dy).coerceAtLeast(0.001f); dx /= l; dy /= l
+                val s = 11f * dp
+                path.reset()
+                path.moveTo(px + dx * s * 1.3f, py + dy * s * 1.3f)
+                path.lineTo(px - dx * s * 0.8f + dy * s * 0.85f, py - dy * s * 0.8f - dx * s * 0.85f)
+                path.lineTo(px - dx * s * 0.35f, py - dy * s * 0.35f)
+                path.lineTo(px - dx * s * 0.8f - dy * s * 0.85f, py - dy * s * 0.8f + dx * s * 0.85f)
+                path.close()
+                fill.color = Color.WHITE; fill.alpha = 255
+                stroke.color = Color.WHITE; stroke.strokeWidth = 3f * dp; stroke.alpha = 255
+                c.drawPath(path, stroke)
+                fill.color = Ui.CYAN
+                c.drawPath(path, fill)
+                return
+            }
         }
+        fill.color = Color.WHITE; fill.alpha = 255
+        c.drawCircle(px, py, 7.5f * dp, fill)
+        fill.color = Ui.CYAN
+        c.drawCircle(px, py, 5.5f * dp, fill)
     }
 
     private fun drawDevices(c: Canvas, f: LocalProj?, ux: Double, uy: Double, dt: Double) {
@@ -403,23 +482,32 @@ class MapView3D(ctx: Context) : View(ctx) {
         val items = ArrayList<Item>(list.size)
         for (d in list) {
             val placed = d.lat != null && f != null
+            val cand = if (!placed && f != null) d.candA else null
+            val rel = !placed && cand == null
             val tx: Double; val ty: Double
-            if (placed) {
-                tx = f!!.x(d.lon!!); ty = f.y(d.lat!!)
-            } else {
-                val ang = Math.toRadians(d.angle.toDouble())
-                val r = d.dist.coerceAtMost(rangeM * 1.4)
-                tx = ux + r * sin(ang); ty = uy + r * cos(ang)
+            when {
+                placed -> { tx = f!!.x(d.lon!!); ty = f.y(d.lat!!) }
+                cand != null -> { tx = f!!.x(cand.second); ty = f.y(cand.first) }
+                else -> {
+                    // Direction unknown: shown at its distance, positioned relative to you
+                    val ang = Math.toRadians(d.angle.toDouble())
+                    val r = d.dist.coerceAtMost(rangeM * 1.4)
+                    tx = r * sin(ang); ty = r * cos(ang)
+                }
             }
             val tz = when {
                 d.kind == Kind.MAP -> 7.0
                 !placed -> 0.0
                 else -> (6.0 + d.score * 0.3) * (rangeM / 180.0).coerceIn(0.5, 4.0)
             }
-            val an = anim.getOrPut(d.key) { Anim(tx, ty, tz, 0f) }
+            val an = anim.getOrPut(d.key) { Anim(tx, ty, tz, 0f, rel) }
+            if (an.rel != rel) { // switch between relative / absolute without a jump
+                if (rel) { an.x -= ux; an.y -= uy } else { an.x += ux; an.y += uy }
+                an.rel = rel
+            }
             an.x += (tx - an.x) * a; an.y += (ty - an.y) * a; an.z += (tz - an.z) * a
             an.a += ((1f - an.a) * a).toFloat()
-            items += Item(d, an.x, an.y, an.z, placed)
+            items += Item(d, if (rel) an.x + ux else an.x, if (rel) an.y + uy else an.y, an.z, placed)
         }
         if (anim.size > list.size * 2 + 50) { val keep = list.mapTo(HashSet()) { it.key }; anim.keys.retainAll(keep) }
         for (it in items) it.depth = if (project(it.x, it.y, it.z)) pr[2] else 99f
@@ -457,6 +545,21 @@ class MapView3D(ctx: Context) : View(ctx) {
                     if (project(it.x, it.y, it.z)) {
                         stroke.color = col; stroke.strokeWidth = 1.6f * dp; stroke.alpha = (180 * alpha).toInt()
                         c.drawLine(gx, gy, pr[0], pr[1], stroke)
+                    }
+                }
+            } else if (d.candB != null && f != null) {
+                // Two equally good spots (mirror ambiguity): both shown, joined by a dashed line
+                val bx = f.x(d.candB.second); val by = f.y(d.candB.first)
+                if (project(it.x, it.y, 0.0)) {
+                    val ax = pr[0]; val ay = pr[1]
+                    if (project(bx, by, 0.0)) {
+                        dash.color = col; dash.alpha = ((if (sel) 230 else 120) * alpha).toInt()
+                        c.drawLine(ax, ay, pr[0], pr[1], dash)
+                        stroke.color = col; stroke.strokeWidth = 1.6f * dp; stroke.alpha = (200 * alpha).toInt()
+                        val sz = 5f * dp * pr[2].coerceIn(0.6f, 1.6f)
+                        shape(c, d.kind, pr[0], pr[1], sz, stroke)
+                        if (sel) { text.color = col; c.drawText("or here?", pr[0] + sz + 4 * dp, pr[1] + 3 * dp, text) }
+                        hitX += pr[0]; hitY += pr[1]; hitD += d
                     }
                 }
             } else if (sel && snap.myLat != null) {
@@ -540,7 +643,7 @@ class MapView3D(ctx: Context) : View(ctx) {
         text.color = Ui.DIM
         val attr = "© OpenStreetMap"
         c.drawText(attr, w - text.measureText(attr) - 6 * dp, h - 6 * dp, text)
-        c.drawText("● located   ○ direction unknown: walk to locate", 10 * dp, h - 6 * dp, text)
+        c.drawText("● located  ○ walk to locate  ┄ 2 possible spots", 10 * dp, h - 6 * dp, text)
 
         val msg = when {
             snap.myLat == null -> "Waiting for GPS… (go outside or near a window)"

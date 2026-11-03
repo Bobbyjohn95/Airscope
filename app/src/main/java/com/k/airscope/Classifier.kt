@@ -77,6 +77,58 @@ object Classifier {
 
     private fun h4(v: Int) = String.format(Locale.US, "0x%04X", v)
 
+    /** Apple Nearby Info activity codes (Celosia & Cunche, "Discontinued Privacy", PETS 2020). */
+    private val APPLE_ACTIVITY = mapOf(
+        0x03 to "idle", 0x05 to "playing audio, screen locked", 0x07 to "screen on / in use", 0x09 to "screen on, playing video",
+        0x0A to "watch on wrist, unlocked", 0x0B to "recently used", 0x0D to "driving", 0x0E to "on a phone or FaceTime call",
+    )
+
+    private val IBEACON_UUIDS = mapOf(
+        "B9407F30-F5F8-466E-AFF9-25556B57FE6D" to "Estimote",
+        "F7826DA6-4FA2-4E98-8024-BC5B71E0893E" to "Kontakt.io",
+        "E2C56DB5-DFFB-48D2-B060-D0F5A71096E0" to "Apple AirLocate sample",
+    )
+
+    private fun hexUpper(d: ByteArray, from: Int, len: Int) =
+        (from until from + len).joinToString("") { String.format(Locale.US, "%02X", d[it].toInt() and 0xFF) }
+
+    private fun printable(d: ByteArray, from: Int): String? {
+        if (from >= d.size) return null
+        val s = String(d, from, d.size - from, Charsets.UTF_8).replace("\u0000", "").trim()
+        return if (s.length >= 3 && s.all { it.code in 32..126 || it.code > 160 }) s else null
+    }
+
+    private fun flagsText(f: Int): String = listOfNotNull(
+        if (f and 0x01 != 0) "limited discoverable" else null,
+        if (f and 0x02 != 0) "discoverable" else null,
+        if (f and 0x04 != 0) "BLE-only" else "BLE + Classic",
+    ).joinToString(", ")
+
+    private val EDDY_SCHEMES = arrayOf("http://www.", "https://www.", "http://", "https://")
+    private val EDDY_EXP = arrayOf(".com/", ".org/", ".edu/", ".net/", ".info/", ".biz/", ".gov/", ".com", ".org", ".edu", ".net", ".info", ".biz", ".gov")
+
+    private fun eddystoneUrl(d: ByteArray): String? {
+        if (d.size < 4) return null
+        val sb = StringBuilder(EDDY_SCHEMES.getOrNull(d[2].toInt() and 0xFF) ?: return null)
+        for (i in 3 until d.size) {
+            val c = d[i].toInt() and 0xFF
+            if (c < EDDY_EXP.size) sb.append(EDDY_EXP[c]) else if (c in 0x21..0x7E) sb.append(c.toChar()) else return null
+        }
+        return sb.toString()
+    }
+
+    private fun eddystoneTlm(d: ByteArray): String? {
+        if (d.size < 14 || d[1].toInt() != 0) return null
+        val mv = ((d[2].toInt() and 0xFF) shl 8) or (d[3].toInt() and 0xFF)
+        val temp = d[4].toInt() + (d[5].toInt() and 0xFF) / 256.0
+        val up = (((d[10].toLong() and 0xFF) shl 24) or ((d[11].toLong() and 0xFF) shl 16) or ((d[12].toLong() and 0xFF) shl 8) or (d[13].toLong() and 0xFF)) / 10
+        val parts = ArrayList<String>()
+        if (mv > 0) parts += String.format(Locale.US, "battery %.2f V", mv / 1000.0)
+        if (d[4].toInt() != -128) parts += String.format(Locale.US, "%.1f °C", temp)
+        if (up > 0) parts += "up ${up / 86400} d ${(up % 86400) / 3600} h"
+        return parts.joinToString(" · ").ifEmpty { null }
+    }
+
     private fun withVendor(vendor: String, what: String) =
         if (vendor.isBlank() || what.contains(vendor, ignoreCase = true)) what else "$vendor $what"
 
@@ -101,6 +153,7 @@ object Classifier {
         if (svc16.isNotEmpty()) c.facts["Services"] = svc16.joinToString(", ") { db.uuid16(it)?.let { n -> "$n (${h4(it)})" } ?: h4(it) }
         if (adv.uuid128.isNotEmpty()) c.facts["Custom services"] = adv.uuid128.joinToString(", ")
         adv.appearance?.let { c.facts["Appearance"] = h4(it) + (APPEARANCE[it shr 6]?.let { a -> " (${a.second})" } ?: "") }
+        adv.flags?.let { c.facts["BLE flags"] = flagsText(it) }
         adv.txPower?.let {
             c.facts["TX power"] = "$it dBm"
             if (it in -40..20) { c.ref = it - 41; c.refSource = "advertised TX power" }
@@ -142,8 +195,14 @@ object Classifier {
                 0x40 -> tracker(c, FINDHUB, "Google", 35)
                 0x00, 0x10 -> {
                     if (d.size > 1) { c.ref = d[1].toInt() - 41; c.refSource = "Eddystone TX@0m" }
+                    if (frame == 0x10) eddystoneUrl(d)?.let { c.facts["Beacon URL"] = it }
+                    if (frame == 0x00 && d.size >= 18) c.facts["Eddystone UID"] = hexUpper(d, 2, 10) + " / " + hexUpper(d, 12, 6)
                     c.findings += Finding(10, "Beacon (Eddystone)")
                     c.set(Category.NETWORK, "Eddystone beacon", 60)
+                }
+                0x20 -> {
+                    eddystoneTlm(d)?.let { c.facts["Beacon telemetry"] = it }
+                    c.set(Category.NETWORK, "Eddystone beacon", 58)
                 }
                 else -> c.set(Category.NETWORK, "Eddystone beacon", 55)
             }
@@ -153,10 +212,14 @@ object Classifier {
         adv.mfr[0x0006]?.let { d ->
             when (d.firstOrNull()?.toInt()) {
                 0x01 -> c.set(Category.PHONE, "Windows PC (Connected Devices)", 68)
-                0x03 -> c.set(Category.NETWORK, "Windows Swift Pair accessory", 68)
+                0x03 -> {
+                    printable(d, 6)?.let { c.facts["Swift Pair name"] = it } ?: printable(d, 3)?.let { c.facts["Swift Pair name"] = it }
+                    c.set(Category.NETWORK, "Windows Swift Pair accessory", 68)
+                }
                 else -> c.set(Category.PHONE, "Microsoft device", 45)
             }
         }
+        adv.svcData16[0xFE2C]?.let { if (it.size == 3) c.facts["Fast Pair model ID"] = "0x" + hexUpper(it, 0, 3) + " (look up in Google's Fast Pair device list)" }
         if (0xFE2C in trackerSvc) c.set(Category.WEARABLE, withVendor(c.vendor, "Fast Pair accessory (earbuds/headphones)"), 66)
         if (0x180D in trackerSvc) c.set(Category.WEARABLE, withVendor(c.vendor, "heart-rate sensor"), 62)
         if (0x1816 in trackerSvc || 0x1818 in trackerSvc) c.set(Category.WEARABLE, withVendor(c.vendor, "bike sensor"), 62)
@@ -234,8 +297,19 @@ object Classifier {
                     val n = APPLE_AUDIO[model]
                     c.set(Category.WEARABLE, if (n != null) "Apple $n" else "AirPods / Beats (model ${h4(model)})", 72)
                     if (n != null) c.facts["Model"] = n
+                    if (p + 5 < d.size) {
+                        fun pct(v: Int) = if (v in 0..10) "${v * 10}%" else "?"
+                        val buds = d[p + 4].toInt() and 0xFF
+                        val cs = d[p + 5].toInt() and 0xFF
+                        val charging = listOfNotNull(if (cs and 0x10 != 0) "bud" else null, if (cs and 0x20 != 0) "bud" else null, if (cs and 0x40 != 0) "case" else null)
+                        c.facts["Battery"] = "buds ${pct(buds shr 4)} · ${pct(buds and 0x0F)} · case ${pct(cs and 0x0F)}" +
+                            if (charging.isNotEmpty()) " · charging: ${charging.distinct().joinToString()}" else ""
+                    }
                 }
-                0x10 -> c.set(Category.PHONE, "Apple iPhone / iPad / Mac", 70)
+                0x10 -> {
+                    c.set(Category.PHONE, "Apple iPhone / iPad / Mac", 70)
+                    if (p < d.size) APPLE_ACTIVITY[d[p].toInt() and 0x0F]?.let { c.facts["Apple activity"] = "$it (Nearby Info code)" }
+                }
                 0x0C -> c.set(Category.PHONE, "Apple device (Handoff)", 70)
                 0x0E -> c.set(Category.PHONE, "iPhone (Instant Hotspot)", 71)
                 0x0D -> c.set(Category.PHONE, "Apple device (hotspot client)", 70)
@@ -248,6 +322,8 @@ object Classifier {
                 0x02 -> if (len == 0x15 && p + 20 < d.size) {
                     c.ref = d[p + 20].toInt() // measured power at 1 m (signed)
                     c.refSource = "iBeacon measured power"
+                    val u = hexUpper(d, p, 16).let { "${it.substring(0, 8)}-${it.substring(8, 12)}-${it.substring(12, 16)}-${it.substring(16, 20)}-${it.substring(20)}" }
+                    c.facts["iBeacon UUID"] = u + (IBEACON_UUIDS[u]?.let { " ($it)" } ?: "")
                     c.facts["iBeacon"] = "major ${((d[p + 16].toInt() and 0xFF) shl 8) or (d[p + 17].toInt() and 0xFF)}, minor ${((d[p + 18].toInt() and 0xFF) shl 8) or (d[p + 19].toInt() and 0xFF)}"
                     c.findings += Finding(10, "Beacon (iBeacon)")
                     c.set(Category.NETWORK, "iBeacon", 60)
@@ -295,6 +371,14 @@ object Classifier {
             (info.wpsModel ?: info.wpsModelNumber)?.let { c.facts["WPS model"] = it }
             info.wpsDeviceName?.let { c.facts["WPS device name"] = it }
             info.wpsCategory?.let { c.facts["WPS type"] = WifiIe.WPS_CATEGORIES[it] ?: "type $it" }
+            info.apName?.let { c.facts["AP name"] = it }
+            info.stations?.let { c.facts["Connected clients"] = it.toString() + (info.channelUtil?.let { u -> " · channel busy $u%" } ?: "") }
+            info.country?.let { c.facts["Country code"] = it }
+            val roam = listOfNotNull(if (info.rrm) "802.11k" else null, if (info.bssTransition) "802.11v" else null, if (info.fastRoaming) "802.11r" else null)
+            if (roam.isNotEmpty()) c.facts["Roaming support"] = roam.joinToString(" / ") + " (managed / mesh network)"
+            if (info.passpoint) c.facts["Passpoint"] = "Hotspot 2.0 (carrier / enterprise Wi-Fi)"
+            val chips = info.vendorOuis.filter { it != "00:50:f2" && it != "50:6f:9a" }.mapNotNull { db.oui(it)?.let(VendorDb::shortVendor) }.distinct()
+            if (chips.isNotEmpty()) c.facts["Vendor elements"] = chips.joinToString(", ")
         }
 
         // --- Police / surveillance

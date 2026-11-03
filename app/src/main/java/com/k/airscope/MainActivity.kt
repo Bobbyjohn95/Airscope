@@ -11,10 +11,6 @@ import android.graphics.Color
 import android.graphics.Typeface
 import android.graphics.drawable.ColorDrawable
 import android.graphics.drawable.GradientDrawable
-import android.hardware.Sensor
-import android.hardware.SensorEvent
-import android.hardware.SensorEventListener
-import android.hardware.SensorManager
 import android.location.LocationManager
 import android.net.Uri
 import android.os.Build
@@ -45,11 +41,8 @@ import android.widget.Toast
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
-import kotlin.math.atan2
-import kotlin.math.cos
-import kotlin.math.sin
 
-class MainActivity : Activity(), SensorEventListener {
+class MainActivity : Activity() {
     companion object {
         private const val REQ_PERMS = 42
     }
@@ -79,11 +72,9 @@ class MainActivity : Activity(), SensorEventListener {
     private var lastListAt = 0L
     private var pendingStart = false
 
-    // Compass (for mapped ALPR bearings)
-    private var sensors: SensorManager? = null
-    private var headingDeg: Float? = null
-    private val rot = FloatArray(9)
-    private val orient = FloatArray(3)
+    // Which way you're facing (true north, with accuracy)
+    private lateinit var headingTracker: HeadingTracker
+    private var lastCalToast = 0L
 
     private val ticker = object : Runnable {
         override fun run() {
@@ -101,7 +92,8 @@ class MainActivity : Activity(), SensorEventListener {
         setContentView(buildUi())
         radar.threeD = Prefs.getBool(this, "view3d", true)
         handleIntent(intent)
-        sensors = getSystemService(SensorManager::class.java)
+        headingTracker = HeadingTracker(this)
+        radar.headingSource = headingTracker
         Updater.schedule(this)
         if (System.currentTimeMillis() - Prefs.getLong(this, Updater.PREF_LAST) > 3 * 3_600_000L &&
             Prefs.getString(this, Updater.PREF_TOKEN).isNotEmpty()
@@ -129,35 +121,15 @@ class MainActivity : Activity(), SensorEventListener {
     override fun onResume() {
         super.onResume()
         ui.post(ticker)
-        sensors?.getDefaultSensor(Sensor.TYPE_ROTATION_VECTOR)?.let {
-            sensors?.registerListener(this, it, SensorManager.SENSOR_DELAY_UI)
-        }
+        headingTracker.start()
     }
 
     override fun onPause() {
         super.onPause()
         ui.removeCallbacks(ticker) // scanning continues in ScanService
-        sensors?.unregisterListener(this)
+        headingTracker.stop()
+        Engine.heading = null
     }
-
-    override fun onSensorChanged(e: SensorEvent) {
-        SensorManager.getRotationMatrixFromVector(rot, e.values)
-        SensorManager.getOrientation(rot, orient)
-        val az = ((Math.toDegrees(orient[0].toDouble()) + 360) % 360).toFloat()
-        val prev = headingDeg
-        val next = if (prev == null) az else {
-            // Circular low-pass + dead-band so the map doesn't jitter
-            val a = Math.toRadians(prev.toDouble()); val b = Math.toRadians(az.toDouble())
-            val x = 0.9 * cos(a) + 0.1 * cos(b); val y = 0.9 * sin(a) + 0.1 * sin(b)
-            ((Math.toDegrees(atan2(y, x)) + 360) % 360).toFloat()
-        }
-        if (prev == null || Geo.angleDiff(prev.toDouble(), next.toDouble()) > 0.8) {
-            headingDeg = next
-            radar.heading = next
-        }
-    }
-
-    override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {}
 
     // ---------- permissions / setup ----------
 
@@ -233,6 +205,22 @@ class MainActivity : Activity(), SensorEventListener {
                 toast("Turn on Developer options first: Settings → About phone → tap Build number 7 times")
             }
         }
+        list += Check(
+            "Optional: sharper GPS",
+            false,
+            "AirScope already asks for full-rate dual-band GPS (L1+L5). For the best fix keep the phone where it sees the sky " +
+                "(dash or window), and if your build has it, Developer options → \"Force full GNSS measurements\" → on.",
+        ) {
+            try { startActivity(Intent(Settings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS)) } catch (_: Exception) {
+                toast("Turn on Developer options first: Settings → About phone → tap Build number 7 times")
+            }
+        }
+        list += Check(
+            "Compass calibrated",
+            !headingTracker.needsCalibration && !headingTracker.interference,
+            if (headingTracker.interference) "Strong magnetic interference right now (car, steel, magnet case). Move away from metal, then wave the phone in a figure-8."
+            else "Wave the phone in a slow figure-8 a few times if the facing cone looks wide or wrong.",
+        ) { toast("Wave the phone in a slow figure-8, rotating it on all axes, for ~10 s") }
         return list
     }
 
@@ -461,7 +449,14 @@ class MainActivity : Activity(), SensorEventListener {
     private fun refresh() {
         val s = Engine.snapshot
         val vis = s.devices.filter { mode.matches(it.category) }
-        radar.update(s, Engine.geo.map, selectedKey)
+        radar.update(s, Engine.geo.chunks, selectedKey)
+        headingTracker.updateLocation(s.myLat, s.myLon)
+        Engine.heading = headingTracker.facing
+        Engine.headingAcc = headingTracker.facingAcc
+        if (headingTracker.needsCalibration && System.currentTimeMillis() - lastCalToast > 300_000L) {
+            lastCalToast = System.currentTimeMillis()
+            toast("Compass is unsure: wave the phone in a figure-8 a few times")
+        }
 
         val wifiN = s.devices.count { it.kind == Kind.WIFI }
         val bleN = s.devices.count { it.kind == Kind.BLE }
@@ -471,11 +466,15 @@ class MainActivity : Activity(), SensorEventListener {
         sb.append("  WIFI $wifiN  BLE $bleN  HIGH ${s.devices.count { it.level == Level.HIGH }}")
         if (police > 0) sb.append("  POLICE $police")
         sb.append("\n").append(mode.label).append(": ").append(vis.size).append(" · ").append(Engine.env.label)
-        sb.append(" · ").append(if (s.hasFix) "GPS ±${s.myAccM.toInt()} m" else "no GPS")
+        sb.append(" · ").append(if (s.hasFix) "GPS ±${fmt1(s.myAccM)} m" else "no GPS")
+        if (s.gnss.isNotEmpty()) sb.append(" · ").append(s.gnss)
+        val spd = kotlin.math.hypot(s.myVx, s.myVy)
+        if (spd > 1.5) sb.append(" · ").append((spd * 2.23694).toInt()).append(" mph")
         val located = vis.count { it.located && it.kind != Kind.MAP }
         if (vis.isNotEmpty()) sb.append(" · located $located/${vis.count { it.kind != Kind.MAP }}")
         if (Engine.alprOn && (mode == Mode.POLICE || mode == Mode.ALL) && s.alprStatus.isNotEmpty()) sb.append(" · ALPR map: ").append(s.alprStatus)
         if (Engine.hudOn && s.scanning) ScanService.hudUrls().firstOrNull()?.let { sb.append("\nHUD ").append(it) }
+        headingTracker.label()?.let { sb.append("\n").append(it) }
         s.warning?.let { sb.append("\n⚠ ").append(it) }
         status.text = sb.toString()
         status.setTextColor(if (s.warning != null) Ui.AMBER else Ui.DIM)
@@ -508,20 +507,38 @@ class MainActivity : Activity(), SensorEventListener {
             return
         }
         if (d.kind == Kind.MAP) {
-            trackBar.text = "TRACK ${d.title.take(22)}  ${fmtDist(d.dist)} m ${Geo.cardinal(d.bearing!!.toDouble())}\n" +
+            val b = d.bearing!!.toDouble()
+            trackBar.text = "TRACK ${d.title.take(22)}  ${fmtDist(d.dist)} m ${Geo.cardinal16(b)}  ${guidance(s, b)}\n" +
                 "Exact mapped position (OpenStreetMap)"
             trackBar.setTextColor(Ui.VIOLET)
             return
         }
         val bars = ((d.avg + 100).coerceIn(0, 70) * 12) / 70
+        val ca = d.candA; val cb = d.candB
         val where = when {
-            d.located && d.bearing != null -> "on map ±${d.errM.toInt()} m · ${fmtDist(d.dist)} m ${Geo.cardinal(d.bearing.toDouble())} of you"
+            d.located && d.bearing != null -> {
+                val b = d.bearing.toDouble()
+                "${fmtDist(d.dist)} m ${Geo.cardinal16(b)} ±${d.errM.toInt()} m · ${guidance(s, b)}"
+            }
             !s.hasFix -> "needs GPS to place on the map"
+            ca != null && cb != null && s.myLat != null && s.myLon != null -> {
+                val da = Geo.distanceM(s.myLat, s.myLon, ca.first, ca.second); val ba = Geo.bearingDeg(s.myLat, s.myLon, ca.first, ca.second)
+                val db = Geo.distanceM(s.myLat, s.myLon, cb.first, cb.second); val bb = Geo.bearingDeg(s.myLat, s.myLon, cb.first, cb.second)
+                "2 possible spots: ${fmtDist(da)} m ${Geo.cardinal16(ba)} or ${fmtDist(db)} m ${Geo.cardinal16(bb)} · walk sideways to settle it"
+            }
             else -> "direction unknown: walk ~${maxOf(10, (d.dist * 0.4).toInt())} m around (moved ${d.spreadM.toInt()} m, ${d.spots} spots)"
         }
         trackBar.text = "TRACK ${d.title.take(20)}  ${d.avg}dBm  ~${fmtDist(d.dist)}m (${fmtDist(d.lo)}–${fmtDist(d.hi)})\n" +
             "[" + "█".repeat(bars) + "░".repeat(12 - bars) + "] " + where
         trackBar.setTextColor(Ui.levelColor(d.level))
+    }
+
+    /** Turn guidance toward a bearing: clock position when driving, "turn left 30°" when on foot. */
+    private fun guidance(s: Snapshot, bearing: Double): String {
+        val crs = s.myCourse
+        if (kotlin.math.hypot(s.myVx, s.myVy) > 5.0 && crs != null) return "at ${HeadingMath.clock(bearing, crs)} o'clock"
+        val f = headingTracker.facing ?: return ""
+        return HeadingMath.turn(bearing, f, headingTracker.facingAcc)
     }
 
     private fun deviceLine(d: DeviceView): String {

@@ -7,6 +7,7 @@ class Adv {
     var name: String? = null
     var txPower: Int? = null
     var appearance: Int? = null
+    var flags: Int? = null
     val mfr = LinkedHashMap<Int, ByteArray>()
     val uuid16 = LinkedHashSet<Int>()
     val uuid128 = LinkedHashSet<String>()
@@ -28,6 +29,7 @@ object AdvParser {
             val type = b[i + 1].toInt() and 0xFF
             val d = b.copyOfRange(i + 2, i + 1 + len)
             when (type) {
+                0x01 -> if (d.isNotEmpty()) a.flags = d[0].toInt() and 0xFF
                 0x02, 0x03 -> for (j in 0 until d.size / 2) a.uuid16 += le16(d, j * 2)
                 0x06, 0x07 -> for (j in 0 until d.size / 16) addUuid128(a, uuid128(d, j * 16))
                 0x08, 0x09 -> if (d.isNotEmpty()) a.name = String(d, Charsets.UTF_8).trim { it <= ' ' }

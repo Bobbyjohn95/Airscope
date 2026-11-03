@@ -36,6 +36,11 @@ class DeviceView(
     val spots: Int,
     /** Meters you've moved while measuring it (bigger = better fix). */
     val spreadM: Double,
+    /** Two equally likely spots (one on each side of your path) when the position is ambiguous. */
+    val candA: Pair<Double, Double>? = null,
+    val candB: Pair<Double, Double>? = null,
+    /** Meters it has stayed with you while you moved. */
+    val followM: Double = 0.0,
 ) {
     val located: Boolean get() = lat != null
 }
@@ -55,6 +60,11 @@ class Snapshot(
     val myAccM: Double,
     val myCourse: Double?,
     val mapVersion: Long,
+    /** Your velocity (m/s east, north) and the elapsedRealtime time of the position, for smooth prediction. */
+    val myVx: Double = 0.0,
+    val myVy: Double = 0.0,
+    val fixNanos: Long = 0L,
+    val gnss: String = "",
 ) {
     val hasFix: Boolean get() = myLat != null
 
@@ -63,7 +73,9 @@ class Snapshot(
 
         fun hashAngle(key: String): Float = ((key.hashCode().toLong() and 0xffffffffL) % 360).toFloat()
 
-        fun view(d: Device, env: Env, now: Long, fixLat: Double?, fixLon: Double?): DeviceView {
+        private val timeFmt = java.text.SimpleDateFormat("MMM d HH:mm", java.util.Locale.US)
+
+        fun view(d: Device, env: Env, now: Long, fixLat: Double?, fixLon: Double?, meshCount: Int = 0): DeviceView {
             var est = Distance.estimate(d, env, now)
             var lat: Double? = null
             var lon: Double? = null
@@ -74,6 +86,8 @@ class Snapshot(
             } else if (tr.located) {
                 lat = tr.estLat; lon = tr.estLon; err = tr.errM
             }
+            val ambiguous = lat == null && tr.ambiguous && tr.altLat != null
+            if (ambiguous) err = tr.rawErrM
             var bearing: Float? = null
             if (lat != null && lon != null && fixLat != null && fixLon != null) {
                 val m = Geo.distanceM(fixLat, fixLon, lat, lon)
@@ -85,14 +99,41 @@ class Snapshot(
                     est = DistEst(m, (m - err).coerceAtLeast(0.1), m + err, "map fix from ${tr.obs.size} spots (±${err.toInt()} m)")
                 }
             }
+            // Live details on top of what the classifier found
+            val facts = ArrayList<Pair<String, String>>()
+            facts += d.facts.entries.map { it.key to it.value }
+            if (d.readings > 1) {
+                val mean = d.rssiSum / d.readings
+                val sd = kotlin.math.sqrt(kotlin.math.max(0.0, d.rssiSq / d.readings - mean * mean))
+                facts += "Signal stats" to String.format(java.util.Locale.US, "min %d / avg %.0f / max %d dBm · ±%.1f · %d readings", d.rssiMin, mean, d.rssiMax, sd, d.readings)
+            }
+            if (d.kind == Kind.BLE && d.intervalMs > 0) facts += "Advertising" to "about every ${d.intervalMs.toInt()} ms" +
+                (d.connectable?.let { if (it) " · connectable" else " · broadcast-only" } ?: "") + (d.phy?.let { " · $it" } ?: "")
+            if (meshCount > 1) facts += "Same network name" to "$meshCount access points (mesh / multi-AP network)"
+            if (d.firstEver > 0) facts += "History" to "first seen ${timeFmt.format(java.util.Date(d.firstEver))} · seen on ${d.daysSeen} day${if (d.daysSeen == 1) "" else "s"}"
+            else facts += "First seen" to timeFmt.format(java.util.Date(d.firstSeen))
+            if (d.followM > 50) facts += "Moved with you" to "${fmtDist(d.followM)} m"
+            when {
+                d.selfLat != null -> facts += "Map position" to "reported by the device (GPS)"
+                lat != null -> facts += "Map position" to String.format(java.util.Locale.US, "%.5f, %.5f ±%d m · %d spots over %d m",
+                    lat, lon, err.toInt(), tr.usedObs, tr.spreadM.toInt()) + if (d.sideFromMap) " · side picked from street map" else ""
+                ambiguous -> facts += "Map position" to "one of two spots ±${err.toInt()} m (either side of your path): walk a different way to settle it"
+                else -> facts += "Map position" to "not located yet (${tr.obs.size} spots over ${tr.spreadM.toInt()} m)"
+            }
+            tr.p0?.let { facts += "Learned signal level" to "${it.toInt()} dBm at 1 m (improves distance)" }
+            d.building?.let { facts += "Likely inside" to "$it (OpenStreetMap)" }
+
             return DeviceView(
                 key = d.key, id = d.id, kind = d.kind, category = d.category, title = d.displayName(),
                 name = d.name, vendor = d.vendor, detail = d.detail(), rssi = d.rssi, avg = d.smoothRssi,
                 dist = est.meters, lo = est.lo, hi = est.hi, distSrc = est.source, score = d.score, level = d.level,
-                flags = d.flags, facts = d.facts.entries.map { it.key to it.value },
+                flags = d.flags, facts = facts,
                 ageSec = (now - d.firstSeen) / 1000, lastSec = (now - d.lastSeen) / 1000, trusted = d.trusted,
                 angle = hashAngle(d.key), bearing = bearing, lat = lat, lon = lon, errM = err,
                 spots = tr.obs.size, spreadM = tr.spreadM,
+                candA = if (ambiguous) tr.estLat to tr.estLon else null,
+                candB = if (ambiguous) tr.altLat!! to tr.altLon!! else null,
+                followM = d.followM,
             )
         }
 

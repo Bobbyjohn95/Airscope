@@ -64,7 +64,8 @@ class SignalScanner(ctx: Context, private val handler: Handler) {
                 lastWifiScanOk = try { wifi.startScan() } catch (_: SecurityException) { false }
                 readWifi()
             }
-            handler.postDelayed(this, 8_000)
+            // Scan twice as often when moving fast (needs Wi-Fi scan throttling off to take effect)
+            handler.postDelayed(this, if (Engine.geo.speed > 8.0) 4_000 else 8_000)
         }
     }
 
@@ -205,9 +206,14 @@ class SignalScanner(ctx: Context, private val handler: Handler) {
             if (r.isLegacy.not()) d.facts = d.facts + ("Advertising" to "extended (Bluetooth 5)")
             c.remoteId?.let { rid -> if (rid.lat != null) { d.selfLat = rid.lat; d.selfLon = rid.lon } }
             d.txPower = adv.txPower
+            d.connectable = r.isConnectable
+            d.phy = when (r.primaryPhy) {
+                BluetoothDevice.PHY_LE_CODED -> "long-range (Coded PHY)"
+                else -> if (r.secondaryPhy == BluetoothDevice.PHY_LE_2M) "2M PHY" else null
+            }
         }
-        d.addReading(r.rssi, now)
-        Engine.recordObservation(d, r.rssi, now)
+        d.addReading(r.rssi, now, r.timestampNanos)
+        Engine.recordObservation(d, r.rssi, now, r.timestampNanos)
     }
 
     private fun apply(d: Device, c: Classification) {
@@ -262,8 +268,9 @@ class SignalScanner(ctx: Context, private val handler: Handler) {
                 d.randomAddr = VendorDb.isRandomizedMac(bssid)
                 apply(d, c)
             }
-            d.addReading(r.level, now)
-            Engine.recordObservation(d, r.level, now)
+            // r.timestamp = microseconds since boot when this AP was last heard: exact reception time
+            d.addReading(r.level, now, r.timestamp * 1000)
+            Engine.recordObservation(d, r.level, now, r.timestamp * 1000)
         }
     }
 
@@ -291,6 +298,8 @@ class SignalScanner(ctx: Context, private val handler: Handler) {
                         d.rttMeters = res.distanceMm / 1000.0
                         d.rttStd = res.distanceStdDevMm / 1000.0
                         d.rttAt = t
+                        Engine.recordRange(d, d.rttMeters!!, d.rttStd!!, t,
+                            if (res.rangingTimestampMillis > 0) res.rangingTimestampMillis * 1_000_000L else SystemClock.elapsedRealtimeNanos())
                     }
                 }
             })

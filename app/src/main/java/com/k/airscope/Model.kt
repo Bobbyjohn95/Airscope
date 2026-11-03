@@ -87,6 +87,28 @@ class Device(val id: String, val kind: Kind, now: Long) {
     // Signal samples at GPS positions -> estimated map position
     val track = LocTrack()
 
+    // Signal statistics + radio details
+    var rssiMin = 0
+    var rssiMax = -200
+    var rssiSum = 0.0
+    var rssiSq = 0.0
+    var lastRxNanos = 0L
+    var intervalMs = 0.0
+    var connectable: Boolean? = null
+    var phy: String? = null
+
+    // Movement relative to you
+    var followM = 0.0
+    var lastObsNanos = 0L
+    var lastObsLat = 0.0
+    var lastObsLon = 0.0
+
+    // History (persistent across sessions) + map context
+    var firstEver: Long = 0L
+    var daysSeen: Int = 0
+    var building: String? = null
+    var sideFromMap = false
+
     // Scoring
     var flags: List<String> = emptyList()
     var score: Int = 0
@@ -104,10 +126,18 @@ class Device(val id: String, val kind: Kind, now: Long) {
             else -> Level.LOW
         }
 
-    fun addReading(value: Int, now: Long) {
+    fun addReading(value: Int, now: Long, rxNanos: Long = 0L) {
         rssi = value
         lastSeen = now
         readings++
+        if (readings == 1) rssiMin = value
+        rssiMin = minOf(rssiMin, value); rssiMax = maxOf(rssiMax, value)
+        rssiSum += value; rssiSq += value.toDouble() * value
+        if (rxNanos > 0 && lastRxNanos > 0 && rxNanos > lastRxNanos) {
+            val gap = (rxNanos - lastRxNanos) / 1e6
+            if (gap < 10_000) intervalMs = if (intervalMs == 0.0) gap else intervalMs * 0.9 + gap * 0.1
+        }
+        if (rxNanos > 0) lastRxNanos = rxNanos
         kalman.update(value.toDouble(), now, if (kind == Kind.WIFI) 9.0 else 16.0)
     }
 

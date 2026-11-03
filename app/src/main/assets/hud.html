@@ -99,6 +99,8 @@
       const r = await fetch("/api/state?k=" + encodeURIComponent(key), { cache:"no-store" });
       if (!r.ok) throw new Error("HTTP " + r.status);
       Object.assign(state, await r.json());
+      // Time base for predicting your position between updates (smooth at highway speed)
+      state.meAt = performance.now() - (state.me && state.me.ageMs ? state.me.ageMs : 0);
       source = "live"; failures = 0;
       if (state.mapV !== loadedMapV) {
         loadedMapV = state.mapV;
@@ -119,7 +121,11 @@
     mapData = m;
     if (m) {
       const nf = proj(m.lat, m.lon);
-      if (old && !follow) { const la = old.lat(camY), lo = old.lon(camX); camX = nf.x(lo); camY = nf.y(la); }
+      if (old) { // re-express camera + markers in the new frame so nothing jumps
+        const sx = old.x(m.lon), sy = old.y(m.lat);
+        camX -= sx; camY -= sy;
+        for (const an of anim.values()) if (!an.rel) { an.x -= sx; an.y -= sy; }
+      }
       frame = nf;
     }
   }
@@ -274,8 +280,10 @@
     if (canvas.width !== Math.round(w * dpr) || canvas.height !== Math.round(h * dpr)) { canvas.width = Math.round(w * dpr); canvas.height = Math.round(h * dpr); }
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     const dt = last ? Math.min(0.1, (ts - last) / 1000) : 0.016; last = ts;
-    const meX = frame && state.me ? frame.x(state.me.lon) : camX, meY = frame && state.me ? frame.y(state.me.lat) : camY;
-    if (follow && frame && state.me) { const a = 1 - Math.exp(-dt / 0.35); camX += (meX - camX) * a; camY += (meY - camY) * a; }
+    const me = state.me, vx = me && me.vx || 0, vy = me && me.vy || 0;
+    const meAge = me && state.meAt ? Math.min(4, Math.max(0, (performance.now() - state.meAt) / 1000)) : 0;
+    const meX = frame && me ? frame.x(me.lon) + vx * meAge : camX, meY = frame && me ? frame.y(me.lat) + vy * meAge : camY;
+    if (follow && frame && me) { camX += vx * dt; camY += vy * dt; const a = 1 - Math.exp(-dt / 0.25); camX += (meX - camX) * a; camY += (meY - camY) * a; }
     else if (flingX || flingY) { camX += flingX * dt; camY += flingY * dt; const k = Math.exp(-dt / 0.35); flingX *= k; flingY *= k; if (Math.hypot(flingX, flingY) < rangeM * 0.02) flingX = flingY = 0; }
     const ea = 1 - Math.exp(-dt / 0.22);
     rangeM = Math.exp(Math.log(rangeM) + (Math.log(tgtRange) - Math.log(rangeM)) * ea);
@@ -346,24 +354,45 @@
     if (state.me && frame) {
       if (state.me.acc > 3 && circle(meX, meY, state.me.acc, 40)) { ctx.fillStyle = "rgba(0,229,255,0.11)"; ctx.fill(); }
       if (state.scanning && circle(meX, meY, rangeM * 0.6 * pulse + 2, 48)) { ctx.strokeStyle = `rgba(0,229,255,${0.63 * (1 - pulse)})`; ctx.lineWidth = 1.5; ctx.stroke(); }
-      if (project(meX, meY, 0)) { ctx.fillStyle = "#fff"; ctx.beginPath(); ctx.arc(P[0], P[1], 7.5, 0, 7); ctx.fill(); ctx.fillStyle = "#00e5ff"; ctx.beginPath(); ctx.arc(P[0], P[1], 5.5, 0, 7); ctx.fill(); }
+      // Phone's facing cone (width = compass uncertainty)
+      if (state.me.hdg != null) {
+        const hd = state.me.hdg, half = Math.min(60, Math.max(5, state.me.hdgAcc || 25)), len = rangeM * 0.26;
+        ctx.beginPath(); if (project(meX, meY, 0)) ctx.moveTo(P[0], P[1]);
+        for (let k = 0; k <= 10; k++) { const aa = (hd - half + 2 * half * k / 10) * Math.PI / 180; if (project(meX + len * Math.sin(aa), meY + len * Math.cos(aa), 0)) ctx.lineTo(P[0], P[1]); }
+        ctx.closePath(); ctx.fillStyle = "rgba(0,229,255,0.23)"; ctx.fill();
+      }
+      const spd = Math.hypot(vx, vy);
+      if (project(meX, meY, 0)) {
+        const px = P[0], py = P[1];
+        if (state.me.course != null && spd > 1.5 && project(meX + Math.sin(state.me.course * Math.PI / 180) * rangeM * 0.05, meY + Math.cos(state.me.course * Math.PI / 180) * rangeM * 0.05, 0)) {
+          let dx = P[0] - px, dy = P[1] - py; const l = Math.max(0.001, Math.hypot(dx, dy)); dx /= l; dy /= l; const s = 11;
+          ctx.beginPath(); ctx.moveTo(px + dx * s * 1.3, py + dy * s * 1.3); ctx.lineTo(px - dx * s * 0.8 + dy * s * 0.85, py - dy * s * 0.8 - dx * s * 0.85);
+          ctx.lineTo(px - dx * s * 0.35, py - dy * s * 0.35); ctx.lineTo(px - dx * s * 0.8 - dy * s * 0.85, py - dy * s * 0.8 + dx * s * 0.85); ctx.closePath();
+          ctx.strokeStyle = "#fff"; ctx.lineWidth = 3; ctx.stroke(); ctx.fillStyle = "#00e5ff"; ctx.fill();
+        } else { ctx.fillStyle = "#fff"; ctx.beginPath(); ctx.arc(px, py, 7.5, 0, 7); ctx.fill(); ctx.fillStyle = "#00e5ff"; ctx.beginPath(); ctx.arc(px, py, 5.5, 0, 7); ctx.fill(); }
+      }
     }
 
     // Devices
     const a = 1 - Math.exp(-dt / 0.45);
     const items = visible().map((d) => {
       const placed = d.lat != null && frame;
+      const cand = !placed && frame && d.cand ? d.cand : null;
+      const rel = !placed && !cand;
       let tx, ty;
       if (placed) { tx = frame.x(d.lon); ty = frame.y(d.lat); }
-      else { const ang = d.angle * Math.PI / 180, r = Math.min(d.dist, rangeM * 1.4); tx = meX + r * Math.sin(ang); ty = meY + r * Math.cos(ang); }
+      else if (cand) { tx = frame.x(cand[0][1]); ty = frame.y(cand[0][0]); }
+      else { const ang = d.angle * Math.PI / 180, r = Math.min(d.dist, rangeM * 1.4); tx = r * Math.sin(ang); ty = r * Math.cos(ang); }
       const tz = d.kind === "MAP" ? 7 : !placed ? 0 : (6 + d.score * 0.3) * Math.min(4, Math.max(0.5, rangeM / 180));
-      let an = anim.get(d.key); if (!an) { an = { x:tx, y:ty, z:tz, a:0 }; anim.set(d.key, an); }
+      let an = anim.get(d.key); if (!an) { an = { x:tx, y:ty, z:tz, a:0, rel }; anim.set(d.key, an); }
+      if (an.rel !== rel) { if (rel) { an.x -= meX; an.y -= meY; } else { an.x += meX; an.y += meY; } an.rel = rel; }
       an.x += (tx - an.x) * a; an.y += (ty - an.y) * a; an.z += (tz - an.z) * a; an.a += (1 - an.a) * a;
-      const depth = project(an.x, an.y, an.z) ? P[2] : 99;
-      return { d, an, placed, depth };
+      const pos = rel ? { x: an.x + meX, y: an.y + meY, z: an.z, a: an.a } : an;
+      const depth = project(pos.x, pos.y, pos.z) ? P[2] : 99;
+      return { d, an: pos, placed, cand, depth };
     }).sort((u, v) => u.depth - v.depth);
     hits = [];
-    for (const { d, an, placed } of items) {
+    for (const { d, an, placed, cand } of items) {
       const col = d.kind === "MAP" ? "#b388ff" : (COLORS[d.level] || COLORS.LOW), sel = d.key === selected;
       if (placed) {
         if (d.kind === "MAP") {
@@ -375,6 +404,17 @@
           }
         } else if (d.err > 0 && circle(an.x, an.y, d.err, 32)) { ctx.globalAlpha = sel ? 0.18 : 0.09; ctx.fillStyle = col; ctx.fill(); ctx.globalAlpha = 1; }
         if (project(an.x, an.y, 0)) { const gx = P[0], gy = P[1]; if (project(an.x, an.y, an.z)) { ctx.strokeStyle = col; ctx.globalAlpha = 0.7 * an.a; ctx.lineWidth = 1.6; ctx.beginPath(); ctx.moveTo(gx, gy); ctx.lineTo(P[0], P[1]); ctx.stroke(); ctx.globalAlpha = 1; } }
+      } else if (cand) {
+        // Two equally good spots: both shown, joined by a dashed line
+        const bx = frame.x(cand[1][1]), by = frame.y(cand[1][0]);
+        if (project(an.x, an.y, 0)) { const ax = P[0], ay = P[1];
+          if (project(bx, by, 0)) {
+            ctx.setLineDash([6, 5]); ctx.strokeStyle = col; ctx.lineWidth = 1.5; ctx.globalAlpha = sel ? 0.9 : 0.5;
+            ctx.beginPath(); ctx.moveTo(ax, ay); ctx.lineTo(P[0], P[1]); ctx.stroke(); ctx.setLineDash([]); ctx.globalAlpha = 0.8;
+            ctx.beginPath(); ctx.arc(P[0], P[1], 5, 0, 7); ctx.stroke(); ctx.globalAlpha = 1;
+            if (sel) { ctx.font = "10px ui-monospace, Menlo, monospace"; ctx.fillStyle = col; ctx.fillText("or here?", P[0] + 9, P[1] + 3); }
+            hits.push({ d, x: P[0], y: P[1] });
+          } }
       } else if (sel && state.me) {
         ctx.setLineDash([6, 5]); ctx.strokeStyle = col; ctx.lineWidth = 1.5;
         if (circle(meX, meY, d.dist, 64)) ctx.stroke();
@@ -407,7 +447,7 @@
     ctx.strokeStyle = "#fff"; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(10, h - 22); ctx.lineTo(10 + px, h - 22); ctx.stroke();
     ctx.fillText((nice >= 1000 ? nice / 1000 + " km" : nice + " m"), 10, h - 28);
     ctx.fillStyle = "rgba(5,9,12,0.8)"; ctx.fillRect(0, h - 18, w, 18);
-    ctx.fillStyle = "#4f8a99"; ctx.fillText("● located  ○ direction unknown", 10, h - 6);
+    ctx.fillStyle = "#4f8a99"; ctx.fillText("● located  ○ unknown  ┄ 2 possible spots", 10, h - 6);
     const attr = "© OpenStreetMap"; ctx.fillText(attr, w - ctx.measureText(attr).width - 6, h - 6);
     const msg = !state.me && source === "live" ? "Waiting for the phone's GPS…" : !mapData && source === "live" ? "Street map loading on the phone…" : null;
     if (msg) { ctx.fillStyle = "#ffc400"; ctx.font = "11px ui-monospace, Menlo, monospace"; ctx.fillText(msg, w / 2 - ctx.measureText(msg).width / 2, 20); }
@@ -494,7 +534,7 @@
     const src = source === "live" ? (state.scanning ? "● LIVE" : "○ PHONE IDLE") : source === "csv" ? "▣ EXPORT" : source === "demo" ? "◌ DEMO" : "… CONNECTING";
     const located = vis.filter((d) => d.lat != null && d.kind !== "MAP").length, radios = vis.filter((d) => d.kind !== "MAP").length;
     let s = `${src}  WIFI ${wifi}  BLE ${ble}  HIGH ${high}` + (police ? `  POLICE ${police}` : "");
-    s += `\n${(MODES.find((m) => m[1] === mode) || MODES[0])[0]}: ${vis.length} · located ${located}/${radios}` + (state.me ? ` · GPS ±${state.me.acc} m` : " · no GPS") + (state.alpr ? " · ALPR: " + state.alpr : "");
+    s += `\n${(MODES.find((m) => m[1] === mode) || MODES[0])[0]}: ${vis.length} · located ${located}/${radios}` + (state.me ? ` · GPS ±${Number(state.me.acc).toFixed(1)} m` + (state.me.gnss ? " · " + state.me.gnss : "") + (Math.hypot(state.me.vx || 0, state.me.vy || 0) > 1.5 ? " · " + Math.round(Math.hypot(state.me.vx, state.me.vy) * 2.23694) + " mph" : "") : " · no GPS") + (state.alpr ? " · ALPR: " + state.alpr : "");
     if (state.warning) s += "\n⚠ " + state.warning;
     $("status").textContent = s;
     $("status").className = state.warning ? "warn" : "";
