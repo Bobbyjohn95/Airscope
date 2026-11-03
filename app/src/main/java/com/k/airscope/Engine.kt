@@ -90,6 +90,10 @@ object Engine {
         if (env != want && now - envCandidateSince >= 20_000) env = want
     }
     @Volatile var alprOn = true
+    /** Scan radius (m): devices farther than this are hidden and never alert. 0 = unlimited. */
+    @Volatile var radiusM = 0
+    val RADIUS_STEPS = intArrayOf(0, 25, 50, 100, 250, 500, 1000)
+    fun radiusLabel(): String = if (radiusM == 0) "RADIUS:ALL" else if (radiusM >= 1000) "RADIUS:${radiusM / 1000}km" else "RADIUS:${radiusM}m"
     @Volatile var hudOn = false
     /** Phone heading (true north) and its accuracy, set by the screen while it's open; shared with the HUD. */
     @Volatile var heading: Double? = null
@@ -194,7 +198,7 @@ object Engine {
             scanner?.syncBle()
             updateAutoEnv(now)
             refreshSession(now)
-            for (d in store.rescore(now)) deviceAlert?.invoke(d)
+            for (d in store.rescore(now)) if (withinRadius(d, now)) deviceAlert?.invoke(d)
             // Re-estimate map positions for devices with new GPS-tagged samples: least recently estimated
             // first, so a newly appeared device is never starved by busy older ones.
             store.devices.values.asSequence()
@@ -236,9 +240,9 @@ object Engine {
             val b = geo.buildingAt(tr.altLat!!, tr.altLon!!, 4.0)
             if ((a != null) != (b != null)) {
                 if (b != null) { val la = tr.estLat; val lo = tr.estLon; tr.estLat = tr.altLat!!; tr.estLon = tr.altLon!!; tr.altLat = la; tr.altLon = lo }
-                tr.errM = tr.rawErrM
-                tr.located = tr.rawErrM <= 45
-                tr.ambiguous = !tr.located
+                val good = tr.rawErrM <= 45
+                tr.ambiguous = !good
+                Locator.settlePublic(tr, good, tr.estLat, tr.estLon, tr.rawErrM, now)
                 d.sideFromMap = tr.located
             }
         }
@@ -283,6 +287,16 @@ object Engine {
         Locator.addRtt(d.track, pos.lat, pos.lon, meters, std, now, pos.accM)
     }
 
+    /** Engine thread: inside the chosen scan radius? Uses the map fix when there is one, else the estimated distance. */
+    private fun withinRadius(d: Device, now: Long): Boolean {
+        val r = radiusM
+        if (r == 0) return true
+        val la = geo.lat; val lo = geo.lon
+        if (d.track.located && la != null && lo != null) return Geo.distanceM(la, lo, d.track.estLat, d.track.estLon) <= r
+        if (d.selfLat != null && d.selfLon != null && la != null && lo != null) return Geo.distanceM(la, lo, d.selfLat!!, d.selfLon!!) <= r
+        return Distance.estimate(d, env, now).meters <= r
+    }
+
     /** Builds the immutable snapshot (engine thread). */
     fun publish() {
         val now = System.currentTimeMillis()
@@ -296,9 +310,10 @@ object Engine {
         val me = geo.filter.at(android.os.SystemClock.elapsedRealtimeNanos())
         for (d in active) {
             if ((d.kind == Kind.WIFI && !wifiOn) || (d.kind == Kind.BLE && !bleOn)) continue
+            if (!withinRadius(d, now)) continue
             views += Snapshot.view(d, env, now, me?.lat ?: lat, me?.lon ?: lon, if (d.kind == Kind.WIFI) ssidCount[d.name] ?: 0 else 0)
         }
-        if (alprOn && lat != null && lon != null) for (h in geo.hits()) views += Snapshot.alprView(h, now)
+        if (alprOn && lat != null && lon != null) for (h in geo.hits()) if (radiusM == 0 || h.dist <= radiusM) views += Snapshot.alprView(h, now)
         views.sortWith(compareByDescending<DeviceView> { it.score }.thenBy { it.dist })
         val warning = if (running) scanner?.warning() ?: geo.warning() else null
         val s = Snapshot(

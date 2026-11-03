@@ -43,6 +43,12 @@ class LocTrack {
     var estLon = 0.0
     var errM = 0.0
     var spreadM = 0.0
+    /** Shown position: smoothed and held steady so the marker doesn't jitter or flicker between fixes. */
+    var shownLat = 0.0
+    var shownLon = 0.0
+    var shownErr = 0.0
+    var shownSince = 0L
+    var lastGoodAt = 0L
     /** Learned signal level at 1 m (dBm) once the fit is good; null until then. */
     var p0: Double? = null
     var ambiguous = false
@@ -85,6 +91,8 @@ object Locator {
     private const val MIN_OK_ERR = 25.0
     /** Above this a "spot" isn't useful on a street map: show distance only. */
     private const val MAX_OK_ERR = 45.0
+    /** How long a good fix stays on the map while newer estimates are momentarily poor. */
+    private const val HOLD_MS = 30_000L
 
     fun add(tr: LocTrack, lat: Double, lon: Double, rssi: Double, t: Long, gpsErr: Double = 4.0, env: Env = Env.INDOOR) {
         val p = tr.proj ?: LocalProj(lat, lon).also { tr.proj = it }
@@ -235,10 +243,41 @@ object Locator {
             // Only estimates sharp enough to tell "moved" from "noise" are kept for the comparison
             if (!tr.ambiguous && fitsWell && tr.errM <= MAX_OK_ERR) tr.history.addLast(doubleArrayOf(now.toDouble(), best.x, best.y, tr.errM))
         }
-        tr.located = ok
-        tr.p0 = if (tr.located && tr.errM < 25 && rssiObs.size >= 6) best.p0 else null
-        tr.estLat = p.lat(best.y)
-        tr.estLon = p.lon(best.x)
+        tr.p0 = if (ok && tr.errM < 25 && rssiObs.size >= 6) best.p0 else null
+        val rawLat = p.lat(best.y); val rawLon = p.lon(best.x)
+        tr.estLat = rawLat; tr.estLon = rawLon
+        settle(tr, ok, rawLat, rawLon, tr.errM, now)
+    }
+
+    /**
+     * Hysteresis + smoothing for what the map shows. A fix that was good stays shown for up to 30 s while the
+     * next estimates wobble; the shown spot moves toward a new estimate only as far as the error circles justify,
+     * so a marker never jumps and never blinks on and off between readings.
+     */
+    fun settlePublic(tr: LocTrack, ok: Boolean, lat: Double, lon: Double, err: Double, now: Long) = settle(tr, ok, lat, lon, err, now)
+
+    private fun settle(tr: LocTrack, ok: Boolean, lat: Double, lon: Double, err: Double, now: Long) {
+        if (ok) {
+            if (!tr.located || tr.shownSince == 0L) {
+                tr.shownLat = lat; tr.shownLon = lon; tr.shownErr = err; tr.shownSince = now
+            } else {
+                val d = Geo.distanceM(tr.shownLat, tr.shownLon, lat, lon)
+                // Weight by relative confidence; a move smaller than the noise is mostly ignored
+                val w = (err * err).let { e2 -> val s2 = tr.shownErr * tr.shownErr; (s2 / (s2 + e2)).coerceIn(0.08, 0.6) }
+                val gain = if (d < 0.5 * (tr.shownErr + err)) w * 0.5 else w
+                tr.shownLat += (lat - tr.shownLat) * gain; tr.shownLon += (lon - tr.shownLon) * gain
+                tr.shownErr += (err - tr.shownErr) * 0.3
+            }
+            tr.lastGoodAt = now
+            tr.located = true
+        } else if (tr.located && !tr.moving && now - tr.lastGoodAt < HOLD_MS) {
+            // keep showing the last good spot; let its circle grow a little to say "not refreshed"
+            tr.shownErr = minOf(tr.shownErr * 1.05, MAX_OK_ERR * 1.3)
+        } else {
+            tr.located = false
+            tr.shownSince = 0L
+        }
+        if (tr.located) { tr.estLat = tr.shownLat; tr.estLon = tr.shownLon; tr.errM = tr.shownErr }
     }
 
     /** Minor/major spread of the measurement spots: ~0 for a straight line, ~1 for a loop. */

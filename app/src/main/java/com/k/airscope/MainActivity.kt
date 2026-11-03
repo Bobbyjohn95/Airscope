@@ -52,6 +52,7 @@ class MainActivity : Activity() {
     private lateinit var radar: MapView3D
     private lateinit var btnCompass: TextView
     private lateinit var status: TextView
+    private lateinit var btnRadius: Button
     private lateinit var trackBar: TextView
     private lateinit var btnScan: Button
     private lateinit var btnView: Button
@@ -330,6 +331,17 @@ class MainActivity : Activity() {
                 "GrapheneOS: the Network permission must be on for the HUD."
         }
         AlertDialog.Builder(this).setTitle("Web HUD for iPhone").setMessage(msg).setPositiveButton("OK", null).show()
+    }
+
+    /** Scan radius: ALL -> 25 m -> 50 -> 100 -> 250 -> 500 -> 1 km -> ALL. Long-press the button for a picker. */
+    private fun cycleRadius() {
+        val steps = Engine.RADIUS_STEPS
+        val i = steps.indexOf(Engine.radiusM).let { if (it < 0) 0 else it }
+        Engine.radiusM = steps[(i + 1) % steps.size]
+        Prefs.save(this)
+        radar.zoomToRadius(Engine.radiusM)
+        toast(if (Engine.radiusM == 0) "Scan radius: everything in range" else "Scan radius: only devices within ${fmtDist(Engine.radiusM.toDouble())} m (others hidden, no alerts)")
+        lastListVersion = -1
     }
 
     /** AUTO -> OPEN -> INDOOR -> DENSE -> CAR -> AUTO */
@@ -724,6 +736,7 @@ class MainActivity : Activity() {
         val s = Engine.snapshot
         val vis = s.devices.filter { mode.matches(it.category) }
         radar.update(s, Engine.geo.chunks, selectedKey, Engine.geo.origin)
+        radar.scanRadiusM = Engine.radiusM
         headingTracker.updateLocation(s.myLat, s.myLon)
         headingTracker.updateMotion(kotlin.math.hypot(s.myVx, s.myVy), s.myCourse, s.myAccM)
         Engine.heading = headingTracker.facing
@@ -763,6 +776,7 @@ class MainActivity : Activity() {
         btnView.text = radar.viewMode.label
         btnCompass.text = if (radar.headingUp) "⬆" else "N"
         btnEnv.text = if (Engine.envAuto) "ENV:AUTO" else "ENV:" + Engine.env.name
+        btnRadius.text = Engine.radiusLabel()
         btnLog.text = if (showTimeline) "RADAR" else "LOG"
         btnWifi.alpha = if (Engine.wifiOn) 1f else 0.4f
         btnBle.alpha = if (Engine.bleOn) 1f else 0.4f
@@ -942,8 +956,9 @@ class MainActivity : Activity() {
             })
         }
         btnEnv = button("ENV") { cycleEnv() }
+        btnRadius = button("RADIUS") { cycleRadius() }
         btnLog = button("LOG") { showTimeline = !showTimeline; lastListVersion = -1 }
-        root.addView(row(btnScan, btnView, btnEnv, btnLog))
+        root.addView(row(btnScan, btnView, btnEnv, btnRadius, btnLog))
 
         btnWifi = button("WI-FI") { Engine.wifiOn = !Engine.wifiOn; Prefs.save(this) }
         btnBle = button("BLE") { Engine.bleOn = !Engine.bleOn; Prefs.save(this) }

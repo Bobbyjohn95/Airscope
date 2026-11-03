@@ -193,6 +193,10 @@ class MapView3D(ctx: Context) : View(ctx) {
 
     fun zoomBy(f: Double) { tgtRange = (tgtRange * f).coerceIn(MIN_RANGE, MAX_RANGE); invalidate() }
 
+    /** Scan radius (m, 0 = none): drawn as a ring; zoom fits it. */
+    var scanRadiusM = 0
+    fun zoomToRadius(r: Int) { scanRadiusM = r; if (r > 0) tgtRange = (r * 1.15).coerceIn(MIN_RANGE, MAX_RANGE); invalidate() }
+
     /** Compass button: hand-rotated map -> north up; north up <-> heading up. Returns true when heading-up. */
     fun cycleOrientation(): Boolean {
         when {
@@ -282,6 +286,8 @@ class MapView3D(ctx: Context) : View(ctx) {
         if (busy) postInvalidateOnAnimation() else postInvalidateDelayed(IDLE_FRAME_MS)
     }
 
+    /** Devices with no known direction that the map views don't draw (shown in the list / RADAR). */
+    private var hiddenUnplaced = 0
     private var touching = false
     private var settling = false
     private var lastDrawnHeading = 0f
@@ -597,6 +603,12 @@ class MapView3D(ctx: Context) : View(ctx) {
                 }
             }
         }
+        if (scanRadiusM > 0) {
+            groundCircle(ux, uy, scanRadiusM.toDouble(), 72)
+            dash.color = Ui.AMBER; dash.alpha = 160
+            c.drawPath(path, dash)
+            if (project(ux, uy + scanRadiusM, 0.0)) { text.color = Ui.AMBER; c.drawText("scan radius ${scanRadiusM} m", pr[0] + 4 * dp, pr[1] - 3 * dp, text) }
+        }
         if (!project(ux, uy, 0.0)) return
         val px = pr[0]; val py = pr[1]
         val crs = snap.myCourse
@@ -633,28 +645,33 @@ class MapView3D(ctx: Context) : View(ctx) {
         val list = snap.devices.filter { mode.matches(it.category) }
         val a = 1 - exp(-dt / 0.45)
 
-        class Item(val d: DeviceView, val x: Double, val y: Double, val z: Double, val placed: Boolean, var depth: Float = 0f)
+        class Item(val d: DeviceView, val x: Double, val y: Double, val z: Double, val placed: Boolean, var depth: Float = 0f, val unknownDir: Boolean = false)
         val items = ArrayList<Item>(list.size)
+        val radar = viewMode == ViewMode.RADAR
+        hiddenUnplaced = 0
         for (d in list) {
             val placed = d.lat != null && f != null
             val cand = if (!placed && f != null) d.candA else null
             val rel = !placed && cand == null
+            // On a street map a device whose direction is unknown has no spot: drawing it somewhere would be a lie.
+            // It's listed, shown as distance rings when selected, and drawn in RADAR view at its true distance.
+            if (rel && !radar) {
+                hiddenUnplaced++
+                if (d.key == selectedKey) items += Item(d, ux, uy, 0.0, false, unknownDir = true)
+                continue
+            }
             val tx: Double; val ty: Double
             when {
                 placed -> { tx = f!!.x(d.lon!!); ty = f.y(d.lat!!) }
                 cand != null -> { tx = f!!.x(cand.second); ty = f.y(cand.first) }
                 else -> {
-                    // Direction unknown: shown at its distance, positioned relative to you
+                    // RADAR: true distance; the direction is a stand-in (marked "?"). Beyond the edge: parked on it.
                     val ang = Math.toRadians(d.angle.toDouble())
-                    val r = d.dist.coerceAtMost(rangeM * 1.4)
+                    val r = d.dist.coerceAtMost(rangeM * 1.22)
                     tx = r * sin(ang); ty = r * cos(ang)
                 }
             }
-            val tz = when {
-                d.kind == Kind.MAP -> 7.0
-                !placed -> 0.0
-                else -> (6.0 + d.score * 0.3) * (rangeM / 180.0).coerceIn(0.5, 4.0)
-            }
+            val tz = 0.0 // markers sit exactly on their ground spot at every zoom (the stem is drawn in screen pixels)
             val an = anim.getOrPut(d.key) { Anim(tx, ty, tz, 0f, rel) }
             if (an.rel != rel) { // switch between relative / absolute without a jump
                 if (rel) { an.x -= ux; an.y -= uy } else { an.x += ux; an.y += uy }
@@ -666,7 +683,9 @@ class MapView3D(ctx: Context) : View(ctx) {
             items += Item(d, if (rel) an.x + ux else an.x, if (rel) an.y + uy else an.y, an.z, placed)
         }
         if (anim.size > list.size * 2 + 50) { val keep = list.mapTo(HashSet()) { it.key }; anim.keys.retainAll(keep) }
-        for (it in items) it.depth = if (project(it.x, it.y, it.z)) pr[2] else 99f
+        for (it in items) it.depth = if (project(it.x, it.y, 0.0)) pr[2] else 99f
+        // Stem height in screen pixels: constant at every zoom, so the dot never drifts away from its spot
+        val stemPx = if (pitch > 8f) 16f * dp * (pitch / 52f).coerceIn(0.3f, 1.2f) else 0f
         items.sortBy { it.depth } // far (small scale) first
 
         for (it in items) {
@@ -689,13 +708,12 @@ class MapView3D(ctx: Context) : View(ctx) {
                     fill.color = col; fill.alpha = ((if (sel) 45 else 22) * alpha).toInt()
                     c.drawPath(path, fill)
                 }
-                // Stem
-                if (project(it.x, it.y, 0.0)) {
-                    val gx = pr[0]; val gy = pr[1]
-                    if (project(it.x, it.y, it.z)) {
-                        stroke.color = col; stroke.strokeWidth = 1.6f * dp; stroke.alpha = (180 * alpha).toInt()
-                        c.drawLine(gx, gy, pr[0], pr[1], stroke)
-                    }
+                // Stem (and an exact ground dot)
+                if (project(it.x, it.y, 0.0) && stemPx > 0f) {
+                    stroke.color = col; stroke.strokeWidth = 1.6f * dp; stroke.alpha = (180 * alpha).toInt()
+                    c.drawLine(pr[0], pr[1], pr[0], pr[1] - stemPx, stroke)
+                    fill.color = col; fill.alpha = (200 * alpha).toInt()
+                    c.drawCircle(pr[0], pr[1], 1.8f * dp, fill)
                 }
             } else if (d.candB != null && f != null) {
                 // Two equally good spots (mirror ambiguity): both shown, joined by a dashed line
@@ -719,10 +737,18 @@ class MapView3D(ctx: Context) : View(ctx) {
                 c.drawPath(path, dash)
                 groundCircle(ux, uy, d.hi, 64); dash.alpha = 90; c.drawPath(path, dash)
                 groundCircle(ux, uy, d.lo, 64); c.drawPath(path, dash)
+                if (it.unknownDir) {
+                    if (project(ux, uy + d.dist, 0.0)) {
+                        label.color = col
+                        val t = "${d.title.take(20)} · ~${fmtDist(d.dist)} m, direction unknown"
+                        c.drawText(t, pr[0] - label.measureText(t) / 2, pr[1] - 4 * dp, label)
+                    }
+                    continue
+                }
             }
 
-            if (!project(it.x, it.y, it.z)) continue
-            val sx = pr[0]; val sy = pr[1]
+            if (!project(it.x, it.y, 0.0)) continue
+            val sx = pr[0]; val sy = pr[1] - (if (it.placed) stemPx else 0f)
             val size = ((if (d.level == Level.HIGH) 6.5f else 5f) * dp * pr[2].coerceIn(0.6f, 1.6f))
             if (it.placed) {
                 fill.color = col; fill.alpha = (70 * alpha).toInt()
@@ -741,7 +767,9 @@ class MapView3D(ctx: Context) : View(ctx) {
                 val p = if (sel) label else text
                 p.color = if (sel) Color.WHITE else col
                 val again = if (d.sightings >= 2) d.againMark + " " else ""
-                val t = again + (if (d.kind == Kind.MAP) d.title.removeSuffix(" (mapped)") else d.title) + if (!it.placed) " ?" else ""
+                val beyond = !it.placed && d.candA == null && d.dist > rangeM * 1.22
+                val t = again + (if (d.kind == Kind.MAP) d.title.removeSuffix(" (mapped)") else d.title) +
+                    (if (beyond) " → ${fmtDist(d.dist)} m" else if (!it.placed) " ?" else "")
                 val s = t.take(if (sel) 28 else 18)
                 fill.color = Ui.BG; fill.alpha = 150
                 c.drawRect(sx + size + 3 * dp, sy - 8 * dp, sx + size + 6 * dp + p.measureText(s), sy + 4 * dp, fill)
@@ -818,6 +846,11 @@ class MapView3D(ctx: Context) : View(ctx) {
         }
         text.color = Ui.DIM
         c.drawText(viewMode.label, w - 70 * dp - text.measureText(viewMode.label), 20 * dp, text)
+        if (hiddenUnplaced > 0 && viewMode != ViewMode.RADAR) {
+            val t = "$hiddenUnplaced not placed yet (direction unknown): see list or RADAR"
+            text.color = Ui.DIM
+            c.drawText(t, 10 * dp, h - 24 * dp, text)
+        }
         if (!follow) {
             text.color = Ui.AMBER
             c.drawText("free view · tap ◎ to follow", w / 2 - text.measureText("free view · tap ◎ to follow") / 2, h - 36 * dp, text)

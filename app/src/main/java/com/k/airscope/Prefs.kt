@@ -22,6 +22,7 @@ object Prefs {
         Engine.wifiOn = p.getBoolean("wifi", true)
         Engine.bleOn = p.getBoolean("ble", true)
         Engine.alprOn = p.getBoolean("alpr", true)
+        Engine.radiusM = p.getInt("radius_m", 0)
         val saved: String? = p.getString("hud_token", null)
         Engine.hudToken = if (!saved.isNullOrEmpty()) saved else {
             val alphabet = "abcdefghjkmnpqrstuvwxyz23456789"
@@ -38,6 +39,7 @@ object Prefs {
             .putBoolean("wifi", Engine.wifiOn)
             .putBoolean("ble", Engine.bleOn)
             .putBoolean("alpr", Engine.alprOn)
+            .putInt("radius_m", Engine.radiusM)
             .apply()
     }
 

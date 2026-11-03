@@ -388,7 +388,7 @@
     // Devices
     const a = 1 - Math.exp(-dt / 0.45);
     if (anim.size > 400) { const keep = new Set(state.devices.map((d) => d.key)); for (const k of anim.keys()) if (!keep.has(k)) anim.delete(k); }
-    const items = visible().map((d) => {
+    const items = visible().filter((d) => d.lat != null || (frame && d.cand) || !mapData || d.key === selected).map((d) => {
       const placed = d.lat != null && frame;
       const cand = !placed && frame && d.cand ? d.cand : null;
       const rel = !placed && !cand;
@@ -396,7 +396,7 @@
       if (placed) { tx = frame.x(d.lon); ty = frame.y(d.lat); }
       else if (cand) { tx = frame.x(cand[0][1]); ty = frame.y(cand[0][0]); }
       else { const ang = d.angle * Math.PI / 180, r = Math.min(d.dist, rangeM * 1.4); tx = r * Math.sin(ang); ty = r * Math.cos(ang); }
-      const tz = d.kind === "MAP" ? 7 : !placed ? 0 : (6 + d.score * 0.3) * Math.min(4, Math.max(0.5, rangeM / 180));
+      const tz = 0; // markers sit on their ground spot at every zoom
       let an = anim.get(d.key); if (!an) { an = { x:tx, y:ty, z:tz, a:0, rel }; anim.set(d.key, an); }
       if (an.rel !== rel) { if (rel) { an.x -= meX; an.y -= meY; } else { an.x += meX; an.y += meY; } an.rel = rel; }
       an.x += (tx - an.x) * a; an.y += (ty - an.y) * a; an.z += (tz - an.z) * a; an.a += (1 - an.a) * a;
@@ -416,7 +416,7 @@
             ctx.closePath(); ctx.fillStyle = "rgba(179,136,255,0.24)"; ctx.fill();
           }
         } else if (d.err > 0 && circle(an.x, an.y, d.err, 32)) { ctx.globalAlpha = sel ? 0.18 : 0.09; ctx.fillStyle = col; ctx.fill(); ctx.globalAlpha = 1; }
-        if (project(an.x, an.y, 0)) { const gx = P[0], gy = P[1]; if (project(an.x, an.y, an.z)) { ctx.strokeStyle = col; ctx.globalAlpha = 0.7 * an.a; ctx.lineWidth = 1.6; ctx.beginPath(); ctx.moveTo(gx, gy); ctx.lineTo(P[0], P[1]); ctx.stroke(); ctx.globalAlpha = 1; } }
+        if (pitch > 8 && project(an.x, an.y, 0)) { const gx = P[0], gy = P[1], st = 14 * Math.min(1.2, pitch / 52); ctx.strokeStyle = col; ctx.globalAlpha = 0.7 * an.a; ctx.lineWidth = 1.6; ctx.beginPath(); ctx.moveTo(gx, gy); ctx.lineTo(gx, gy - st); ctx.stroke(); ctx.globalAlpha = 1; }
       } else if (cand) {
         // Two equally good spots: both shown, joined by a dashed line
         const bx = frame.x(cand[1][1]), by = frame.y(cand[1][0]);
@@ -433,8 +433,8 @@
         if (circle(meX, meY, d.dist, 64)) ctx.stroke();
         ctx.globalAlpha = 0.4; if (circle(meX, meY, d.hi, 64)) ctx.stroke(); if (circle(meX, meY, d.lo, 64)) ctx.stroke(); ctx.globalAlpha = 1; ctx.setLineDash([]);
       }
-      if (!project(an.x, an.y, an.z)) continue;
-      const x = P[0], y = P[1], s = (d.level === "HIGH" ? 6.5 : 5) * Math.max(0.6, Math.min(1.6, P[2]));
+      if (!project(an.x, an.y, 0)) continue;
+      const x = P[0], y = P[1] - (placed && pitch > 8 ? 14 * Math.min(1.2, pitch / 52) : 0), s = (d.level === "HIGH" ? 6.5 : 5) * Math.max(0.6, Math.min(1.6, P[2]));
       ctx.beginPath();
       if (d.kind === "WIFI") ctx.arc(x, y, s, 0, 7);
       else if (d.kind === "MAP") ctx.rect(x - s, y - s * 0.8, s * 2, s * 1.6);

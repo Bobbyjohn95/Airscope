@@ -4,6 +4,18 @@ A personal signal-observation app for the Pixel 8 Pro (Android 10+, GrapheneOS-f
 It **only listens**. It reads Wi-Fi beacons and Bluetooth LE advertisements that devices already
 broadcast. It never connects to, jams, deauths or transmits to anything.
 
+## What's new in v2.5: markers stay put at every zoom, scan radius
+- **Zoom fix:** markers used to float above their spot by an amount that grew with zoom-out, so a device looked
+  farther away the more you zoomed out. Markers now sit exactly on their ground spot at every zoom (the 3D stem is a
+  fixed screen height).
+- **No made-up spots on the street map:** a device whose direction isn't known yet is no longer drawn at a random
+  angle. It stays in the list (and in RADAR view at its true distance); tapping it shows distance rings. The map says
+  how many are waiting to be placed.
+- **Steady placement:** once a device is located its marker stays on and glides to new estimates instead of blinking
+  off and on or jumping between readings; a good fix is held for 30 s while readings are momentarily poor.
+- **Scan radius (RADIUS button):** ALL, 25 m, 50, 100, 250, 500, 1 km. Devices farther away are hidden and never
+  alert; the map draws the radius and zooms to it.
+
 ## What's new in v2.4: fast map, honest placement, steady compass, diagnostics
 - **New map engine:** OpenFreeMap vector tiles (pre-built, CDN-served) instead of live Overpass queries. Overpass
   allows each internet address only two queries at a time, and cell carriers put many customers behind one address,
