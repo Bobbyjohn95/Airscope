@@ -340,31 +340,96 @@ class MainActivity : Activity() {
     private fun showUpdates() {
         val box = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(18), dp(8), dp(18), 0) }
         val build = try { Updater.installedBuild(this) } catch (_: Exception) { 0L }
+        val kind = Updater.signingKind(this)
         box.addView(text("Installed build: $build\nSource: github.com/${UpdateCheck.OWNER}/${UpdateCheck.REPO} (Releases)\n" +
-            "Checks every ~6 hours when online, installs automatically when you're not scanning.\n", 12.5f, Color.LTGRAY))
-        box.addView(text("GitHub token (read-only, needed for a private repo):", 12.5f, Ui.CYAN))
-        val input = EditText(this).apply {
-            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
-            hint = "github_pat_…"
-            setText(Prefs.getString(this@MainActivity, Updater.PREF_TOKEN))
+            "Checks every ~6 hours when online; installs by itself when you're not scanning.", 12.5f, Color.LTGRAY))
+        if (kind != "stable") {
+            box.addView(text(
+                "\n⚠ This install is signed with a one-time key, so it can't update itself. Fix once:\n" +
+                    "  a. On GitHub add the secret AIRSCOPE_SIGNING_SEED (SET SECRET), then Actions → Build APK → Run workflow.\n" +
+                    "  b. Uninstall AirScope and install that new build from RELEASES. Then do the token steps below.",
+                12f, Ui.AMBER,
+            ))
+            box.addView(row(
+                button("SET SECRET") { openUrl(Updater.SECRET_URL) },
+                button("RELEASES") { openUrl(Updater.RELEASES_URL) },
+            ))
         }
+
+        box.addView(text("\nGitHub token (read-only; the repo is private)", 13f, Ui.CYAN, bold = true))
+        val saved = Updater.cleanToken(Prefs.getString(this, Updater.PREF_TOKEN))
+        val tokenState = text(
+            if (saved.isEmpty()) "Token: NOT SET" else "Token: saved ✓ (…${saved.takeLast(4)})",
+            12.5f, if (saved.isEmpty()) Ui.RED else Ui.GREEN, bold = true,
+        )
+        box.addView(tokenState)
+        box.addView(text(
+            "1. Tap CREATE TOKEN. GitHub opens with the name, Contents: Read-only and a 1-year expiry filled in.\n" +
+                "2. Repository access → Only select repositories → ${UpdateCheck.REPO}. Tap Generate token, then Copy.\n" +
+                "3. Come back, tap PASTE, then SAVE & CHECK.",
+            12f, Color.LTGRAY,
+        ))
+        val input = EditText(this).apply {
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD
+            hint = "(empty: paste your token here)"
+            setHintTextColor(Color.GRAY)
+            setText(saved)
+            textSize = 13f
+            typeface = Typeface.MONOSPACE
+            isSingleLine = true
+        }
+        box.addView(row(
+            button("CREATE TOKEN") { openUrl(Updater.TOKEN_URL) },
+            button("PASTE") {
+                val clip = getSystemService(android.content.ClipboardManager::class.java)?.primaryClip
+                val t = clip?.takeIf { it.itemCount > 0 }?.getItemAt(0)?.coerceToText(this)?.toString().orEmpty()
+                if (t.isBlank()) toast("Clipboard is empty: copy the token on GitHub first") else input.setText(Updater.cleanToken(t))
+            },
+        ))
         box.addView(input)
         val result = text("Last result: " + Prefs.getString(this, Updater.PREF_RESULT, "never checked"), 12.5f, Ui.AMBER)
         box.addView(result)
         val d = AlertDialog.Builder(this)
             .setTitle("Updates")
-            .setView(box)
-            .setPositiveButton("Save & check now", null)
+            .setView(ScrollView(this).apply { addView(box) })
+            .setPositiveButton("Save & check", null)
+            .setNeutralButton("Remove token", null)
             .setNegativeButton("Close", null)
             .create()
         d.setOnShowListener {
             d.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
-                Prefs.putString(this, Updater.PREF_TOKEN, input.text.toString().trim())
+                val t = Updater.cleanToken(input.text.toString())
+                if (t.isEmpty()) {
+                    result.text = "Result: paste a token first (CREATE TOKEN → copy it on GitHub → PASTE)"
+                    return@setOnClickListener
+                }
+                if (!Updater.looksLikeToken(t)) {
+                    result.text = "Result: that doesn't look like a GitHub token. It should start with github_pat_ and be about 90 characters."
+                    return@setOnClickListener
+                }
+                Prefs.putString(this, Updater.PREF_TOKEN, t)
+                tokenState.text = "Token: saved ✓ (…${t.takeLast(4)})"
+                tokenState.setTextColor(Ui.GREEN)
                 result.text = "Checking…"
                 Updater.checkAsync(this, manual = true) { msg -> ui.post { result.text = "Result: $msg" } }
             }
+            d.getButton(AlertDialog.BUTTON_NEUTRAL).setOnClickListener {
+                Prefs.putString(this, Updater.PREF_TOKEN, "")
+                input.setText("")
+                tokenState.text = "Token: NOT SET"
+                tokenState.setTextColor(Ui.RED)
+                result.text = "Result: token removed from this phone"
+            }
         }
         d.show()
+    }
+
+    private fun openUrl(url: String) {
+        try {
+            startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        } catch (_: Exception) {
+            toast("No browser found to open $url")
+        }
     }
 
     private fun showAbout() {

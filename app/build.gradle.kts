@@ -16,6 +16,9 @@ android {
         val build = System.getenv("AIRSCOPE_VERSION_CODE")?.toIntOrNull() ?: 1
         versionCode = build
         versionName = "2.$build"
+        // "stable" when signed with the key derived from the AIRSCOPE_SIGNING_SEED secret (can self-update),
+        // "onetime" otherwise. The Updates screen shows this so you know whether auto-update can work.
+        manifestPlaceholders["signingKind"] = if (System.getenv("AIRSCOPE_STABLE_KEY") == "1") "stable" else "onetime"
     }
 
     // Signing key comes from environment variables (set by the GitHub workflow from encrypted

@@ -6,6 +6,7 @@ object UpdateCheck {
     const val REPO = "Airscope"
     const val ASSET = "AirScope.apk"
     const val LATEST_URL = "https://api.github.com/repos/$OWNER/$REPO/releases/latest"
+    const val REPO_URL = "https://api.github.com/repos/$OWNER/$REPO"
 
     class Release(val tag: String, val build: Int, val apiAssetUrl: String?, val browserUrl: String?, val htmlUrl: String?)
 

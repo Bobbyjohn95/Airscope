@@ -51,12 +51,14 @@ jobs:
             PASS="$(AIRSCOPE_SIGNING_SEED="$SEED" python3 tools/derive_signing_key.py "$KS")"
             echo "::add-mask::$PASS"
             echo "Signing with the key derived from AIRSCOPE_SIGNING_SEED"
+            echo "AIRSCOPE_STABLE_KEY=1" >> "$GITHUB_ENV"
           else
             PASS="$(openssl rand -hex 16)"
             echo "::add-mask::$PASS"
             keytool -genkeypair -keystore "$KS" -storetype PKCS12 -alias airscope -keyalg RSA \
               -keysize 3072 -validity 10000 -storepass "$PASS" -keypass "$PASS" -dname "CN=AirScope Personal"
             echo "::warning::AIRSCOPE_SIGNING_SEED secret not set: this build uses a one-time key, so it can't auto-update. See README."
+            echo "AIRSCOPE_STABLE_KEY=0" >> "$GITHUB_ENV"
           fi
           echo "AIRSCOPE_KEYSTORE=$KS" >> "$GITHUB_ENV"
           echo "AIRSCOPE_KEYSTORE_PASSWORD=$PASS" >> "$GITHUB_ENV"
@@ -81,11 +83,22 @@ jobs:
           name: AirScope-apk
           path: AirScope.apk
 
-      # The app's updater reads this release. Phone-friendly: tap AirScope.apk to install manually.
+      # The app's updater reads the latest *full* release. Builds signed with a one-time key are published
+      # as pre-releases, so the updater never offers a build it can't install.
       - name: Publish release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "build-${{ github.run_number }}" AirScope.apk \
-            --title "AirScope build ${{ github.run_number }}" \
-            --notes "Built from ${{ github.sha }}. Open on the Pixel and tap AirScope.apk to install, or let the app update itself."
+          # Builds 3-5 predate this rule and used one-time keys: keep them out of the updater's way.
+          for t in build-3 build-4 build-5; do
+            gh release edit "$t" --prerelease --title "AirScope $t (one-time key)" >/dev/null 2>&1 || true
+          done
+          if [ "$AIRSCOPE_STABLE_KEY" = "1" ]; then
+            gh release create "build-${{ github.run_number }}" AirScope.apk \
+              --title "AirScope build ${{ github.run_number }}" \
+              --notes "Built from ${{ github.sha }}. Signed with your stable key: the app installs this by itself, or tap AirScope.apk to install manually."
+          else
+            gh release create "build-${{ github.run_number }}" AirScope.apk --prerelease \
+              --title "AirScope build ${{ github.run_number }} (one-time key)" \
+              --notes "Built from ${{ github.sha }}. Signed with a ONE-TIME key because the AIRSCOPE_SIGNING_SEED secret isn't set, so it can't auto-update. To install: uninstall AirScope, then tap AirScope.apk."
+          fi

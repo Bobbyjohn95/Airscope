@@ -51,6 +51,8 @@
         android:label="AirScope"
         android:theme="@android:style/Theme.DeviceDefault.NoActionBar">
 
+        <meta-data android:name="airscope.signing" android:value="${signingKind}" />
+
         <activity
             android:name=".MainActivity"
             android:exported="true"

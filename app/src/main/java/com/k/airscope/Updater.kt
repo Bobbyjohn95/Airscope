@@ -33,6 +33,26 @@ object Updater {
     fun installedBuild(ctx: Context): Long =
         ctx.packageManager.getPackageInfo(ctx.packageName, 0).longVersionCode
 
+    /** "stable" (key from the AIRSCOPE_SIGNING_SEED secret), "onetime", or "unknown" (builds before 6). */
+    fun signingKind(ctx: Context): String = try {
+        @Suppress("DEPRECATION")
+        ctx.packageManager.getApplicationInfo(ctx.packageName, PackageManager.GET_META_DATA)
+            .metaData?.getString("airscope.signing") ?: "unknown"
+    } catch (_: Exception) { "unknown" }
+
+    /** GitHub's token page, pre-filled: name, read-only Contents permission, 1-year expiry, your account. */
+    val TOKEN_URL = "https://github.com/settings/personal-access-tokens/new?name=AirScope+updater" +
+        "&description=Lets+the+AirScope+app+on+my+phone+download+its+own+updates&target_name=${UpdateCheck.OWNER}" +
+        "&expires_in=366&contents=read"
+    val SECRET_URL = "https://github.com/${UpdateCheck.OWNER}/${UpdateCheck.REPO}/settings/secrets/actions/new"
+    val RELEASES_URL = "https://github.com/${UpdateCheck.OWNER}/${UpdateCheck.REPO}/releases"
+
+    /** Pasted tokens often carry spaces or line breaks. */
+    fun cleanToken(s: String): String = s.filterNot { it.isWhitespace() }
+
+    fun looksLikeToken(t: String): Boolean =
+        (t.startsWith("github_pat_") && t.length >= 40) || (t.startsWith("ghp_") && t.length >= 36)
+
     fun schedule(ctx: Context) {
         val js = ctx.getSystemService(JobScheduler::class.java) ?: return
         if (js.getPendingJob(JOB_ID) != null) return
@@ -56,11 +76,21 @@ object Updater {
     /** Blocking. Returns a human-readable result. */
     fun check(ctx: Context, manual: Boolean): String {
         Prefs.putLong(ctx, PREF_LAST, System.currentTimeMillis())
-        val token = Prefs.getString(ctx, PREF_TOKEN).trim()
+        val token = cleanToken(Prefs.getString(ctx, PREF_TOKEN))
+        if (token.isEmpty()) return "No token yet: tap CREATE TOKEN, then paste it here"
         val c = open(UpdateCheck.LATEST_URL, token, "application/vnd.github+json")
         val code = c.responseCode
-        if (code == 404) return if (token.isEmpty()) "Repo is private: add a read-only GitHub token in Updates" else "No release found yet (or the token can't see the repo)"
-        if (code == 401 || code == 403) return "GitHub refused the token (HTTP $code): check it hasn't expired"
+        if (code == 401) return "GitHub doesn't accept this token (expired, deleted, or only partly copied). Make a new one with CREATE TOKEN."
+        if (code == 403) return "GitHub blocked the request (HTTP 403). Try again in an hour; if it repeats, make a new token."
+        if (code == 404) {
+            // Tell apart "token can't see the repo" from "repo has no stable release yet"
+            val repoCode = open(UpdateCheck.REPO_URL, token, "application/vnd.github+json").responseCode
+            return if (repoCode == 200) {
+                "Token works ✓. No auto-installable build yet: add the AIRSCOPE_SIGNING_SEED secret on GitHub and run the build once."
+            } else {
+                "This token can't see ${UpdateCheck.REPO}. Make a new one and set Repository access → Only select repositories → ${UpdateCheck.REPO}."
+            }
+        }
         if (code != 200) return "GitHub returned HTTP $code"
         val rel = UpdateCheck.parse(c.inputStream.bufferedReader().use { it.readText() }) ?: return "Couldn't read the latest release"
         val installed = installedBuild(ctx)
@@ -143,8 +173,9 @@ object Updater {
         val mine = signers(pm.getPackageInfo(ctx.packageName, PackageManager.GET_SIGNING_CERTIFICATES))
         val theirs = signers(archive)
         if (theirs.isEmpty() || mine.isEmpty() || theirs.last() != mine.last()) {
-            return "Build $build is signed with a different key than this install. Add the AIRSCOPE_SIGNING_SEED secret " +
-                "(see README), let GitHub rebuild, then uninstall and install once more. Updates are automatic after that."
+            return "Token works ✓. Build $build is signed with a different key than the AirScope on this phone, so Android " +
+                "won't update it in place. One time only: uninstall AirScope, then install build $build from GitHub Releases " +
+                "(RELEASES button). Updates are automatic after that."
         }
         return null
     }
