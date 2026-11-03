@@ -11,14 +11,17 @@ broadcast. It never connects to, jams, deauths or transmits to anything.
   `owner:sarah` (or `owner:` for anything with a named owner) and WATCH it like any other term.
 - **One device, even when its address changes:** phones, earbuds and hotspots change their random Bluetooth/Wi-Fi
   address every so often; each change used to look like a brand-new device and reset "stayed with you for 40 min".
-  Now a device that goes quiet and is replaced within 90 s by exactly one new address with the same name, maker and type
-  is kept as one device: presence time, sightings, watch/ignore and "mine" carry over, and the old addresses are listed
-  under "Earlier addresses". Two devices with the same name nearby are never merged.
+  Now a device that goes quiet and is replaced within 45 s by exactly one new address with the same name, maker and type
+  is kept as one device: presence time and sightings carry over, and the old addresses are listed under "Earlier
+  addresses". Watch/ignore and "mine" follow it only when its name is personal ("K's AirPods"), never on a default name
+  like "Galaxy Buds2" that a stranger's device could share. If any other device with the same name and maker was heard
+  around the change, nothing is merged. Only phone hotspots are linked on Wi-Fi (mesh and guest networks never are).
 - **Names on your Wi-Fi (MORE → On your Wi-Fi):** while the phone is on a Wi-Fi network, AirScope receives the
   Bonjour/UPnP announcements devices on that network send anyway ("Johns-MacBook-Pro", "Living Room TV", a printer, a
-  Sonos) and lists them with their model and owner. **Receive-only:** it joins the two multicast groups (the standard way
-  to hear these) and never sends a query or connects to anything. Needs Android's multicast permission, which is granted
-  at install with no prompt; turn it off in that dialog if you don't want it. A Bluetooth device whose name matches a
+  Sonos) and lists them with their model and owner. **Receive-only:** it joins the two multicast groups (which tells
+  your router to forward them: the standard way to hear these) and never sends a query or connects to anything. Needs
+  Android's multicast permission, which is granted at install with no prompt, and costs some battery while scanning on
+  Wi-Fi; turn it off in that dialog if you don't want it. A Bluetooth device whose name matches a
   name on your Wi-Fi gets an "On your Wi-Fi" line in its details. Works only on the network you're joined to; shows
   nothing on mobile data.
 

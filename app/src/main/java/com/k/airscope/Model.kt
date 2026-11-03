@@ -80,6 +80,8 @@ class Device(val id: String, val kind: Kind, now: Long) {
     var name: String = ""
     /** Person named by the device's own broadcast name ("Sarah's AirPods" -> Sarah), else "". */
     var owner: String = ""
+    /** The owner came from a hostname on your Wi-Fi (mDNS) rather than from the device's own broadcast name. */
+    var ownerFromLan: Boolean = false
     /** Earlier addresses this device used (MAC randomization), newest last. */
     val aliases = ArrayList<String>()
     /** "hostname (ip)" when a device on your Wi-Fi announced the same name (mDNS), else "". */

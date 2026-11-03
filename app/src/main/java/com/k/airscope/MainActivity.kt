@@ -277,7 +277,8 @@ class MainActivity : Activity() {
         list += Check(
             "Optional: names on your Wi-Fi", Engine.lanOn,
             "Receives the Bonjour/UPnP names devices announce on the Wi-Fi you're joined to (\"Johns-MacBook\", \"Living Room TV\"). " +
-                "Receive-only, no new prompt: Android's multicast permission is granted at install. MORE → On your Wi-Fi turns it off.",
+                "Receive-only, no new prompt: Android's multicast permission is granted at install. Costs some battery while scanning on Wi-Fi; " +
+                "MORE → On your Wi-Fi turns it off.",
         ) { Engine.setLan(true) }
         list += Check(
             "Optional: Wi-Fi scan throttling off", false,
@@ -451,7 +452,7 @@ class MainActivity : Activity() {
         pm.menu.add(0, 4, 0, "Export CSV")
         pm.menu.add(0, 5, 0, "Clear session")
         pm.menu.add(0, 7, 0, "Session log (seen again)")
-        pm.menu.add(0, 13, 0, "On your Wi-Fi (${Engine.lan.active(System.currentTimeMillis()).size} named)…")
+        pm.menu.add(0, 13, 0, "On your Wi-Fi (${Engine.lanRows.size} named)…")
         pm.menu.add(0, 11, 0, "Watch rules…")
         pm.menu.add(0, 12, 0, "Alerts: " + arrayOf("critical only", "normal", "everything")[Heuristics.alertLevel] + " (tap to change)")
         pm.menu.add(0, 8, 0, "Diagnostics")
@@ -481,21 +482,20 @@ class MainActivity : Activity() {
 
     /** Devices announcing themselves (Bonjour / UPnP) on the Wi-Fi network the phone is joined to. */
     private fun showLan() {
-        val now = System.currentTimeMillis()
-        val rows = Engine.lan.active(now)
+        val rows = Engine.lanRows
         val tf = SimpleDateFormat("HH:mm", Locale.US)
         val sb = StringBuilder()
-        sb.append(if (Engine.lanOn) "Listening: ${Engine.lanStatus()}\n" else "OFF (tap the button below to turn it on)\n")
+        sb.append(if (Engine.lanOn) "Listening: ${Engine.lanStatusText}\n" else "OFF (tap the button below to turn it on)\n")
         sb.append("These are names devices on your current Wi-Fi network announce themselves (Bonjour / UPnP). " +
             "AirScope only receives them; it never asks or connects. Nothing shows on mobile data or on a network that blocks multicast.\n\n")
         if (rows.isEmpty()) sb.append(if (Engine.lanOn) "Nothing heard yet. Announcements are occasional: give it a few minutes on a home Wi-Fi.\n" else "")
         for (e in rows.take(200)) {
-            sb.append("• ").append(e.title().take(40))
+            sb.append("• ").append(e.title.take(40))
             if (e.owner.isNotBlank()) sb.append("  👤 ").append(e.owner)
             sb.append('\n')
-            val what = e.what()
+            val what = e.what
             sb.append("    ").append(e.ip)
-            if (e.host.isNotBlank() && e.host != e.title()) sb.append(" · ").append(e.host.take(32))
+            if (e.host.isNotBlank() && e.host != e.title) sb.append(" · ").append(e.host.take(32))
             if (what.isNotBlank()) sb.append("\n    ").append(what.take(90))
             sb.append("\n    heard ").append(tf.format(Date(e.firstSeen))).append("–").append(tf.format(Date(e.lastSeen))).append('\n')
         }
@@ -503,7 +503,7 @@ class MainActivity : Activity() {
         AlertDialog.Builder(this).setTitle("On your Wi-Fi (${rows.size})")
             .setView(ScrollView(this).apply { addView(tv) })
             .setPositiveButton("Close", null)
-            .setNeutralButton(if (Engine.lanOn) "Turn off" else "Turn on") { _, _ -> Engine.setLan(!Engine.lanOn); toast(if (Engine.lanOn) "Wi-Fi names off" else "Wi-Fi names on (while scanning)") }
+            .setNeutralButton(if (Engine.lanOn) "Turn off" else "Turn on") { _, _ -> val on = !Engine.lanOn; Engine.setLan(on); toast(if (on) "Wi-Fi names on (while scanning)" else "Wi-Fi names off") }
             .show()
     }
 
@@ -607,7 +607,7 @@ class MainActivity : Activity() {
             }
         }
         append("GrapheneOS: the per-app \"Network\" permission must be on (App info → Permissions).\n")
-        append("Names on your Wi-Fi (mDNS/SSDP, receive-only): ").append(if (Engine.lanOn) Engine.lanStatus() else "off").append('\n')
+        append("Names on your Wi-Fi (mDNS/SSDP, receive-only): ").append(Engine.lanStatusText).append('\n')
 
         append("\n== Street map ==\n")
         append("Status: ").append(s.mapStatus.ifEmpty { "not started (tap START)" }).append('\n')
