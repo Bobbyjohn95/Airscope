@@ -14,56 +14,76 @@ SUMMARY="$OUT/summary.txt"
 FAIL=0
 
 note() { echo "$*" | tee -a "$SUMMARY"; }
-shot() { clear_anr_dialogs; adb exec-out screencap -p > "$OUT/$1.png" 2>/dev/null; note "screenshot $1"; }
+shot() { adb exec-out screencap -p > "$OUT/$1.png" 2>/dev/null; note "screenshot $1"; }
 alive() { adb shell pidof "$PKG" >/dev/null 2>&1; }
 
-# uiautomator waits for the screen to go idle; the map redraws constantly, so a dump sometimes fails
-# ("could not get idle state") or leaves a truncated file. Retry a few times, never keep a stale or
-# broken dump, and record every failure so the report says why a step was skipped.
+# uiautomator waits for the screen to go idle; the map redraws constantly, so a dump often fails
+# ("could not get idle state", ~10 s each) or leaves a truncated file. Try twice, never keep a stale or
+# broken dump, record every failure, and remember where each piece of text was last seen so a button can
+# still be tapped from its last known place when a dump fails.
 dump_ui() {
   local try err
-  for try in 1 2 3 4; do
+  for try in 1 2; do
     adb shell rm -f /sdcard/ui.xml >/dev/null 2>&1
     err=$(adb shell uiautomator dump /sdcard/ui.xml 2>&1)
     rm -f "$OUT/ui.xml"
     adb pull /sdcard/ui.xml "$OUT/ui.xml" >/dev/null 2>&1
-    if python3 -c "import sys,xml.etree.ElementTree as E; E.parse(sys.argv[1])" "$OUT/ui.xml" 2>/dev/null; then
+    if python3 - "$OUT/ui.xml" "$OUT/ui-cache.tsv" <<'PY' 2>/dev/null
+import re, sys, xml.etree.ElementTree as ET
+path, cache = sys.argv[1:3]
+root = ET.parse(path).getroot()
+seen = {}
+try:
+    for line in open(cache, encoding="utf-8"):
+        k, v = line.rstrip("\n").split("\t")
+        seen[k] = v
+except Exception:
+    pass
+for n in root.iter("node"):
+    t = (n.get("text") or "").strip()
+    if t and "\n" not in t and len(t) < 40:
+        x1, y1, x2, y2 = map(int, re.findall(r"\d+", n.get("bounds")))
+        seen[t] = "%d %d" % ((x1 + x2) // 2, (y1 + y2) // 2)
+with open(cache, "w", encoding="utf-8") as f:
+    for k, v in seen.items(): f.write(k + "\t" + v + "\n")
+PY
+    then
       [ "$try" -gt 1 ] && echo "ui dump ok after $try tries: $err" >> "$OUT/ui-dump-errors.txt"
       return 0
     fi
     echo "ui dump try $try failed: $err" >> "$OUT/ui-dump-errors.txt"
-    sleep 1.5
+    sleep 1
   done
   return 1
 }
 
 # Another app's "isn't responding" dialog (the emulator's own apps are slow) blocks taps: close it.
-# The same dialog for AirScope is a real failure.
+# The same dialog for AirScope is a real failure. Works on the dump already in $OUT/ui.xml.
 clear_anr_dialogs() {
   for _ in 1 2 3; do
-    dump_ui
     grep -q "isn't responding" "$OUT/ui.xml" 2>/dev/null || return 0
     if grep -q "AirScope isn't responding" "$OUT/ui.xml"; then note "FAIL: AirScope isn't responding (ANR dialog)"; FAIL=1; fi
     local xy
-    xy=$(python3 - "$OUT/ui.xml" <<'EOF'
+    xy=$(python3 - "$OUT/ui.xml" <<'PY'
 import re, sys, xml.etree.ElementTree as ET
 for n in ET.parse(sys.argv[1]).getroot().iter("node"):
     if (n.get("text") or "").strip() in ("Close app", "Wait"):
         x1, y1, x2, y2 = map(int, re.findall(r"\d+", n.get("bounds"))); print((x1 + x2) // 2, (y1 + y2) // 2); break
-EOF
+PY
 )
     [ -n "$xy" ] && adb shell input tap $xy
     sleep 1
+    dump_ui || return 0
   done
 }
 
 # Find a view by its text (exact, then "contains") in the UI hierarchy and tap its center.
 tap() {
   local want="$1" mode="${2:-exact}" long="${3:-}"
-  clear_anr_dialogs
-  dump_ui || { note "  (ui dump failed, could not tap \"$want\": see ui-dump-errors.txt)"; return 1; }
-  local xy
-  xy=$(python3 - "$OUT/ui.xml" "$want" "$mode" <<'EOF'
+  local xy=""
+  if dump_ui; then
+    clear_anr_dialogs
+    xy=$(python3 - "$OUT/ui.xml" "$want" "$mode" <<'PY'
 import re, sys, xml.etree.ElementTree as ET
 path, want, mode = sys.argv[1:4]
 try:
@@ -76,9 +96,23 @@ for n in root.iter("node"):
         x1, y1, x2, y2 = map(int, re.findall(r"\d+", n.get("bounds")))
         print((x1 + x2) // 2, (y1 + y2) // 2)
         break
-EOF
+PY
 )
-  if [ -z "$xy" ]; then note "  (could not find \"$want\" on screen)"; return 1; fi
+    if [ -z "$xy" ]; then note "  (could not find \"$want\" on screen)"; return 1; fi
+  else
+    # No usable dump: tap where this text was last seen (the button bar keeps its layout between steps)
+    xy=$(python3 - "$OUT/ui-cache.tsv" "$want" "$mode" <<'PY' 2>/dev/null
+import sys
+cache, want, mode = sys.argv[1:4]
+for line in open(cache, encoding="utf-8"):
+    k, v = line.rstrip("\n").split("\t")
+    if (mode == "exact" and k == want) or (mode == "contains" and want in k):
+        print(v); break
+PY
+)
+    if [ -z "$xy" ]; then note "  (ui dump failed and \"$want\" was never seen: skipped, see ui-dump-errors.txt)"; return 1; fi
+    note "  (ui dump failed: tapping \"$want\" where it was last seen)"
+  fi
   if [ -n "$long" ]; then
     set -- $xy; adb shell input swipe "$1" "$2" "$1" "$2" 900
   else
