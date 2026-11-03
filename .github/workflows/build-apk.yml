@@ -77,7 +77,7 @@ jobs:
       - name: Logic tests
         run: |
           chmod +x ./gradlew
-          ./gradlew --no-daemon testReleaseUnitTest
+          ./gradlew --no-daemon testReleaseUnitTest || { echo "== failing checks =="; grep -rh "^FAIL " app/build/test-results/ | head -40; exit 1; }
           python3 - <<'EOF'
           import glob, xml.etree.ElementTree as ET
           t = f = 0
