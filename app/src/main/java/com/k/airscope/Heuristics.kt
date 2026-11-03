@@ -32,7 +32,7 @@ object Heuristics {
         val sec = ArrayList<String>()
         var s = 0
         if (d.attackTool) sec += "attack-tool"
-        if (d.placeNote.startsWith("Never seen")) { s += 25; f += d.placeNote + " (new fixed gear here? visitors' phones can't be remembered, so this is not about people)"; sec += "new-here" }
+        if (d.placeNote.startsWith("Never seen")) { s += 25; f += d.placeNote + " (fixed gear with a fixed address; phones and wearables are never counted)"; sec += "new-here" }
         else if (d.placeNote.isNotBlank()) f += d.placeNote
         if (d.priority > 0) { s += 40; f += "On your watch list" }
         for (x in d.findings) {

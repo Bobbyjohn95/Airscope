@@ -27,6 +27,7 @@ object Engine {
     val secLog = SecurityLog()
     val disruption = DisruptionWatch()
     val bleSpam = BleSpamWatch()
+    private var lastSpamCheck = 0L
     /** Called on the engine thread for a security event that isn't about one device. */
     @Volatile var eventAlert: ((SecurityEvent) -> Unit)? = null
     @Volatile var lanRowsAll: List<LanDirectory.LanRow> = emptyList()
@@ -235,7 +236,7 @@ object Engine {
         lastLanRows = now
         lanRows = if (lanOn) lan.rows(now) else emptyList()
         lanRowsAll = if (lanOn) lan.rowsAll(now) else emptyList()
-        placeViews = places.places.map { PlaceView(it.name, it.lat, it.lon, it.days, it.known.size, it.learned) }
+        publishPlaces()
         lanStatusText = if (!lanOn) "off" else lan.status + (lanListener?.error?.let { " · $it" } ?: "") + " · ${lan.entries.size} known · ${lanListener?.packets ?: 0} packets"
     }
 
@@ -252,21 +253,35 @@ object Engine {
         }
     }
 
-    /** Engine thread: record a security event, log it and raise the notification. */
+    private val eventNotified = HashMap<String, Pair<Long, Int>>() // kind -> (last notified, how many times)
+
+    /**
+     * Engine thread: record a security event and log it. The notification respects the alert level ("critical only"
+     * = log only) and backs off per kind (10 min, then 1 h, then 6 h) so a flaky router can't nag all day.
+     */
     fun securityEvent(kind: String, text: String, now: Long = System.currentTimeMillis()) {
         val e = secLog.add(kind, text, now, geo.lat, geo.lon)
         store.log("SEC", text, now)
+        if (Heuristics.alertLevel < 1) return
+        val (lastAt, times) = eventNotified[kind] ?: (0L to 0)
+        val gap = when (times) { 0 -> 0L; 1 -> 10 * 60_000L; 2 -> 60 * 60_000L; else -> 6 * 60 * 60_000L }
+        if (now - lastAt < gap) return
+        eventNotified[kind] = now to times + 1
         eventAlert?.invoke(e)
     }
 
-    fun addPlace(name: String): Boolean {
+    /** Null on success, else why not (no fix / fix too rough to mark a 150 m place). */
+    fun addPlace(name: String): String? {
         val la = geo.lat; val lo = geo.lon
-        if (la == null || lo == null) return false
-        post { places.add(name, la, lo); saveHistory(); publish() }
-        return true
+        if (la == null || lo == null) return "No GPS fix yet: try again in a moment"
+        if (geo.accuracy > 50) return "GPS fix is ±${geo.accuracy.toInt()} m right now: step outside or wait for a sharper fix"
+        post { places.add(name, la, lo); saveHistory(); publishPlaces(); publish() }
+        return null
     }
 
-    fun removePlace(name: String) = post { places.remove(name); saveHistory(); publish() }
+    private fun publishPlaces() { placeViews = places.places.map { PlaceView(it.name, it.lat, it.lon, it.days, it.known.size, it.learned) } }
+
+    fun removePlace(name: String) = post { places.remove(name); saveHistory(); publishPlaces(); publish() }
 
     fun clearSecurityLog() = post { secLog.clear(); publish() }
 
@@ -298,6 +313,7 @@ object Engine {
             store.linkRotated(now) // same device under a new random address: keep its history in one place
             val here = places.at(geo.lat, geo.lon)
             for (d in places.learn(here, store.active(now), now)) store.log("PLACE", "${d.displayName()} [${d.id}]: ${d.placeNote}", now)
+            if (now - lastSpamCheck > 3_000) { lastSpamCheck = now; bleSpam.check(now) { store.devices[it] }?.let { securityEvent("BLE-SPAM", it, now) } }
             if (store.choicesChanged) { store.choicesChanged = false; Prefs.savePriorities(app, store.priorities); Prefs.saveTrusted(app, store.trustedKeys) }
             matchLanNames(now)
             for (d in store.rescore(now)) if (withinRadius(d, now) && d.priority >= 0) deviceAlert?.invoke(d)

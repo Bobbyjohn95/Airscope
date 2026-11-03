@@ -517,9 +517,9 @@ class MainActivity : Activity() {
         val list = Engine.placeViews
         val s = Engine.snapshot
         val sb = StringBuilder()
-        sb.append("Mark where you are as a place. After you've been there on 3 different days AirScope knows what's normally there, " +
-            "and a device with a stable identity that was never seen there before gets a \"new here\" alert. Visitors' phones use random " +
-            "addresses and can't be remembered, so this is about new fixed gear (a camera, a hub, a tag left behind), not people.\n\n")
+        sb.append("Mark where you are as a place. After 30+ minutes there on 3 different days AirScope knows what's normally there, " +
+            "and fixed gear with a fixed address (a camera, hub, router or sensor) that was never seen there before gets a \"new here\" alert. " +
+            "Phones, wearables, cars and anything with a random address are never part of this: it is about gear, not people.\n\n")
         if (list.isEmpty()) sb.append("No places yet.\n")
         for (p in list) {
             val here = s.myLat != null && s.myLon != null && Geo.distanceM(s.myLat, s.myLon, p.lat, p.lon) <= Places.RADIUS_M
@@ -535,7 +535,7 @@ class MainActivity : Activity() {
                 AlertDialog.Builder(this).setTitle("Mark this place").setView(input)
                     .setPositiveButton("Save") { _, _ ->
                         val n = input.text.toString().trim()
-                        if (n.isEmpty()) toast("Give the place a name") else if (!Engine.addPlace(n)) toast("No GPS fix yet: try again in a moment") else toast("Saved $n (150 m around here)")
+                        if (n.isEmpty()) toast("Give the place a name") else Engine.addPlace(n).let { err -> toast(err ?: "Saved $n (150 m around here)") }
                     }.setNegativeButton("Cancel", null).show()
             }
         if (list.isNotEmpty()) b.setNegativeButton("Remove…") { _, _ ->

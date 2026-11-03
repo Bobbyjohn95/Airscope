@@ -55,7 +55,7 @@ class SignalScanner(ctx: Context, private val handler: Handler) {
     private var rttBusy = false
 
     private val wifiReceiver = object : BroadcastReceiver() {
-        override fun onReceive(c: Context, i: Intent) = readWifi()
+        override fun onReceive(c: Context, i: Intent) = readWifi(fresh = i.getBooleanExtra(WifiManager.EXTRA_RESULTS_UPDATED, true))
     }
 
     private val wifiTick = object : Runnable {
@@ -156,6 +156,7 @@ class SignalScanner(ctx: Context, private val handler: Handler) {
             scanner.startScan(screenOffFilters(), filtered, filteredCallback)
             bleActive = true
             bleError = null
+            Engine.bleSpam.quietUntil = System.currentTimeMillis() + 30_000
         } catch (_: SecurityException) {
             bleError = "Nearby devices permission missing"
         } catch (e: Exception) {
@@ -200,8 +201,8 @@ class SignalScanner(ctx: Context, private val handler: Handler) {
             d.dataHash = h
             d.classifiedAt = now
             val adv = AdvParser.parse(raw)
-            // Pairing pop-up spam (Flipper-style): many brand-new addresses per second advertising "earbuds"
-            if (firstPacket && Engine.bleSpam.isPopupKind(adv)) Engine.bleSpam.onNewPopupDevice(r.rssi, now)?.let { Engine.securityEvent("BLE-SPAM", it, now) }
+            // Pairing pop-up spam (Flipper-style): many one-shot addresses per second advertising "earbuds"
+            if (firstPacket && Engine.bleSpam.isPopupKind(adv)) Engine.bleSpam.onNewPopupDevice(d.key, r.rssi, now)
             r.scanRecord?.deviceName?.takeIf { it.isNotBlank() }?.let { if (adv.name == null) adv.name = it }
             adv.name?.let { d.name = it }
             val random: Boolean? = if (Build.VERSION.SDK_INT >= 35) {
@@ -242,9 +243,10 @@ class SignalScanner(ctx: Context, private val handler: Handler) {
         if (fromName != null) { d.owner = fromName; d.ownerFromLan = false }
     }
 
-    private fun readWifi() {
+    private fun readWifi(fresh: Boolean = false) {
         if (!Engine.wifiOn || !running) return
         val results = try { wifi.scanResults } catch (_: SecurityException) { return } ?: return
+        if (!fresh) Engine.disruption.skipped()
         val now = System.currentTimeMillis()
         val bootNow = SystemClock.elapsedRealtime()
         var heard = 0
@@ -290,12 +292,18 @@ class SignalScanner(ctx: Context, private val handler: Handler) {
             d.addReading(r.level, now, r.timestamp * 1000)
             Engine.recordObservation(d, r.level, now, r.timestamp * 1000)
         }
-        // Only a scan we started counts for the disruption watch (a throttled/failed scan returns the old list)
-        if (lastWifiScanOk && results.isNotEmpty() || heard > 0) Engine.disruption.onScan(heard, Engine.geo.speed, now)?.let { Engine.securityEvent("WIFI-DISRUPT", it, now) }
+        // Only a fresh scan counts for the disruption watch (a throttled or failed scan hands back the old list)
+        if (fresh && wifiUsable()) {
+            val bleActive = store.devices.values.count { it.kind == Kind.BLE && store.isActive(it, now) }
+            Engine.disruption.onScan(heard, bleActive, Engine.geo.speed, now)?.let { Engine.securityEvent("WIFI-DISRUPT", it, now) }
+        } else if (fresh) Engine.disruption.skipped()
     }
 
-    /** Called by the service when the phone's own Wi-Fi connection drops (engine thread). */
+    private fun wifiUsable(): Boolean = try { wifi.isWifiEnabled || wifi.isScanAlwaysAvailable } catch (_: Exception) { false }
+
+    /** Called by the service when the phone's own Wi-Fi connection dropped and nothing replaced it (engine thread). */
     fun onWifiLost() {
+        if (!wifiUsable()) return // you turned Wi-Fi off: not a drop
         val now = System.currentTimeMillis()
         Engine.disruption.onConnectionLost(Engine.geo.speed, now)?.let { Engine.securityEvent("WIFI-DISRUPT", it, now) }
     }

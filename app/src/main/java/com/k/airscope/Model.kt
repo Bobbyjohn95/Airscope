@@ -186,6 +186,8 @@ class Device(val id: String, val kind: Kind, now: Long) {
     /** Place context from Places.learn ("Never seen at Home before"), else "". */
     var placeNote: String = ""
     var placeAlerted: Boolean = false
+    /** Found "new here" at a marked place this session (the note stays for the session). */
+    var newAtPlace: Boolean = false
     var flags: List<String> = emptyList()
     var score: Int = 0
     var maxLevelLogged: Int = 0

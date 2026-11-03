@@ -5,18 +5,23 @@ It **only listens**. It reads Wi-Fi beacons and Bluetooth LE advertisements that
 broadcast. It never connects to, jams, deauths or transmits to anything.
 
 ## What's new in v2.9: security part 2 (places, disruption watch, pairing spam, report)
-- **Places (MORE → Places: home / work):** mark where you are (150 m around the spot). After you've been there on 3
-  different days AirScope knows what's normally there; from then on a device with a stable identity that was never
-  seen there, present for 3+ minutes, gets a **"new here"** alert (SECURITY chip, `sec:new`). Visitors' phones use
-  random addresses and can't be remembered, so this is about new fixed gear (a camera, a hub, a tag left behind), not
-  people. Everything stays on the phone.
-- **Wi-Fi disruption watch:** when all the networks that were steadily visible vanish at once while you're standing
-  still, or your own Wi-Fi connection drops 3+ times in 10 minutes while still, you get a notification and a Security
-  log entry with time and place. A phone can't see deauth frames, so it says what it is: an indicator with ordinary
-  explanations too (power cut, flaky router), never proof.
-- **Bluetooth pairing spam:** a flood of 15+ brand-new "AirPods / Fast Pair / Swift Pair" addresses within 10 s (the
-  Flipper-style pop-up prank) raises an alert with the strongest signal level as the best guess of how close the
-  source is. The packets themselves can't say who sent them.
+- **Places (MORE → Places: home / work):** mark where you are (150 m around the spot; needs a GPS fix better than
+  ±50 m). After 30+ minutes there on 3 different days AirScope knows what's normally there; from then on fixed gear
+  with a fixed address (a camera, hub, router, sensor) that was never seen there, present 3+ minutes at a decent signal,
+  gets a **"new here"** alert (SECURITY chip, `sec:new`), once, and keeps that note for the session. Phones, wearables,
+  cars and anything with a random address are never counted: it is about gear, not people. Learning never stops, and
+  everything stays on the phone.
+- **Wi-Fi disruption watch:** when all the networks that were steadily visible vanish from two fresh scans in a row
+  while you're standing still and Bluetooth still hears devices (so it isn't a lift or a basement), or your own Wi-Fi
+  connection drops 3+ times in 10 minutes while still (switching networks or turning Wi-Fi off doesn't count), you get
+  a notification and a Security log entry with time and place. A phone can't see deauth frames, so it says what it
+  is: an indicator with ordinary explanations too (power cut, flaky router, radio reset), never proof.
+- **Bluetooth pairing spam:** a flood of 15+ one-shot "AirPods / Nearby Action / Fast Pair / Swift Pair" addresses
+  within 10 s (the Flipper-style pop-up prank) raises an alert with the strongest signal level as the best guess of
+  how close the source is. Real earbuds keep one address for minutes, so a train full of AirPods doesn't count; the
+  first 30 s after scanning starts are ignored. The packets themselves can't say who sent them.
+- Security notifications follow the Alerts setting ("critical only" = log only) and back off per kind (10 min, then
+  1 h, then 6 h), so a flaky router can't nag all day; the log keeps everything.
 - **Security log & report (MORE → Security log):** all such events this session, plus **Save report**: a plain-text
   file in Downloads/AirScope with the events and every device that currently has a security finding (what, when,
   where, signal) to keep or send on.

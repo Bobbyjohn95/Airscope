@@ -316,7 +316,11 @@ if tap "MORE ▾"; then
     sleep 1; shot 11g-places
     if tap "Add this place" contains; then sleep 1; tap "Save"; sleep 1; fi
     tap "Close" || adb shell input keyevent 4
-    if tap "MORE ▾"; then if tap "Places: home" contains; then sleep 1; shot 11h-places-added; screen_text | grep -E "Home|learning" | head -2 | sed 's/^/  /' | tee -a "$SUMMARY"; tap "Close" || adb shell input keyevent 4; fi; fi
+    if tap "MORE ▾"; then if tap "Places: home" contains; then
+      sleep 1; shot 11h-places-added; screen_text > "$OUT/11h-places.txt"
+      grep -qE "Home" "$OUT/11h-places.txt" && grep -E "Home|learning|fix" "$OUT/11h-places.txt" | head -2 | sed 's/^/  /' | tee -a "$SUMMARY" || note "WARN: place 'Home' not listed after Save (check 11h-places-added.png; the mock GPS fix may be too rough)"
+      tap "Close" || adb shell input keyevent 4
+    fi; fi
   fi
 fi
 

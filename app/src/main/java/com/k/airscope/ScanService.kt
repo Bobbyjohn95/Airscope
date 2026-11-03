@@ -82,7 +82,13 @@ class ScanService : Service() {
             val cm = getSystemService(android.net.ConnectivityManager::class.java)
             val req = android.net.NetworkRequest.Builder().addTransportType(android.net.NetworkCapabilities.TRANSPORT_WIFI).build()
             netCallback = object : android.net.ConnectivityManager.NetworkCallback() {
-                override fun onLost(network: android.net.Network) { Engine.post { Engine.onWifiLost() } }
+                @Volatile var available = 0L
+                override fun onAvailable(network: android.net.Network) { available = System.currentTimeMillis() }
+                override fun onLost(network: android.net.Network) {
+                    val lostAt = System.currentTimeMillis()
+                    // Switching to another Wi-Fi network also fires onLost: wait 5 s and only count a drop with no replacement
+                    Engine.handler.postDelayed({ if (available < lostAt) Engine.onWifiLost() }, 5_000)
+                }
             }.also { cm.registerNetworkCallback(req, it) }
         } catch (_: Exception) { }
     }
