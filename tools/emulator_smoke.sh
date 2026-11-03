@@ -162,13 +162,13 @@ fi
 note "-- scan radius: cycle through and make sure the list never empties / flickers"
 BEFORE=$(screen_text | grep -c "dBm\|(mapped)")
 for step in 1 2 3; do
-  tap "RADIUS" contains; sleep 2
+  tap "R:" contains; sleep 2
   N=$(screen_text | grep -c "dBm\|(mapped)")
-  R=$(screen_text | grep -oE "RADIUS:[A-Za-z0-9]+" | head -1)
+  R=$(screen_text | grep -oE "R:[A-Za-z0-9]+" | head -1)
   note "  $R -> $N rows listed (was $BEFORE)"
 done
 shot 05b-radius
-for step in 1 2 3 4; do tap "RADIUS" contains; sleep 1; done
+for step in 1 2 3 4; do tap "R:" contains; sleep 1; done
 note "-- search"
 if tap "🔍" contains; then
   adb shell input text "flock"; sleep 1

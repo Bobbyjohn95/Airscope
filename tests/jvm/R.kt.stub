@@ -1,0 +1,8 @@
+package com.k.airscope
+// Compile-check stand-in for the aapt2-generated R class
+object R {
+    object drawable {
+        const val ic_radar = 0x7f010000
+        const val ic_stat_radar = 0x7f010001
+    }
+}

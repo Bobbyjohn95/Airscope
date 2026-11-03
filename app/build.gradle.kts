@@ -61,6 +61,15 @@ android {
         abortOnError = false
         checkReleaseBuilds = false
     }
+
+    // Plain-JVM tests (no Android runtime needed) live in /tests/jvm so they can also run with kotlinc alone.
+    sourceSets.getByName("test").kotlin.srcDir("../tests/jvm")
+    testOptions.unitTests.isReturnDefaultValues = true
+}
+
+dependencies {
+    // Test-only: the app itself still uses no third-party libraries.
+    testImplementation("junit:junit:4.13.2")
 }
 
 // No third-party libraries: everything uses the Android framework only.

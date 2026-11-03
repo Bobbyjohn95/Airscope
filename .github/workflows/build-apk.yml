@@ -73,11 +73,23 @@ jobs:
           echo "AIRSCOPE_KEYSTORE=$KS" >> "$GITHUB_ENV"
           echo "AIRSCOPE_KEYSTORE_PASSWORD=$PASS" >> "$GITHUB_ENV"
 
+      # Pure-logic suites (placement, GPS filter, heading fusion, parsers, tiles): a failing test stops the release.
+      - name: Logic tests
+        run: |
+          chmod +x ./gradlew
+          ./gradlew --no-daemon testReleaseUnitTest
+          python3 - <<'EOF'
+          import glob, xml.etree.ElementTree as ET
+          t = f = 0
+          for x in glob.glob("app/build/test-results/**/*.xml", recursive=True):
+              r = ET.parse(x).getroot(); t += int(r.get("tests", 0)); f += int(r.get("failures", 0)) + int(r.get("errors", 0))
+          print(f"JUnit: {t} suites, {f} failed"); open("test-summary.txt", "w").write(f"logic suites: {t}, failed: {f}\n")
+          EOF
+
       - name: Build APK
         env:
           AIRSCOPE_VERSION_CODE: ${{ github.run_number }}
         run: |
-          chmod +x ./gradlew
           ./gradlew --no-daemon assembleRelease
 
       - name: Rename APK

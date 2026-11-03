@@ -93,7 +93,7 @@ object Engine {
     /** Scan radius (m): devices farther than this are hidden and never alert. 0 = unlimited. */
     @Volatile var radiusM = 0
     val RADIUS_STEPS = intArrayOf(0, 25, 50, 100, 250, 500, 1000)
-    fun radiusLabel(): String = if (radiusM == 0) "RADIUS:ALL" else if (radiusM >= 1000) "RADIUS:${radiusM / 1000}km" else "RADIUS:${radiusM}m"
+    fun radiusLabel(): String = if (radiusM == 0) "R:ALL" else if (radiusM >= 1000) "R:${radiusM / 1000}km" else "R:${radiusM}m"
     @Volatile var hudOn = false
     /** Phone heading (true north) and its accuracy, set by the screen while it's open; shared with the HUD. */
     @Volatile var heading: Double? = null

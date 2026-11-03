@@ -4,6 +4,18 @@ A personal signal-observation app for the Pixel 8 Pro (Android 10+, GrapheneOS-f
 It **only listens**. It reads Wi-Fi beacons and Bluetooth LE advertisements that devices already
 broadcast. It never connects to, jams, deauths or transmits to anything.
 
+## What's new in v2.6: scan radius that behaves, priorities, search and watch rules
+- **Scan radius fixed:** devices near the edge no longer blink in and out (a device must be clearly outside to
+  leave and clearly inside to return), and a device you're tracking never vanishes: outside the radius it stays in the
+  list, dimmed, with "(outside radius)". Long-press the R: button to type an exact radius.
+- **Priorities:** long-press a row → Options → **★ Watch** (always first, alerts whenever it appears) or **🔇 Ignore**
+  (muted). Saved across sessions.
+- **Search (🔍 chip):** filter list and map by name, maker, MAC, keyword or `cat:tracker`. Tap **WATCH** to save the
+  term as a rule: anything matching it is starred and alerts. Manage rules under MORE → Watch rules.
+- **Alert level** (MORE): critical only / normal / everything MEDIUM and up.
+- For contributors and AI coworkers: `AGENTS.md` (rules), `tools/dev_check.sh` (local tests), logic tests now run in
+  CI before every build.
+
 ## What's new in v2.5: markers stay put at every zoom, scan radius
 - **Zoom fix:** markers used to float above their spot by an amount that grew with zoom-out, so a device looked
   farther away the more you zoomed out. Markers now sit exactly on their ground spot at every zoom (the 3D stem is a

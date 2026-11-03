@@ -851,9 +851,9 @@ class MapView3D(ctx: Context) : View(ctx) {
         text.color = Ui.DIM
         c.drawText(viewMode.label, w - 70 * dp - text.measureText(viewMode.label), 20 * dp, text)
         if (hiddenUnplaced > 0 && viewMode != ViewMode.RADAR) {
-            val t = "$hiddenUnplaced not placed yet (direction unknown): see list or RADAR"
+            val t = "$hiddenUnplaced not placed yet: see list or RADAR"
             text.color = Ui.DIM
-            c.drawText(t, 10 * dp, h - 24 * dp, text)
+            c.drawText(t, w - text.measureText(t) - 70 * dp, 34 * dp, text)
         }
         if (!follow) {
             text.color = Ui.AMBER
