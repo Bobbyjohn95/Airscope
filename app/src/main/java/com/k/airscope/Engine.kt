@@ -252,6 +252,7 @@ object Engine {
             val now = System.currentTimeMillis()
             scanner?.syncBle()
             updateAutoEnv(now)
+            Heuristics.myLat = geo.lat; Heuristics.myLon = geo.lon
             refreshSession(now)
             store.linkRotated(now) // same device under a new random address: keep its history in one place
             if (store.choicesChanged) { store.choicesChanged = false; Prefs.savePriorities(app, store.priorities); Prefs.saveTrusted(app, store.trustedKeys) }
@@ -272,8 +273,9 @@ object Engine {
                         val r = history.touch(d.key, now)
                         d.firstEver = r.first; d.daysSeen = r.days
                     }
-                    if (d.kind == Kind.WIFI && d.name.isNotBlank()) ssids.touch(d.name, d.security, d.id, ((now - d.presentSince) / 60_000).toInt())
+                    if (d.kind == Kind.WIFI && d.name.isNotBlank()) ssids.touch(d.name, d.security, d.id, ((now - d.presentSince) / 60_000).toInt(), geo.lat, geo.lon, now)
                 }
+                ssids.expire(now)
             }
             if (now - lastHistorySave > 5 * 60_000) { lastHistorySave = now; saveHistory() }
             if (alprOn) for (h in geo.dueAlerts(now)) alprAlert?.invoke(h)

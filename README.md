@@ -7,21 +7,26 @@ broadcast. It never connects to, jams, deauths or transmits to anything.
 ## What's new in v2.8: security part 1 (attack tools, evil twins, network grades, "following you")
 - **SECURITY chip** (last chip in the row; scroll the row) shows only devices with a security finding. Search terms:
   `sec:attack`, `sec:evil`, `sec:weak`, `sec:follow`, or `sec:` for all of them. The web HUD has the same chip.
-- **Attack / audit hardware:** Wi-Fi Pineapple (default name, Hak5 address), ESP8266 Deauther ("pwned"), ESP32
-  Marauder, O.MG cable implants, Flipper Zero (Bluetooth name), Pwnagotchi and Wi-Fi phishing-tool names are
-  labelled and alert at MEDIUM. Honest limit: these are the names and addresses the tools use out of the box. Anyone
-  can name a network "pwned", and a pentester's Pineapple at a conference is not an attack on you; the text says so.
-  A home network called "Pineapple House" is not flagged.
-- **Evil twins / rogue access points:** AirScope now remembers networks you spend 10+ minutes near (name, strongest
-  security it used, maker of its access points; saved on the phone only). An access point claiming a known name with
-  weaker security than that network ever had (your WPA2 home network showing up open) scores 45 and alerts; a known
-  name from a maker never seen for it is noted at 15 (new router, mesh node, or a copy). The existing "same name open
-  and secured at the same time" check now points at the open one.
-- **Network security grade** in every Wi-Fi row and in details: A WPA3 · B WPA2 · C WPA1 / TKIP-only / WPS on · D WEP ·
-  F open, with the reason in plain words. Weak networks (WPA1, WEP, open) count as security findings.
-- **"Following you" for any device, not just trackers:** a phone, earbud or unknown Bluetooth device that has moved with
-  you for 2 km, or appeared 3+ separate times at places 1.5 km apart in one session, is tagged and alerts at MEDIUM.
-  A passenger's phone will trigger this too: long-press → Mark as mine, or Ignore.
+- **Attack / audit hardware:** Wi-Fi Pineapple (its default "Pineapple_XXXX" name only when the digits match its
+  address, or its address block), ESP8266 Deauther ("pwned"), ESP32 Marauder (default name), O.MG cable implants,
+  Flipper Zero (Bluetooth name), Pwnagotchi and Wi-Fi phishing-tool names are labelled and alert at MEDIUM. Honest
+  limit: these are the names and addresses the tools use out of the box. Anyone can name a network "pwned", and a
+  pentester's Pineapple at a conference is not an attack on you; the text says so. "Pineapple Cafe", "Pineapple WiFi"
+  and a school's "Marauders" network are not flagged (at most a low-score note).
+- **Evil twins / rogue access points:** AirScope now remembers networks you spend 10+ minutes near on two or more
+  days (name, strongest security it used, address blocks of its access points, where; saved on the phone only, expires
+  after 60 days unseen; generic names like "Guest" are never learned). Within 2 km of where you learned it, an access
+  point claiming that name with weaker security than the network ever had (your WPA2 home network showing up open)
+  scores 45 and alerts; a known name from an address block never seen for it is noted at 15 (a new router or mesh
+  node more often than a copy). A network name seen open and secured at the same time is noted (25) but does not
+  alert on its own: venues do that on purpose.
+- **Network security grade** in every Wi-Fi row and in details: A WPA3 · B WPA2 or OWE · C WPA1 or TKIP-only · D WEP
+  · F open; WPS advertised lowers the grade one step (older routers: PIN attack risk). The reason is in plain words.
+  WPA1, WEP and open networks count as security findings (`sec:weak`).
+- **"Following you" for any device, not just trackers:** a phone, earbuds or an unknown Bluetooth device that appeared
+  3+ separate times at places 1.5 km apart in one session is tagged and alerts at MEDIUM; merely riding along with you
+  (a passenger's phone) is noted but does not alert, and nothing alerts while many devices are travelling with you
+  (bus, train, a group). Security alerts follow the Alerts setting: "critical only" turns them off.
 
 ## What's new in v2.7: who a device belongs to, one device across address changes, names on your Wi-Fi
 - **Owner names:** when a device's own name says whose it is ("Sarah's AirPods", "Mike-iPhone", "iPhone de Juan"), the

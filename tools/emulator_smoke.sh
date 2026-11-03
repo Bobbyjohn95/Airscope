@@ -227,16 +227,37 @@ if tap "🔍" contains; then
   tap "🔍" contains; tap "Clear"
 fi
 
-note "-- SECURITY chip (last chip: swipe the chip row left first; the row sits at y~440 on the 1080x2400 emulator)"
-adb shell input swipe 900 440 100 440 300; sleep 1
-if tap "SECURITY"; then
-  sleep 2; shot 05d-security-chip
-  screen_text > "$OUT/05d-security.txt"
-  grep -E "SECURITY:" "$OUT/05d-security.txt" | head -1 | sed 's/^/  /' | tee -a "$SUMMARY"
-  adb shell input swipe 100 440 900 440 300; sleep 1
-  tap "ALL" || note "  (could not return to ALL)"
+# Vertical center of the chip row, read from the last UI dump (the status text above it changes height).
+chip_row_y() {
+  python3 - "$OUT/ui.xml" <<'PY'
+import re, sys, xml.etree.ElementTree as ET
+try:
+    for n in ET.parse(sys.argv[1]).getroot().iter("node"):
+        if (n.get("text") or "").strip() in ("ALL", "PHONES", "NETWORKS"):
+            b = list(map(int, re.findall(r"\d+", n.get("bounds")))); print((b[1] + b[3]) // 2); sys.exit(0)
+except Exception:
+    pass
+print(0)
+PY
+}
+
+note "-- SECURITY chip (last chip: swipe the chip row left first) and sec: search"
+dump_ui; Y=$(chip_row_y)
+if [ "$Y" -gt 0 ]; then
+  adb shell input swipe 900 "$Y" 100 "$Y" 300; sleep 1
+  if tap "SECURITY"; then
+    sleep 2; shot 05d-security-chip
+    screen_text > "$OUT/05d-security.txt"
+    grep -E "SECURITY:" "$OUT/05d-security.txt" | head -1 | sed 's/^/  /' | tee -a "$SUMMARY"
+    adb shell input swipe 100 "$Y" 900 "$Y" 300; sleep 1
+    tap "ALL" || note "  (could not return to ALL)"
+  else
+    # Not a hard FAIL: UI dumps are flaky on the emulator (see IDEAS.md); a person checks the screenshot.
+    sleep 1; shot 05d-security-chip-missing
+    note "WARN: SECURITY chip not found after swiping the chip row (check 05d-security-chip-missing.png)"
+  fi
 else
-  note "  (SECURITY chip not found after the swipe)"
+  note "  (chip row not in the UI dump: SECURITY chip step skipped)"
 fi
 
 note "-- view modes"

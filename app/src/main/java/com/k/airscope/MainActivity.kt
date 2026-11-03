@@ -59,12 +59,7 @@ class MainActivity : Activity() {
     /** Current search text (lowercase); empty = everything. */
     private var searchQuery = ""
 
-    private fun matchesQuery(d: DeviceView, q: String): Boolean = q.split(' ').filter { it.isNotBlank() }.all { term ->
-        if (term.startsWith("cat:")) d.category.name.lowercase(Locale.US).startsWith(term.removePrefix("cat:")) || d.category.short.lowercase(Locale.US).startsWith(term.removePrefix("cat:"))
-        else if (term.startsWith("sec:")) d.secTags.any { term.length == 4 || it.startsWith(term.removePrefix("sec:")) }
-        else if (term.startsWith("owner:")) d.owner.lowercase(Locale.US).let { it.isNotEmpty() && (term.length == 6 || it.contains(term.removePrefix("owner:"))) }
-        else d.searchText.contains(term) || d.title.lowercase(Locale.US).contains(term)
-    }
+    private fun matchesQuery(d: DeviceView, q: String): Boolean = DeviceFilter.matchesView(d, q)
 
     /** Search box: filters list and map live; "Watch" saves the term as a rule that alerts on any match. */
     private fun showSearch() {

@@ -9,29 +9,34 @@ import java.util.Locale
  * say so. Pure Kotlin.
  */
 object Threats {
-    /** Hak5 LLC (Wi-Fi Pineapple, Wi-Fi Coconut) IEEE OUI. */
-    val HAK5_OUI = setOf("00:13:37")
+    /** Address block Wi-Fi Pineapples ship with (registered to Orient Power Home Network in the IEEE list, used by Hak5 gear). */
+    val PINEAPPLE_OUI = setOf("00:13:37")
 
-    private val pineappleDefault = Regex("^pineapple[_ -]?[0-9a-f]{4}$", RegexOption.IGNORE_CASE)
+    private val pineappleDefault = Regex("^pineapple[_ -]?([0-9a-f]{4})$", RegexOption.IGNORE_CASE)
+    private val pineappleWord = Regex("(wi-?fi ?pineapple|pineapple ?(mk ?\\d+|nano|tetra|hak5)\\b|hak5 ?pineapple)", RegexOption.IGNORE_CASE)
+    private val marauderDefault = Regex("^marauder(ap|_[0-9a-f]{2,6})?$", RegexOption.IGNORE_CASE)
     private val omgDefault = Regex("^o\\.mg([ _-].*)?$", RegexOption.IGNORE_CASE)
     private val flipperName = Regex("^flipper\\s+\\S{3,}$", RegexOption.IGNORE_CASE)
 
-    /** Evidence from a Wi-Fi network name. */
-    fun ssidFindings(ssid: String): List<Finding> {
+    /** Evidence from a Wi-Fi network name (the BSSID decides whether a "Pineapple_XXXX" name is the real default). */
+    fun ssidFindings(ssid: String, bssid: String = ""): List<Finding> {
         if (ssid.isBlank()) return emptyList()
         val s = ssid.trim()
         val l = s.lowercase(Locale.US)
         val f = ArrayList<Finding>()
+        val macTail = bssid.lowercase(Locale.US).replace(":", "").takeLast(4)
+        val pine = pineappleDefault.find(s)
         when {
-            pineappleDefault.matches(s) -> f += Finding(60, "Wi-Fi Pineapple default network name (Hak5 audit/attack tool)")
-            l.contains("pineapple") && (l.contains("hak5") || l.contains("wifi") || l.contains("mk") || l.contains("nano") || l.contains("tetra")) ->
-                f += Finding(45, "Network name mentions a Wi-Fi Pineapple (Hak5 audit/attack tool)")
+            pine != null && (pine.groupValues[1].lowercase(Locale.US) == macTail || Signatures.oui(bssid) in PINEAPPLE_OUI) ->
+                f += Finding(60, "Wi-Fi Pineapple default network name matching its address (Hak5 audit/attack tool)")
+            pineappleWord.containsMatchIn(s) -> f += Finding(45, "Network name says Wi-Fi Pineapple (Hak5 audit/attack tool), or someone's joke")
+            pine != null -> f += Finding(15, "Looks like a Wi-Fi Pineapple default name, but the digits don't match its address (probably just a name)")
             l == "pwned" -> f += Finding(55, "\"pwned\": default network of the ESP8266 Deauther (Wi-Fi jamming tool), or someone's joke name")
             l.contains("deauther") -> f += Finding(55, "Network name says Deauther (ESP8266 Wi-Fi jamming tool)")
-            l.contains("marauder") -> f += Finding(50, "Network name says Marauder (ESP32 Wi-Fi/BLE attack tool), or a game/car name")
+            marauderDefault.matches(s) -> f += Finding(50, "ESP32 Marauder default network name (Wi-Fi/BLE attack tool)")
+            l.contains("marauder") -> f += Finding(10, "Name contains \"marauder\" (a school mascot or a car more often than the attack tool)")
             omgDefault.matches(s) -> f += Finding(55, "O.MG default network name (malicious-cable implant with Wi-Fi)")
             l.contains("hak5") -> f += Finding(45, "Network name says Hak5 (audit/attack hardware maker)")
-            l.contains("wifi pineapple") -> f += Finding(45, "Network name says Wi-Fi Pineapple")
             l == "pwnagotchi" || l.startsWith("pwnagotchi") -> f += Finding(40, "Pwnagotchi (handshake-collecting Wi-Fi toy) name")
             l.contains("evil twin") || l.contains("eviltwin") || l.contains("wifiphisher") || l.contains("fluxion") -> f += Finding(40, "Network name taken from a Wi-Fi phishing tool")
             l == "free wifi" || l == "free_wifi" || l == "free public wifi" -> f += Finding(10, "Generic \"Free WiFi\" name: the classic bait name (often harmless)")
@@ -42,7 +47,7 @@ object Threats {
     /** Evidence from a hardware address (both Wi-Fi BSSIDs and public BLE addresses). */
     fun macFindings(mac: String): List<Finding> {
         val o = Signatures.oui(mac)
-        return if (o in HAK5_OUI) listOf(Finding(60, "Hak5 hardware address ($o): Wi-Fi Pineapple / Coconut")) else emptyList()
+        return if (o in PINEAPPLE_OUI) listOf(Finding(40, "Address block used by Wi-Fi Pineapples ($o; the IEEE list names Orient Power for it)")) else emptyList()
     }
 
     /** Evidence from a BLE advertised name. */
@@ -52,7 +57,7 @@ object Threats {
         val l = n.lowercase(Locale.US)
         return when {
             flipperName.matches(n) -> listOf(Finding(45, "Flipper Zero (multi-tool: can clone, replay and spam signals; often just a hobbyist)"))
-            l.startsWith("marauder") -> listOf(Finding(50, "ESP32 Marauder name (Wi-Fi/BLE attack tool)"))
+            marauderDefault.matches(n) -> listOf(Finding(50, "ESP32 Marauder name (Wi-Fi/BLE attack tool)"))
             l.startsWith("o.mg") || l.startsWith("omg-") -> listOf(Finding(50, "O.MG implant name (malicious cable)"))
             l.contains("hak5") -> listOf(Finding(40, "Hak5 (audit/attack hardware maker) in the name"))
             l == "pwnagotchi" -> listOf(Finding(35, "Pwnagotchi (handshake-collecting Wi-Fi toy)"))
@@ -112,50 +117,80 @@ object WifiSecurity {
     fun rank(caps: String): Int = when (Heuristics.securityLabel(caps)) { "WPA3" -> 5; "OWE" -> 4; "WPA2" -> 3; "WPA" -> 2; "WEP" -> 1; else -> 0 }
 }
 
-/** Networks you know: name -> best security rank seen and the OUIs that served it. Learned after 10 min near a network. */
+/**
+ * Networks you know: name -> strongest security seen, the address blocks that served it, where it was learned and on
+ * how many days. Learned after 10 minutes near a network; compared only near that place (2 km) and only once it has
+ * been seen on two different days, so a chain's open captive portal across town never "twins" its WPA2 sibling.
+ * Entries unseen for 60 days expire. Generic/default names are never learned.
+ */
 class SsidMemory {
-    class Known(var bestRank: Int, val ouis: LinkedHashSet<String>, var minutes: Int)
+    class Known(var bestRank: Int, val ouis: LinkedHashSet<String>, var lat: Double, var lon: Double, var days: Int, var lastDay: Int, var lastAt: Long)
 
     val known = LinkedHashMap<String, Known>()
     var dirty = false
 
-    /** Call every minute per active, named, non-randomized network. */
-    fun touch(ssid: String, caps: String, bssid: String, minutesNear: Int) {
-        if (ssid.isBlank() || minutesNear < 10) return
+    private fun day(t: Long) = (t / 86_400_000L).toInt()
+
+    /** Call about once a minute per active, named network; [minutesNear] = continuous presence so far. */
+    fun touch(ssid: String, caps: String, bssid: String, minutesNear: Int, lat: Double?, lon: Double?, now: Long) {
+        if (ssid.isBlank() || minutesNear < 10 || lat == null || lon == null) return
+        if (ssid.trim().lowercase(Locale.US) in GENERIC) return
         val r = WifiSecurity.rank(caps)
-        val k = known.getOrPut(ssid) { dirty = true; Known(r, LinkedHashSet(), 0) }
+        val d = day(now)
+        val k = known.getOrPut(ssid) { dirty = true; Known(r, LinkedHashSet(), lat, lon, 1, d, now) }
         if (r > k.bestRank) { k.bestRank = r; dirty = true }
         val o = Signatures.oui(bssid)
-        if (!VendorDb.isRandomizedMac(bssid) && k.ouis.add(o)) dirty = true
-        if (k.ouis.size > 16) { k.ouis.remove(k.ouis.first()); dirty = true }
-        if (minutesNear > k.minutes) k.minutes = minutesNear
-        if (known.size > 400) { known.remove(known.keys.first()); dirty = true }
+        if (!VendorDb.isRandomizedMac(bssid) && k.ouis.size < 24 && k.ouis.add(o)) dirty = true
+        if (d != k.lastDay) { k.days++; k.lastDay = d; dirty = true }
+        k.lastAt = now
+        if (known.size > 400) { known.remove(known.minByOrNull { it.value.lastAt }!!.key); dirty = true }
+    }
+
+    /** Drop networks unseen for 60 days. */
+    fun expire(now: Long) {
+        if (known.values.removeAll { now - it.lastAt > 60L * 86_400_000L }) dirty = true
     }
 
     /**
-     * Evil-twin evidence for an access point claiming a known network name: weaker security than that network ever
-     * used (classic captive-portal twin), or a maker never seen for it (new router, mesh node, or a copy: weak alone).
+     * Evil-twin evidence for an access point claiming a known network name near where you learned it: weaker security
+     * than that network ever used (the classic captive-portal twin), or an address block never seen for it (a new
+     * router or mesh node more often than a copy: weak alone).
      */
-    fun findings(ssid: String, caps: String, bssid: String): List<Finding> {
+    fun findings(ssid: String, caps: String, bssid: String, lat: Double?, lon: Double?): List<Finding> {
         val k = known[ssid] ?: return emptyList()
+        if (k.days < 2 || lat == null || lon == null || Geo.distanceM(lat, lon, k.lat, k.lon) > 2000) return emptyList()
         val f = ArrayList<Finding>()
         val r = WifiSecurity.rank(caps)
-        if (r < k.bestRank && k.bestRank >= 3 && r <= 2) f += Finding(45, "Claims to be \"$ssid\" (a network you know as ${rankName(k.bestRank)}) but is ${rankName(r)}: possible evil twin")
+        if (r < k.bestRank && k.bestRank >= 3 && r <= 2) f += Finding(45, "Claims to be \"$ssid\" (a network you know here as ${rankName(k.bestRank)}) but is ${rankName(r)}: possible evil twin")
         val o = Signatures.oui(bssid)
-        if (!VendorDb.isRandomizedMac(bssid) && k.ouis.isNotEmpty() && o !in k.ouis) f += Finding(15, "New access-point maker for \"$ssid\" ($o): a new router or mesh node, or a copy of the name")
+        if (!VendorDb.isRandomizedMac(bssid) && k.ouis.isNotEmpty() && o !in k.ouis) f += Finding(15, "New address block for \"$ssid\" ($o): a new router or mesh node, or a copy of the name")
         return f
     }
 
     private fun rankName(r: Int) = when (r) { 5 -> "WPA3"; 4 -> "OWE"; 3 -> "WPA2"; 2 -> "WPA"; 1 -> "WEP"; else -> "open" }
 
-    fun dump(): String = known.entries.joinToString("\n") { (s, k) -> listOf(s.replace("\t", " "), k.bestRank, k.minutes, k.ouis.joinToString(",")).joinToString("\t") }
+    private fun enc(s: String) = java.net.URLEncoder.encode(s, "UTF-8")
+    private fun dec(s: String) = try { java.net.URLDecoder.decode(s, "UTF-8") } catch (_: Exception) { s }
+
+    fun dump(): String = known.entries.joinToString("\n") { (s, k) ->
+        listOf(enc(s), k.bestRank, k.days, k.ouis.joinToString(","), String.format(Locale.US, "%.4f", k.lat), String.format(Locale.US, "%.4f", k.lon), k.lastDay, k.lastAt).joinToString("\t")
+    }
 
     fun load(text: String) {
         for (line in text.split('\n')) {
             val p = line.split('\t')
-            if (p.size < 4 || p[0].isBlank()) continue
-            known[p[0]] = Known(p[1].toIntOrNull() ?: 0, LinkedHashSet(p[3].split(',').filter { it.isNotBlank() }), p[2].toIntOrNull() ?: 0)
+            if (p.size < 8 || p[0].isBlank()) continue
+            known[dec(p[0])] = Known(p[1].toIntOrNull() ?: 0, LinkedHashSet(p[3].split(',').filter { it.isNotBlank() }),
+                p[4].toDoubleOrNull() ?: continue, p[5].toDoubleOrNull() ?: continue, p[2].toIntOrNull() ?: 1, p[6].toIntOrNull() ?: 0, p[7].toLongOrNull() ?: 0L)
         }
         dirty = false
+    }
+
+    companion object {
+        /** Names so common that "the same name, weaker" means nothing. */
+        val GENERIC = setOf("guest", "wifi", "wi-fi", "home", "network", "default", "linksys", "netgear", "dlink", "d-link", "tp-link", "tplink",
+            "asus", "wireless", "internet", "free wifi", "free_wifi", "public", "hotspot", "iphone", "android", "androidap", "xfinitywifi",
+            "xfinity", "attwifi", "spectrum", "cablewifi", "boingo", "starbucks", "mcdonalds", "google starbucks", "airport", "hotel", "office",
+            "visitor", "visitors", "customer", "shop", "store", "cafe", "coffee", "lobby", "admin", "setup", "camera", "printer", "tv", "router")
     }
 }

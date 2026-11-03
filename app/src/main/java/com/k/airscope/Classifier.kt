@@ -426,7 +426,7 @@ object Classifier {
         if (police.sumOf { it.points } >= 25) c.set(Category.POLICE, policeLabel(police), 100)
 
         // --- Attack / audit hardware (Pineapple, deauther, Marauder, O.MG): a hint from the name, never proof
-        val attack = Threats.ssidFindings(ssid) + Threats.macFindings(bssid)
+        val attack = Threats.ssidFindings(ssid, bssid) + Threats.macFindings(bssid)
         if (attack.isNotEmpty()) {
             c.findings += attack
             c.attackTool = attack.any { it.points >= 40 }

@@ -6,6 +6,9 @@ object Heuristics {
     @Volatile var alertLevel = 1
     /** Networks you know (for evil-twin checks); set by the engine, null in tests that don't need it. */
     @Volatile var ssidMemory: SsidMemory? = null
+    /** Your current position (engine thread), for the "near where you learned it" check. */
+    @Volatile var myLat: Double? = null
+    @Volatile var myLon: Double? = null
 
     const val PERSIST_MS = 10 * 60_000L
 
@@ -51,11 +54,11 @@ object Heuristics {
                 val twins = active.filter { it.kind == Kind.WIFI && it.key != d.key && it.name == d.name }
                 val open = securityLabel(d.security) == "OPEN"
                 if (twins.any { (securityLabel(it.security) == "OPEN") != open }) {
-                    s += if (open) 30 else 10
-                    f += if (open) "Same name as a secured network nearby but open: possible evil twin" else "An open copy of this network's name is nearby (see that one)"
-                    if (open) sec += "evil-twin"
+                    // Venues legitimately run an open portal and a secured network under one name: noted, no alert by itself
+                    s += if (open) 25 else 5
+                    f += if (open) "Same name as a secured network nearby but open (a venue's guest portal, or an evil twin)" else "An open copy of this network's name is nearby (see that one)"
                 }
-                val mem = ssidMemory?.findings(d.name, d.security, d.id).orEmpty()
+                val mem = ssidMemory?.findings(d.name, d.security, d.id, myLat, myLon).orEmpty()
                 for (x in mem) { s += x.points; f += x.text; if (x.points >= 40) sec += "evil-twin" }
             }
             if (VendorDb.isRandomizedMac(d.id)) {
@@ -84,17 +87,16 @@ object Heuristics {
                 when {
                     d.bleType in Classifier.TRACKERS -> { s += 35; f += "Tracker has moved with you for $km km" }
                     d.category == Category.POLICE -> { s += 15; f += "Has moved with you for $km km" }
-                    d.followM > 2000 && d.category != Category.NETWORK && d.category != Category.CAMERA_IOT ->
-                        { s += 30; f += "Has moved with you for $km km: not a tracker by type, but it is keeping up with you (a passenger's device, or something hidden?)" }
+                    d.followM > 2000 && !fixedGear(d) -> { s += 15; f += "Has moved with you for $km km (a passenger's device, your own gear, or something hidden: mark it if it's yours)" }
                     else -> { s += 10; f += "Has moved with you for $km km (yours or a passenger's?)" }
                 }
             }
-            // Following you across places: 3+ separate appearances that began far apart, in one session
-            val following = (d.followM > 2000 || (d.sightings >= 3 && d.sightSpreadM >= 1500)) &&
-                d.category != Category.NETWORK && d.category != Category.CAMERA_IOT
-            if (following) {
-                sec += "following"
-                if (d.sightings >= 3 && d.sightSpreadM >= 1500) { s += 15; f += "Appeared ${d.sightings} separate times, ${fmtDist(d.sightSpreadM)} m apart: showing up wherever you go" }
+            // Following you across places: 3+ separate appearances that began far apart in one session. Moving with you
+            // alone is not enough (every passenger's phone does that), and a bus/train full of devices is not a tail.
+            val crowd = active.count { it.kind == Kind.BLE && it.followM > 2000 && !fixedGear(it) && it.bleType !in Classifier.TRACKERS }
+            if (d.sightings >= 3 && d.sightSpreadM >= 1500 && !fixedGear(d)) {
+                s += 15; f += "Appeared ${d.sightings} separate times, ${fmtDist(d.sightSpreadM)} m apart: showing up wherever you go"
+                if (crowd <= 4) sec += "following" else f += "(many devices are travelling with you right now: transit or a group, so no alert)"
             }
         }
         if (d.kind == Kind.WIFI && d.followM > 600) { s += 10; f += "Hotspot moving with you (${(d.followM / 1000).let { String.format(java.util.Locale.US, "%.1f", it) }} km)" }
@@ -104,9 +106,13 @@ object Heuristics {
         d.secTags = sec.distinct()
     }
 
-    /** Should this device trigger a pop-up alert (once)? */
+    /** Fixed infrastructure that cannot "follow" anyone: access points, beacons, IoT gear. */
+    fun fixedGear(d: Device): Boolean = d.kind == Kind.WIFI || d.category == Category.CAMERA_IOT ||
+        d.label.contains("beacon", ignoreCase = true) || d.label.contains("access point", ignoreCase = true) || d.label.contains("router", ignoreCase = true)
+
+    /** Should this device trigger a pop-up alert (once)? Security tags alert at MEDIUM unless alerts are "critical only". */
     fun wantsAlert(d: Device): Boolean = !d.trusted && d.priority >= 0 && (d.priority > 0 ||
-        (d.level >= Level.MEDIUM && ("attack-tool" in d.secTags || "evil-twin" in d.secTags || "following" in d.secTags)) ||
+        (alertLevel >= 1 && d.level >= Level.MEDIUM && ("attack-tool" in d.secTags || "evil-twin" in d.secTags || "following" in d.secTags)) ||
         (alertLevel >= 2 && d.level >= Level.MEDIUM) ||
         (alertLevel >= 1 && d.level == Level.HIGH) ||
             (d.bleType in Classifier.TRACKERS && d.level >= Level.MEDIUM) ||

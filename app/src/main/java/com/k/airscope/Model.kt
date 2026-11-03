@@ -60,6 +60,21 @@ object DeviceFilter {
             }
         }
     }
+
+    /** Same rules for the UI's immutable views (list, map, HUD). */
+    fun matchesView(d: DeviceView, query: String): Boolean {
+        val q = query.trim().lowercase(Locale.US)
+        if (q.isEmpty()) return true
+        return q.split(' ').filter { it.isNotBlank() }.all { term ->
+            when {
+                term.startsWith("cat:") -> d.category.name.lowercase(Locale.US).startsWith(term.removePrefix("cat:")) ||
+                    d.category.short.lowercase(Locale.US).startsWith(term.removePrefix("cat:"))
+                term.startsWith("sec:") -> d.secTags.any { term.length == 4 || it.startsWith(term.removePrefix("sec:")) }
+                term.startsWith("owner:") -> d.owner.lowercase(Locale.US).let { it.isNotEmpty() && (term.length == 6 || it.contains(term.removePrefix("owner:"))) }
+                else -> d.searchText.contains(term) || d.title.lowercase(Locale.US).contains(term)
+            }
+        }
+    }
 }
 
 /** Scan-radius edge with hysteresis: leave only when clearly outside, return only when clearly inside. */
