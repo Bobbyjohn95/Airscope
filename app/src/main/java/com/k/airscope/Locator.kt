@@ -49,6 +49,11 @@ class LocTrack {
     var shownErr = 0.0
     var shownSince = 0L
     var lastGoodAt = 0L
+    /** When the device was last heard at all (ms). */
+    var lastHeardAt = 0L
+    /** Counts new measurement spots (not repeats at the same spot); frozen copy taken at the last good fix. */
+    var spotSeq = 0
+    var spotSeqAtGood = -1
     /** Learned signal level at 1 m (dBm) once the fit is good; null until then. */
     var p0: Double? = null
     var ambiguous = false
@@ -61,6 +66,8 @@ class LocTrack {
     var estAt = 0L
     /** The readings only make sense if the device itself was moving: there's no fixed spot to show. */
     var moving = false
+    /** When "moving" was first concluded for a device that was on the map (0 = not currently). */
+    var movingSince = 0L
     /** Recent estimates (time ms, x, y, error m), for checking that a device that can move stayed put. */
     val history = ArrayDeque<DoubleArray>()
 }
@@ -93,10 +100,20 @@ object Locator {
     private const val MAX_OK_ERR = 45.0
     /** How long a good fix stays on the map while newer estimates are momentarily poor. */
     private const val HOLD_MS = 30_000L
+    /** ...and while the device is still being heard: the spot was good and nothing says it moved. */
+    private const val HOLD_HEARD_MS = 90_000L
+    private const val HEARD_RECENTLY_MS = 20_000L
+    /**
+     * A device that is on the map has to look "moving" for this long before its marker is taken down.
+     * One estimate taken while a wall or a passing truck weakens the signal looks exactly like "it drove off";
+     * a device that really moves keeps looking that way.
+     */
+    private const val MOVING_CONFIRM_MS = 12_000L
 
     fun add(tr: LocTrack, lat: Double, lon: Double, rssi: Double, t: Long, gpsErr: Double = 4.0, env: Env = Env.INDOOR) {
         val p = tr.proj ?: LocalProj(lat, lon).also { tr.proj = it }
         val x = p.x(lon); val y = p.y(lat)
+        tr.lastHeardAt = t
         val last = tr.obs.lastOrNull { it.rttM == null }
         if (last != null && hypot(x - last.x, y - last.y) < SAME_SPOT_M && t - last.t < 20_000 &&
             last.pathN == env.n && last.loss == env.extraLoss
@@ -108,6 +125,7 @@ object Locator {
             return
         }
         tr.obs += Obs(x, y, rssi, 1, t, gpsErr, pathN = env.n, loss = env.extraLoss)
+        tr.spotSeq++
         if (tr.obs.size > MAX_OBS) prune(tr.obs)
         tr.dirty = true
     }
@@ -115,7 +133,9 @@ object Locator {
     /** A measured Wi-Fi RTT distance from a GPS position. */
     fun addRtt(tr: LocTrack, lat: Double, lon: Double, meters: Double, std: Double, t: Long, gpsErr: Double) {
         val p = tr.proj ?: LocalProj(lat, lon).also { tr.proj = it }
+        tr.lastHeardAt = t
         tr.obs += Obs(p.x(lon), p.y(lat), Double.NaN, 1, t, gpsErr, meters, std)
+        tr.spotSeq++
         if (tr.obs.size > MAX_OBS) prune(tr.obs)
         tr.dirty = true
     }
@@ -161,12 +181,13 @@ object Locator {
         tr.spreadM = spread
         val rssiObs = o.filter { it.rttM == null }
         val hasRtt = o.any { it.rttM != null }
-        if (n < 5 || (rssiObs.size < 4 && !hasRtt)) { tr.located = false; return }
+        // Too little to go on right now: a spot that was good stays on the map for a while (settle's hold)
+        if (n < 5 || (rssiObs.size < 4 && !hasRtt)) { settle(tr, false, 0.0, 0.0, 0.0, now); return }
         val strongest = rssiObs.maxByOrNull { it.rssi }
         val dNear = strongest?.let { dist(it, p0Prior) } ?: (o.mapNotNull { it.rttM }.minOrNull() ?: 20.0)
-        if (spread < max(10.0, 0.45 * dNear)) { tr.located = false; return }
+        if (spread < max(10.0, 0.45 * dNear)) { settle(tr, false, 0.0, 0.0, 0.0, now); return }
 
-        val sol = solveAll(o, p0Prior, p0Sigma) ?: run { tr.located = false; return }
+        val sol = solveAll(o, p0Prior, p0Sigma) ?: run { settle(tr, false, 0.0, 0.0, 0.0, now); return }
         val best = sol.best
         var err = sol.err
         tr.rawErrM = err * CALIBRATION
@@ -257,6 +278,11 @@ object Locator {
     fun settlePublic(tr: LocTrack, ok: Boolean, lat: Double, lon: Double, err: Double, now: Long) = settle(tr, ok, lat, lon, err, now)
 
     private fun settle(tr: LocTrack, ok: Boolean, lat: Double, lon: Double, err: Double, now: Long) {
+        // "Moving" only cancels the hold once it has persisted; a one-off verdict is treated as a poor estimate
+        val movingNow = tr.moving && tr.located
+        if (!movingNow) tr.movingSince = 0L
+        else if (tr.movingSince == 0L) tr.movingSince = now
+        val movingConfirmed = tr.moving && (!tr.located || now - tr.movingSince >= MOVING_CONFIRM_MS)
         if (ok) {
             if (!tr.located || tr.shownSince == 0L) {
                 tr.shownLat = lat; tr.shownLon = lon; tr.shownErr = err; tr.shownSince = now
@@ -269,15 +295,31 @@ object Locator {
                 tr.shownErr += (err - tr.shownErr) * 0.3
             }
             tr.lastGoodAt = now
+            tr.spotSeqAtGood = tr.spotSeq
             tr.located = true
-        } else if (tr.located && !tr.moving && now - tr.lastGoodAt < HOLD_MS) {
+        } else if (tr.located && !movingConfirmed && now - tr.lastGoodAt < holdMs(tr, lat, lon, err, now)) {
             // keep showing the last good spot; let its circle grow a little to say "not refreshed"
-            tr.shownErr = minOf(tr.shownErr * 1.05, MAX_OK_ERR * 1.3)
+            // (not while standing still: nothing new was measured, so nothing got less certain)
+            if (tr.spotSeq != tr.spotSeqAtGood) tr.shownErr = minOf(tr.shownErr * 1.05, MAX_OK_ERR * 1.3)
         } else {
             tr.located = false
             tr.shownSince = 0L
         }
         if (tr.located) { tr.estLat = tr.shownLat; tr.estLon = tr.shownLon; tr.errM = tr.shownErr }
+    }
+
+    /**
+     * How long a good spot survives poor estimates: 30 s, or 90 s while the device is still being heard and the
+     * latest (poor) fit does not land somewhere else entirely. err <= 0 means "no fit at all" (too few readings).
+     * While you stand still nothing new is learned about where it is, so a spot that was good stays as long as
+     * the device is heard (a persistent "it moved" verdict still takes it down).
+     */
+    private fun holdMs(tr: LocTrack, lat: Double, lon: Double, err: Double, now: Long): Long {
+        if (now - tr.lastHeardAt >= HEARD_RECENTLY_MS) return HOLD_MS
+        // A fit that found a second candidate spot is a reason to doubt the shown one, not to keep it
+        val agrees = err <= 0.0 || (!tr.ambiguous && err <= 2 * MAX_OK_ERR && Geo.distanceM(tr.shownLat, tr.shownLon, lat, lon) <= tr.shownErr)
+        if (!agrees) return HOLD_MS
+        return if (tr.spotSeq == tr.spotSeqAtGood) Long.MAX_VALUE else HOLD_HEARD_MS
     }
 
     /** Minor/major spread of the measurement spots: ~0 for a straight line, ~1 for a loop. */

@@ -259,6 +259,59 @@ fun main() {
     Locator.estimate(trR, -30.0, 8.0, Env.INDOOR, tt)
     check("Locator: Wi-Fi RTT pins AP (<3 m)", trR.located && errOf(trR, 20.0, -15.0) < 3.0, "err=${"%.2f".format(errOf(trR, 20.0, -15.0))} ±${trR.errM}")
 
+    // Hold hysteresis: a located device is not taken off the map by one "moving" verdict (a wall, a truck),
+    // only by one that persists; a plain poor estimate keeps the spot for the 30 s hold.
+    run {
+        val th = LocTrack()
+        Locator.settlePublic(th, true, 33.92, -84.84, 12.0, 100_000L)
+        check("Locator hold: good fix shows", th.located)
+        th.moving = true; Locator.settlePublic(th, false, 0.0, 0.0, 0.0, 103_000L)
+        check("Locator hold: one moving verdict keeps the marker", th.located)
+        th.moving = false; Locator.settlePublic(th, false, 0.0, 0.0, 0.0, 106_000L)
+        check("Locator hold: poor estimate keeps the marker", th.located && th.movingSince == 0L)
+        th.moving = true; Locator.settlePublic(th, false, 0.0, 0.0, 0.0, 110_000L)
+        th.moving = true; Locator.settlePublic(th, false, 0.0, 0.0, 0.0, 116_000L)
+        check("Locator hold: still shown 6 s into a moving verdict", th.located)
+        th.moving = true; Locator.settlePublic(th, false, 0.0, 0.0, 0.0, 123_000L)
+        check("Locator hold: persistent moving verdict (13 s) takes it down", !th.located)
+        val tq = LocTrack()
+        Locator.settlePublic(tq, true, 33.92, -84.84, 12.0, 0L)
+        Locator.settlePublic(tq, false, 0.0, 0.0, 0.0, 29_000L)
+        check("Locator hold: poor estimates keep the spot for 30 s", tq.located)
+        Locator.settlePublic(tq, false, 0.0, 0.0, 0.0, 31_000L)
+        check("Locator hold: gone after the hold", !tq.located)
+        // Early exits (too few readings) go through the same hold instead of dropping the marker at once
+        val te = LocTrack()
+        Locator.add(te, 33.92, -84.84, -60.0, 0L, 3.0)
+        Locator.settlePublic(te, true, 33.92, -84.84, 12.0, 1_000L)
+        Locator.estimate(te, -60.0, 8.0, Env.OPEN, 5_000L, 120_000L)
+        check("Locator hold: too few readings keeps a good spot", te.located)
+        Locator.estimate(te, -60.0, 8.0, Env.OPEN, 40_000L, 120_000L)
+        check("Locator hold: ...but not forever", !te.located)
+        // Still being heard and nothing says it moved: the spot stays well past 30 s, but not forever
+        val tk = LocTrack()
+        Locator.settlePublic(tk, true, 33.92, -84.84, 12.0, 0L)
+        Locator.add(tk, 33.9201, -84.8401, -70.0, 50_000L, 3.0)
+        Locator.settlePublic(tk, false, 0.0, 0.0, 0.0, 60_000L)
+        check("Locator hold: still heard keeps the spot past 30 s", tk.located)
+        Locator.add(tk, 33.9201, -84.8401, -70.0, 80_000L, 3.0)
+        Locator.settlePublic(tk, false, 0.0, 0.0, 0.0, 95_000L)
+        check("Locator hold: heard-hold ends after 90 s", !tk.located)
+        // Standing still: nothing new is learned, so a good spot stays as long as the device is heard...
+        val ts = LocTrack()
+        Locator.add(ts, 33.92, -84.84, -60.0, 0L, 3.0)
+        Locator.settlePublic(ts, true, 33.9202, -84.8402, 12.0, 1_000L)
+        for (t in 15_000L..300_000L step 15_000L) Locator.add(ts, 33.92, -84.84, -60.0 + (t / 15_000 % 3), t, 3.0)
+        Locator.settlePublic(ts, false, 33.9202, -84.8402, 30.0, 150_000L)
+        Locator.settlePublic(ts, false, 33.9202, -84.8402, 30.0, 305_000L)
+        check("Locator hold: standing still keeps a heard device's spot (5 min)", ts.located && ts.obs.size == 1)
+        // ...until it is clearly moving for a while
+        ts.moving = true; Locator.settlePublic(ts, false, 33.9202, -84.8402, 30.0, 306_000L)
+        check("Locator hold: standing still, one moving verdict is ignored", ts.located)
+        ts.moving = true; Locator.settlePublic(ts, false, 33.9202, -84.8402, 30.0, 320_000L)
+        check("Locator hold: standing still, persistent moving verdict takes it down", !ts.located)
+    }
+
     // ---- GPS Kalman filter
     val pf = PositionFilter()
     val g0 = LocalProj(33.9, -84.8)
