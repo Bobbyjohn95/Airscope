@@ -13,7 +13,8 @@ import java.net.NetworkInterface
 /**
  * Receive-only listener for the names devices announce on the Wi-Fi network the phone is joined to:
  * mDNS/Bonjour (224.0.0.251:5353) and SSDP/UPnP (239.255.255.250:1900). It joins the two multicast groups
- * (the standard way to receive these announcements) and never sends a query or any other packet.
+ * (the standard way to receive these announcements) and never sends a query, never connects to anything
+ * (joining tells your router to forward them; that membership report is the only thing that ever leaves the phone).
  * Needs the phone to be on Wi-Fi; does nothing on mobile data. Parsing happens on the engine thread.
  */
 class LanListener(ctx: Context, private val handler: Handler, private val dir: LanDirectory) {
@@ -27,10 +28,13 @@ class LanListener(ctx: Context, private val handler: Handler, private val dir: L
         private set
     @Volatile var packets = 0
         private set
+    @Volatile private var sockets: List<MulticastSocket> = emptyList()
+    @Volatile private var generation = 0
 
     fun start() {
         if (running) return
         running = true
+        generation++
         try {
             val wm = app.getSystemService(Context.WIFI_SERVICE) as WifiManager
             lock = wm.createMulticastLock("airscope-lan").apply { setReferenceCounted(false); acquire() }
@@ -43,6 +47,8 @@ class LanListener(ctx: Context, private val handler: Handler, private val dir: L
 
     fun stop() {
         running = false
+        generation++
+        for (s in sockets) runCatching { s.close() } // unblocks receive() right away
         thread?.interrupt()
         thread = null
         try { lock?.release() } catch (_: Exception) { }
@@ -56,17 +62,22 @@ class LanListener(ctx: Context, private val handler: Handler, private val dir: L
         }
     } catch (_: Exception) { null }
 
+    private fun ipv4s(ni: NetworkInterface): List<String> = ni.inetAddresses.toList().filterIsInstance<Inet4Address>().map { it.hostAddress ?: "" }
+
     private fun loop() {
+        val gen = generation
+        fun status(s: String) { if (generation == gen) dir.status = s } // only the live listener may report
         val groups = listOf(InetAddress.getByName("224.0.0.251") to 5353, InetAddress.getByName("239.255.255.250") to 1900)
-        while (running) {
+        while (running && generation == gen) {
             val ni = wifiInterface()
             if (ni == null) {
-                dir.status = "not on Wi-Fi"
+                status("not on Wi-Fi")
                 sleepQuiet(5_000)
                 continue
             }
             ifaceName = ni.name
-            val sockets = ArrayList<MulticastSocket>()
+            val myV4 = ipv4s(ni)
+            val socks = ArrayList<MulticastSocket>()
             try {
                 for ((g, port) in groups) {
                     val s = MulticastSocket(null)
@@ -75,22 +86,24 @@ class LanListener(ctx: Context, private val handler: Handler, private val dir: L
                     s.networkInterface = ni
                     s.joinGroup(InetSocketAddress(g, port), ni)
                     s.soTimeout = 2_000
-                    sockets += s
+                    socks += s
                 }
+                sockets = socks
                 error = null
-                dir.status = "listening on ${ni.name}"
+                status("listening on ${ni.name}")
             } catch (e: Exception) {
                 error = "can't listen: ${e.message}"
-                dir.status = "can't listen (${e.message})"
-                for (s in sockets) runCatching { s.close() }
+                status("can't listen (${e.message})")
+                for (s in socks) runCatching { s.close() }
                 sleepQuiet(15_000)
                 continue
             }
+            val sockets = socks
             // Two sockets, one thread: poll each in turn with short timeouts (announcements are rare, not a stream).
             val buf = ByteArray(9000)
             var lastCheck = System.currentTimeMillis()
             try {
-                while (running) {
+                while (running && generation == gen) {
                     for ((i, s) in sockets.withIndex()) {
                         val p = DatagramPacket(buf, buf.size)
                         try { s.receive(p) } catch (_: java.net.SocketTimeoutException) { continue }
@@ -105,7 +118,7 @@ class LanListener(ctx: Context, private val handler: Handler, private val dir: L
                     if (t - lastCheck > 30_000) { // Wi-Fi changed (new network / off): rejoin on the current interface
                         lastCheck = t
                         val cur = wifiInterface()
-                        if (cur == null || cur.name != ni.name || cur.inetAddresses.toList().map { it.hostAddress } != ni.inetAddresses.toList().map { it.hostAddress }) break
+                        if (cur == null || cur.name != ni.name || ipv4s(cur) != myV4) break // IPv6 privacy addresses rotate: ignore them
                     }
                 }
             } catch (_: Exception) {
@@ -113,7 +126,7 @@ class LanListener(ctx: Context, private val handler: Handler, private val dir: L
                 for (s in sockets) runCatching { s.close() }
             }
         }
-        dir.status = "off"
+        status("off")
     }
 
     private fun sleepQuiet(ms: Long) { try { Thread.sleep(ms) } catch (_: InterruptedException) { } }

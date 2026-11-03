@@ -195,17 +195,30 @@ object Engine {
         publish()
     }
 
-    fun lanStatus(): String = lan.status + (lanListener?.error?.let { " · $it" } ?: "") + " · ${lan.entries.size} known · ${lanListener?.packets ?: 0} packets"
+    /** Copies for the UI thread (engine-built; the directory itself is engine-only). */
+    @Volatile var lanRows: List<LanDirectory.LanRow> = emptyList()
+        private set
+    @Volatile var lanStatusText: String = "off"
+        private set
+    private var lastLanRows = 0L
+
+    private fun publishLan(now: Long) {
+        if (now - lastLanRows < 2_000 && lanRows.isNotEmpty() == lan.entries.isNotEmpty()) return
+        lastLanRows = now
+        lanRows = if (lanOn) lan.rows(now) else emptyList()
+        lanStatusText = if (!lanOn) "off" else lan.status + (lanListener?.error?.let { " · $it" } ?: "") + " · ${lan.entries.size} known · ${lanListener?.packets ?: 0} packets"
+    }
 
     /** Engine thread: a BLE device whose broadcast name also shows up as a hostname on your Wi-Fi gets that link. */
     private fun matchLanNames(now: Long) {
-        if (now - lastLanMatch < 10_000 || lan.entries.isEmpty()) return
+        if (now - lastLanMatch < 10_000) return
         lastLanMatch = now
         for (d in store.active(now)) {
             if (d.name.isBlank()) continue
-            val e = lan.matching(d.name) ?: continue
+            val e = if (lan.entries.isEmpty()) null else lan.matching(d.name, now)
+            if (e == null) { d.lanNote = ""; continue }
             d.lanNote = (e.host.ifBlank { e.title() }) + " (" + e.ip + ")" + (if (e.model.isNotBlank()) " · " + e.model else "")
-            if (d.owner.isBlank() && e.owner.isNotBlank()) d.owner = e.owner
+            if (d.owner.isBlank() && e.owner.isNotBlank()) { d.owner = e.owner; d.ownerFromLan = true }
         }
     }
 
@@ -234,6 +247,7 @@ object Engine {
             updateAutoEnv(now)
             refreshSession(now)
             store.linkRotated(now) // same device under a new random address: keep its history in one place
+            if (store.choicesChanged) { store.choicesChanged = false; Prefs.savePriorities(app, store.priorities); Prefs.saveTrusted(app, store.trustedKeys) }
             matchLanNames(now)
             for (d in store.rescore(now)) if (withinRadius(d, now) && d.priority >= 0) deviceAlert?.invoke(d)
             // Re-estimate map positions for devices with new GPS-tagged samples: least recently estimated
@@ -386,6 +400,7 @@ object Engine {
             lat, lon, geo.accuracy, geo.course, geo.mapVersion, geo.vx, geo.vy, geo.fixNanos, geo.gnss,
         )
         snapshot = s
+        publishLan(now)
         if (hudOn) snapshotJson = Exporter.snapshotJson(s)
     }
 }

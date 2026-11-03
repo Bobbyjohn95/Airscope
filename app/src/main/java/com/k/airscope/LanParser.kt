@@ -47,6 +47,7 @@ object LanParser {
                     }
                     else -> {
                         if (p + 1 + len > b.size) throw IndexOutOfBoundsException()
+                        if (sb.length + len > 255) throw IllegalStateException("name too long")
                         if (sb.isNotEmpty()) sb.append('.')
                         sb.append(String(b, p + 1, len, Charsets.UTF_8))
                         p += 1 + len
@@ -191,7 +192,9 @@ object LanParser {
         val nt = h["NT"] ?: h["ST"] ?: ""
         val nts = h["NTS"] ?: "ssdp:alive"
         if (nt.isEmpty() && h["USN"].isNullOrEmpty()) return null
-        val extra = h.filterKeys { it.startsWith("X-") || it in setOf("DEVICENAME.LGE.COM", "DEVICE-NAME", "FRIENDLYNAME.DLNA.ORG") }
+        // Only headers that really carry a friendly name (vendor extensions); numeric/hex values are not names
+        val extra = h.filterKeys { it in setOf("DEVICENAME.LGE.COM", "DEVICE-NAME", "FRIENDLYNAME.DLNA.ORG", "X-FRIENDLY-NAME", "X-DEVICE-NAME", "X-NAME") }
+            .filterValues { v -> v.any { it.isLetter() } && v.length in 2..60 }
         return SsdpNotify(nt, h["USN"] ?: "", h["SERVER"] ?: "", h["LOCATION"] ?: "", !nts.contains("byebye", ignoreCase = true), extra)
     }
 
@@ -214,7 +217,7 @@ object LanParser {
             "samsung" in sv -> "Samsung TV / device"
             "lge" in sv || "lg " in sv || "webos" in sv -> "LG TV"
             "windows" in sv -> "Windows PC"
-            "synology" in sv || "nas" in sv -> "NAS"
+            "synology" in sv || Regex("\\bnas\\b").containsMatchIn(sv) -> "NAS"
             "echo" in sv || "amazon" in sv || "fire" in sv -> "Amazon Echo / Fire TV"
             "upnp" in sv -> "UPnP device"
             else -> "UPnP device"

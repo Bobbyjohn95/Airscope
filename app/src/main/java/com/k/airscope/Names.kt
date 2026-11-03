@@ -7,9 +7,10 @@ import java.util.Locale
  * "iPhone de Juan", "Johns-MacBook-Pro"). Pure logic, no Android.
  *
  * Honest limits: this is the name the OWNER typed into their device, nothing is looked up anywhere.
- * Business names ("McDonald's Free WiFi") and product names ("Bose QC35") are filtered out, but a person
- * whose device is named "Office" stays unknown, and a device named "Taylor's iPhone" says "Taylor", not who
- * is carrying it right now.
+ * Business names ("McDonald's Free WiFi"), rooms ("Living-Room-TV") and product names ("Bose QC35") are filtered
+ * out, but a person whose device is named "Office" stays unknown, and a device named "Taylor's iPhone" says
+ * "Taylor", not who is carrying it right now. Without an apostrophe the word is kept as typed ("James iPhone" ->
+ * James, "Johns-MacBook" -> Johns) because there is no way to tell James from Jame's.
  */
 object Names {
     /** Words that say "this is a personal device" after a possessive: "<name>'s iPhone". */
@@ -31,10 +32,18 @@ object Names {
         "customer", "visitor", "student", "employee", "staff", "member", "driver", "rider", "owner", "admin",
         "everyone", "nobody", "someone", "user", "default", "free", "public", "city", "county", "school", "hotel",
         "cafe", "coffee", "bar", "pub", "shop", "store", "office", "clinic", "library", "gym", "club", "salon",
+        "starbucks", "hilton", "marriott", "hyatt", "ihg", "walmart", "target", "costco", "panera", "chipotle", "subway",
+        // rooms, places and adjectives people put in front of a device word
+        "living", "livingroom", "kitchen", "bedroom", "bathroom", "basement", "garage", "family", "game", "dining",
+        "master", "upstairs", "downstairs", "work", "old", "new", "spare", "test", "main", "shared", "kids", "kid",
+        "baby", "guest", "patio", "porch", "attic", "lobby", "hall", "garden", "pool", "front", "back", "backyard",
+        "sala", "casa", "cocina", "cuarto", "salon", "chambre", "maison", "bureau", "wohnzimmer", "kuche", "haus",
+        "la", "el", "los", "las", "le", "les", "der", "die", "das", "the", "a", "an", "my", "our", "your",
+        "mobile", "wireless", "smart", "home", "house", "apartment", "flat", "room", "car", "cars", "truck", "boat",
     )
 
     /** "<Device> de/di/von/van <Name>" (Spanish, Portuguese, Italian, French, German, Dutch). */
-    private val OF_FORM = Regex("^(.{2,40}?)\\s+(de|di|von|van|do|da|du|des|of)\\s+([\\p{L}][\\p{L}'\\- ]{1,30})$", RegexOption.IGNORE_CASE)
+    private val OF_FORM = Regex("^(.{2,40}?)\\s+(de|di|von|van|do|da|du|des)\\s+([\\p{L}][\\p{L}'\\- ]{1,30})$", RegexOption.IGNORE_CASE)
 
     /** "Name's Thing", "Name’s Thing", "Names Thing" (apostrophe dropped by the device), "Name-Thing", "Name_Thing". */
     private val POSSESSIVE = Regex("^([\\p{L}][\\p{L}\\.\\- ]{0,30}?)\\s*(['’`´]s|['’`´])\\s+(.+)$", RegexOption.IGNORE_CASE)
@@ -76,10 +85,10 @@ object Names {
             val what = m.groupValues[2].replace('-', ' ').replace('_', ' ')
             if (DEVICE_WORDS.matches(what) && person(who)) return cap(who)
         }
-        DROPPED_APOSTROPHE.find(n)?.let { m -> // "Sarahs iPhone": the apostrophe got dropped
-            val who = m.groupValues[1]
+        DROPPED_APOSTROPHE.find(n)?.let { m -> // "Sarahs iPhone" / "James iPhone": no apostrophe, so the word is kept as typed
+            val who = m.groupValues[1] + "s"
             val what = m.groupValues[2].trim()
-            if (DEVICE_WORDS.matches(what) && person(who) && (who + "s").lowercase(Locale.US) !in BRANDS) return cap(who)
+            if (DEVICE_WORDS.matches(what) && person(who) && person(m.groupValues[1])) return cap(who)
         }
         return null
     }
@@ -88,10 +97,10 @@ object Names {
     fun ownerFromHostname(host: String?): String? {
         var h = host?.trim()?.removeSuffix(".")?.removeSuffix(".local") ?: return null
         if (h.length < 4) return null
-        HOST_POSSESSIVE.find(h)?.let { m -> // "Johns-MacBook-Pro": the possessive s without an apostrophe
-            val who = m.groupValues[1]
+        HOST_POSSESSIVE.find(h)?.let { m -> // "Johns-MacBook-Pro": possessive without an apostrophe, kept as typed ("Johns")
+            val who = m.groupValues[1] + "s"
             val what = m.groupValues[2].replace('-', ' ')
-            if (DEVICE_WORDS.matches(what) && person(who) && (who + "s").lowercase(Locale.US) !in BRANDS) return cap(who)
+            if (DEVICE_WORDS.matches(what) && person(who) && person(m.groupValues[1])) return cap(who)
         }
         owner(h)?.let { return it }
         h = h.replace('-', ' ').replace('_', ' ')
@@ -105,6 +114,7 @@ object Names {
         val words = w.split(' ').filter { it.isNotEmpty() }
         if (words.isEmpty() || words.size > 3) return false
         if (words.any { it in BRANDS || it in NOT_A_PERSON }) return false
+        if (words[0] in setOf("the", "la", "el", "le", "les", "los", "las", "der", "die", "das", "de", "a", "an")) return false
         if (words.any { it.length < 2 }) return false
         // Must be letters (any script), with at most a dot/hyphen/apostrophe per word
         return words.all { it.all { c -> c.isLetter() || c == '.' || c == '-' || c == '\'' } && it.count { c -> c.isLetter() } >= 2 }

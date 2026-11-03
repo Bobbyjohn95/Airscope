@@ -728,7 +728,7 @@ fun main() {
         check("owner: Sarah's AirPods", o("Sarah's AirPods") == "Sarah", o("Sarah's AirPods"))
         check("owner: curly apostrophe", o("Mike\u2019s iPhone") == "Mike")
         check("owner: James' iPhone", o("James' iPhone") == "James", o("James' iPhone"))
-        check("owner: dropped apostrophe", o("Sarahs iPhone") == "Sarah", o("Sarahs iPhone"))
+        check("owner: no apostrophe keeps the word as typed", o("Sarahs iPhone") == "Sarahs" && o("James iPhone") == "James" && o("Chris iPad") == "Chris", o("James iPhone"))
         check("owner: hyphen form", o("Anna-Pixel 8") == "Anna", o("Anna-Pixel 8"))
         check("owner: Spanish", o("iPhone de Juan") == "Juan", o("iPhone de Juan"))
         check("owner: German", o("MacBook Pro von Anna Schmidt") == "Anna Schmidt", o("MacBook Pro von Anna Schmidt"))
@@ -743,8 +743,12 @@ fun main() {
         check("no owner: Guest's WiFi", o("Guest's WiFi") == null)
         check("no owner: product name", o("Bose QC35 II") == null && o("AirPods Pro") == null)
         check("no owner: bare SSID", o("NETGEAR42") == null && o("xfinitywifi") == null)
-        check("hostname: Johns-MacBook-Pro", Names.ownerFromHostname("Johns-MacBook-Pro.local") == "John", Names.ownerFromHostname("Johns-MacBook-Pro.local"))
-        check("hostname: sarahs-iphone", Names.ownerFromHostname("sarahs-iphone") == "Sarah")
+        check("no owner: chains", o("Starbucks WiFi") == null && o("Hilton's Guest WiFi") == null, o("Starbucks WiFi"))
+        for (bad in listOf("Living-Room-TV", "Kitchen-Echo", "Bedroom-TV", "Work-Laptop", "Old-iPhone", "Test-Phone", "Kids' iPad",
+            "The Smith's House", "TV de la sala", "iPad de casa", "House of Pizza", "My iPhone", "Family Room Apple TV", "Garage-Speaker"))
+            check("no owner: $bad", o(bad) == null && Names.ownerFromHostname(bad) == null, o(bad) ?: Names.ownerFromHostname(bad))
+        check("hostname: Johns-MacBook-Pro", Names.ownerFromHostname("Johns-MacBook-Pro.local") == "Johns", Names.ownerFromHostname("Johns-MacBook-Pro.local"))
+        check("hostname: sarahs-iphone", Names.ownerFromHostname("sarahs-iphone") == "Sarahs" && Names.ownerFromHostname("Chris-iPhone") == "Chris" && Names.ownerFromHostname("Lucas-iPad") == "Lucas")
         check("hostname: iPhone-de-Juan", Names.ownerFromHostname("iPhone-de-Juan") == "Juan", Names.ownerFromHostname("iPhone-de-Juan"))
         check("hostname: DESKTOP-ABC123 -> none", Names.ownerFromHostname("DESKTOP-ABC123") == null && Names.ownerFromHostname("Galaxy-S23") == null)
         val d = Device("aa:bb:cc:dd:ee:ff", Kind.BLE, t0).also { it.name = "Sarah's AirPods"; it.owner = "Sarah" }
@@ -761,12 +765,12 @@ fun main() {
             it.addReading(-60, at)
         }
         val a = seen("4a:00:00:00:00:01", t0)
-        a.followM = 500.0; a.priority = 1
+        a.followM = 500.0; a.priority = 1; st.priorities[a.key] = 1; a.trusted = true; st.trustedKeys += a.key
         for (i in 1..20) seen("4a:00:00:00:00:01", t0 + i * 10_000)        // present 200 s
         val b = seen("4a:00:00:00:00:02", t0 + 215_000)                     // address rotates 15 s after the last reading
         var linked = st.linkRotated(t0 + 216_000)
         check("link: not yet (old still counts as active)", linked.isEmpty() && st.devices.size == 2)
-        linked = st.linkRotated(t0 + 260_000)                                // old gone > 30 s
+        linked = st.linkRotated(t0 + 250_000)                                // old gone > 30 s
         check("link: merged into the new address", linked.size == 1 && linked[0].first === a && linked[0].second === b, linked.size)
         check("link: old address removed", st.devices.size == 1 && st.devices.containsKey(b.key))
         check("link: presence carried over", b.presentSince == t0 && b.firstSeen == t0, "${b.presentSince - t0}")
@@ -779,6 +783,22 @@ fun main() {
         seen2("5a:00:00:00:00:01", t0); seen2("5a:00:00:00:00:02", t0); seen2("5a:00:00:00:00:03", t0 + 20_000)
         seen2("5a:00:00:00:00:02", t0 + 60_000)
         check("link: ambiguous names stay separate", st2.linkRotated(t0 + 70_000).isEmpty() && st2.devices.size == 3)
+        // Two same-named devices both go quiet, one new address appears: nobody gets merged (which one would it be?)
+        val st5 = DeviceStore(); st5.sessionStart = t0
+        fun seen5(mac: String, at: Long) = st5.upsert(mac, Kind.BLE, at).also { it.name = "Galaxy Buds2"; it.vendor = "Samsung"; it.randomAddr = true; it.addReading(-60, at) }
+        val mine = seen5("6a:00:00:00:00:01", t0).also { it.trusted = true; st5.trustedKeys += it.key }
+        seen5("6a:00:00:00:00:02", t0)
+        seen5("6a:00:00:00:00:01", t0 + 30_000); seen5("6a:00:00:00:00:02", t0 + 32_000)
+        val n5 = seen5("6a:00:00:00:00:03", t0 + 50_000)
+        check("link: two quiet twins + one newcomer -> no merge", st5.linkRotated(t0 + 100_000).isEmpty() && st5.devices.size == 3 && !n5.trusted && mine.trusted)
+        // A default product name never passes "mine" on to a possible stranger
+        val st6 = DeviceStore(); st6.sessionStart = t0
+        fun seen6(mac: String, at: Long) = st6.upsert(mac, Kind.BLE, at).also { it.name = "Galaxy Buds2"; it.vendor = "Samsung"; it.randomAddr = true; it.addReading(-60, at) }
+        seen6("7a:00:00:00:00:01", t0).also { it.trusted = true; it.alerted = true }
+        seen6("7a:00:00:00:00:01", t0 + 30_000)
+        val n6 = seen6("7a:00:00:00:00:02", t0 + 50_000)
+        check("link: default name links presence but not 'mine'", st6.linkRotated(t0 + 100_000).size == 1 && n6.presentSince == t0 && !n6.trusted && !n6.alerted, "${n6.trusted} ${n6.alerted}")
+        check("link: personal name carries 'mine' + watch to the new key", b.trusted && b.key in st.trustedKeys && st.priorities[b.key] == 1 && st.choicesChanged, "${st.trustedKeys} ${st.priorities}")
         // A public (fixed) address is never linked
         val st3 = DeviceStore(); st3.sessionStart = t0
         val p1 = st3.upsert("00:25:df:00:00:01", Kind.BLE, t0).also { it.name = "AXON_CAMERA"; it.randomAddr = false; it.addReading(-60, t0) }
@@ -786,10 +806,12 @@ fun main() {
         check("link: public addresses never linked", DeviceStore.fingerprint(p1) == null && st3.linkRotated(t0 + 60_000).isEmpty())
         // Wi-Fi hotspot with a randomized BSSID
         val st4 = DeviceStore(); st4.sessionStart = t0
-        fun hs(mac: String, at: Long) = st4.upsert(mac, Kind.WIFI, at).also { it.name = "Mike's iPhone"; it.security = "[WPA2-PSK-CCMP][ESS]"; it.randomAddr = true; it.addReading(-50, at) }
+        fun hs(mac: String, at: Long, cat: Category = Category.PHONE, nm: String = "Mike's iPhone") = st4.upsert(mac, Kind.WIFI, at).also { it.name = nm; it.category = cat; it.security = "[WPA2-PSK-CCMP][ESS]"; it.randomAddr = true; it.addReading(-50, at) }
         hs("f2:11:22:33:44:55", t0); hs("f2:11:22:33:44:55", t0 + 60_000)
         hs("f2:11:22:33:44:66", t0 + 100_000)
-        check("link: hotspot BSSID rotation", st4.linkRotated(t0 + 200_000).size == 1 && st4.devices.size == 1)
+        // mesh / guest network with local BSSIDs passed one after another: separate access points, never chained
+        hs("f2:aa:00:00:00:01", t0, Category.NETWORK, "xfinitywifi"); hs("f2:aa:00:00:00:02", t0 + 100_000, Category.NETWORK, "xfinitywifi")
+        check("link: hotspot BSSID rotation, mesh APs untouched", st4.linkRotated(t0 + 200_000).size == 1 && st4.devices.size == 3, st4.devices.keys)
     }
 
     // ---- LanParser: mDNS + SSDP announcements
@@ -825,8 +847,16 @@ fun main() {
         dir.onMdns("192.168.1.23", m, t0)
         val e = dir.entries["192.168.1.23"]
         check("lan: entry from mDNS", e != null && e.host == "Johns-MacBook-Pro" && "Living Room TV" in e.names && e.model == "AppleTV6,2", e?.what())
-        check("lan: owner from hostname", e!!.owner == "John", e.owner)
-        check("lan: name match", dir.matching("living room tv") === e && dir.matching("Johns MacBook Pro") === e && dir.matching("Kitchen") == null)
+        check("lan: owner from hostname", e!!.owner == "Johns", e.owner)
+        check("lan: name match", dir.matching("living room tv", t0) === e && dir.matching("Johns MacBook Pro", t0) === e && dir.matching("Kitchen", t0) == null)
+        check("lan: generic / stale / ambiguous names don't match", dir.matching("iPhone", t0) == null && dir.matching("living room tv", t0 + 11 * 60_000) == null)
+        val dir2 = LanDirectory()
+        dir2.onMdns("192.168.1.23", m, t0)
+        dir2.onMdns("192.168.1.99", LanParser.parseMdns(u16(0) + u16(0x8400) + u16(0) + u16(1) + u16(0) + u16(0) + rr(svcType, 12, inst))!!, t0) // same friendly name, another device
+        check("lan: two entries with one name -> no match", dir2.entries.size == 2 && dir2.matching("living room tv", t0) == null, dir2.entries.keys)
+        check("lan: spoofed off-subnet A record makes no entry", run { val d2 = LanDirectory(); d2.onMdns("192.168.1.5", LanParser.parseMdns(pkt2)!!, t0); d2.entries.size == 1 })
+        val sonyish = LanParser.parseSsdp("NOTIFY * HTTP/1.1\r\nNT: upnp:rootdevice\r\nNTS: ssdp:alive\r\nSERVER: Panasonic-UPnP/1.0\r\nUSN: uuid:1\r\nX-RINCON-BOOTSEQ: 123\r\n\r\n")!!
+        check("ssdp: Panasonic is not a NAS, bootseq is not a name", LanParser.ssdpLabel(sonyish) != "NAS" && sonyish.extra.isEmpty(), LanParser.ssdpLabel(sonyish))
         val ssdp = LanParser.parseSsdp("NOTIFY * HTTP/1.1\r\nHOST: 239.255.255.250:1900\r\nNT: urn:schemas-upnp-org:device:MediaRenderer:1\r\nNTS: ssdp:alive\r\nSERVER: Linux UPnP/1.0 Sonos/80.1-55014\r\nUSN: uuid:RINCON_1\r\nLOCATION: http://192.168.1.40:1400/xml/device_description.xml\r\n\r\n")
         check("ssdp: parsed", ssdp != null && ssdp.alive && ssdp.nt.contains("MediaRenderer") && LanParser.ssdpLabel(ssdp) == "Sonos speaker", ssdp?.let { LanParser.ssdpLabel(it) })
         check("ssdp: M-SEARCH ignored", LanParser.parseSsdp("M-SEARCH * HTTP/1.1\r\nST: ssdp:all\r\n") == null)

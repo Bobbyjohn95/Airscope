@@ -131,7 +131,7 @@ class Snapshot(
                     if (d.sightSpreadM >= 300) " · first spots ${fmtDist(d.sightSpreadM)} m apart" else ""
             }
             if (d.followM > 50) facts += "Moved with you" to "${fmtDist(d.followM)} m"
-            if (d.owner.isNotBlank()) facts += "Owner" to "${d.owner} (that's what the device's own name says: nothing was looked up)"
+            if (d.owner.isNotBlank()) facts += "Owner" to d.owner + (if (d.ownerFromLan) " (from the matching hostname on your Wi-Fi)" else " (that's what the device's own name says: nothing was looked up)")
             if (d.lanNote.isNotBlank()) facts += "On your Wi-Fi" to d.lanNote
             if (d.aliases.isNotEmpty()) facts += "Earlier addresses" to d.aliases.takeLast(4).joinToString(", ") + " (same name and maker: linked across its address changes)"
             when {
