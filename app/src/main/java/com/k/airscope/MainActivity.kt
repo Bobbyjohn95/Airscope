@@ -28,6 +28,8 @@ import android.view.WindowInsets
 import android.view.WindowManager
 import android.widget.BaseAdapter
 import android.widget.Button
+import android.widget.EditText
+import android.text.InputType
 import android.widget.FrameLayout
 import android.widget.HorizontalScrollView
 import android.widget.LinearLayout
@@ -53,6 +55,55 @@ class MainActivity : Activity() {
     private lateinit var btnCompass: TextView
     private lateinit var status: TextView
     private lateinit var btnRadius: Button
+    private var searchChip: TextView? = null
+    /** Current search text (lowercase); empty = everything. */
+    private var searchQuery = ""
+
+    private fun matchesQuery(d: DeviceView, q: String): Boolean = q.split(' ').filter { it.isNotBlank() }.all { term ->
+        if (term.startsWith("cat:")) d.category.name.lowercase(Locale.US).startsWith(term.removePrefix("cat:")) || d.category.short.lowercase(Locale.US).startsWith(term.removePrefix("cat:"))
+        else d.searchText.contains(term) || d.title.lowercase(Locale.US).contains(term)
+    }
+
+    /** Search box: filters list and map live; "Watch" saves the term as a rule that alerts on any match. */
+    private fun showSearch() {
+        val input = EditText(this).apply {
+            setText(searchQuery); hint = "name, maker, MAC, keyword, cat:tracker"; setHintTextColor(Color.GRAY)
+            textSize = 14f; typeface = Typeface.MONOSPACE; isSingleLine = true; setSelection(text.length)
+        }
+        val rules = Engine.store.watchRules
+        val box = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(18), dp(8), dp(18), 0); addView(input) }
+        box.addView(text(if (rules.isEmpty()) "No watch rules yet. Type a term and tap WATCH: anything matching it is marked ★, listed first and alerts when it appears."
+            else "Watch rules (★ + alert on match): " + rules.joinToString(" · ") + "\nTap a rule in MORE → Watch rules to remove it.", 11.5f, Color.LTGRAY).apply { setPadding(0, dp(8), 0, 0) })
+        val d = AlertDialog.Builder(this).setTitle("Search devices").setView(box)
+            .setPositiveButton("Search", null).setNeutralButton("Watch", null).setNegativeButton("Clear", null).create()
+        d.setOnShowListener {
+            d.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener { applySearch(input.text.toString()); d.dismiss() }
+            d.getButton(AlertDialog.BUTTON_NEGATIVE).setOnClickListener { applySearch(""); d.dismiss() }
+            d.getButton(AlertDialog.BUTTON_NEUTRAL).setOnClickListener {
+                val t = input.text.toString().trim().lowercase(Locale.US)
+                if (t.isEmpty()) { toast("Type something to watch first") } else {
+                    Engine.setWatchRules((Engine.store.watchRules + t).distinct()); applySearch(t); toast("Watching \"$t\": matches are starred and alert"); d.dismiss()
+                }
+            }
+        }
+        d.show()
+        input.requestFocus()
+    }
+
+    private fun applySearch(q: String) {
+        searchQuery = q.trim().lowercase(Locale.US)
+        searchChip?.text = if (searchQuery.isEmpty()) "🔍" else "🔍 $searchQuery ✕"
+        searchChip?.let { styleChip(it, searchQuery.isNotEmpty()) }
+        lastListVersion = -1
+    }
+
+    private fun showWatchRules() {
+        val rules = Engine.store.watchRules
+        if (rules.isEmpty()) { toast("No watch rules. Use 🔍 → type a term → WATCH"); return }
+        AlertDialog.Builder(this).setTitle("Watch rules (tap to remove)")
+            .setItems(rules.toTypedArray()) { _, i -> Engine.setWatchRules(rules.filterIndexed { k, _ -> k != i }); toast("Removed \"${rules[i]}\"") }
+            .setNegativeButton("Close", null).show()
+    }
     private lateinit var trackBar: TextView
     private lateinit var btnScan: Button
     private lateinit var btnView: Button
@@ -344,6 +395,25 @@ class MainActivity : Activity() {
         lastListVersion = -1
     }
 
+    private fun pickRadius() {
+        val input = EditText(this).apply { hint = "meters (0 = everything)"; inputType = InputType.TYPE_CLASS_NUMBER; setText(if (Engine.radiusM == 0) "" else Engine.radiusM.toString()) }
+        AlertDialog.Builder(this).setTitle("Scan radius").setView(LinearLayout(this).apply { setPadding(dp(18), 0, dp(18), 0); addView(input) })
+            .setPositiveButton("Set") { _, _ ->
+                Engine.radiusM = (input.text.toString().toIntOrNull() ?: 0).coerceIn(0, 5000)
+                Prefs.save(this); radar.zoomToRadius(Engine.radiusM); lastListVersion = -1
+            }.setNegativeButton("Cancel", null).show()
+    }
+
+    private fun cycleAlerts() {
+        Heuristics.alertLevel = (Heuristics.alertLevel + 1) % 3
+        Prefs.save(this)
+        toast(when (Heuristics.alertLevel) {
+            0 -> "Alerts: police, trackers, drones and watched devices only"
+            1 -> "Alerts: normal (HIGH risk + the above)"
+            else -> "Alerts: everything MEDIUM and up (chatty)"
+        })
+    }
+
     /** AUTO -> OPEN -> INDOOR -> DENSE -> CAR -> AUTO */
     private fun cycleEnv() {
         val all = Env.values()
@@ -375,6 +445,8 @@ class MainActivity : Activity() {
         pm.menu.add(0, 4, 0, "Export CSV")
         pm.menu.add(0, 5, 0, "Clear session")
         pm.menu.add(0, 7, 0, "Session log (seen again)")
+        pm.menu.add(0, 11, 0, "Watch rules…")
+        pm.menu.add(0, 12, 0, "Alerts: " + arrayOf("critical only", "normal", "everything")[Heuristics.alertLevel] + " (tap to change)")
         pm.menu.add(0, 8, 0, "Diagnostics")
         pm.menu.add(0, 9, 0, "Offline map for this area…")
         pm.menu.add(0, 6, 0, "About & limits")
@@ -391,6 +463,8 @@ class MainActivity : Activity() {
                 8 -> showDiagnostics()
                 9 -> showOfflineMap()
                 10 -> exitApp()
+                11 -> showWatchRules()
+                12 -> cycleAlerts()
             }
             true
         }
@@ -720,21 +794,42 @@ class MainActivity : Activity() {
             }
         }
         val b = AlertDialog.Builder(this)
-            .setTitle(d.title)
+            .setTitle((if (d.priority > 0) "★ " else if (d.priority < 0) "🔇 " else "") + d.title)
             .setMessage(msg)
             .setPositiveButton("Track") { _, _ -> selectedKey = d.key; lastListVersion = -1 }
             .setNegativeButton("Close", null)
         if (d.kind != Kind.MAP) {
-            b.setNeutralButton(if (d.trusted) "Unmark mine" else "Mark as mine") { _, _ -> Engine.setTrusted(d.key, !d.trusted) }
+            b.setNeutralButton("Options…") { _, _ -> showDeviceOptions(d) }
         }
         b.show()
+    }
+
+    /** Per-device choices: watch (top of list, always alerts), ignore (muted), mine, copy ID. */
+    private fun showDeviceOptions(d: DeviceView) {
+        val items = arrayOf(
+            if (d.priority > 0) "★ Stop watching" else "★ Watch this device (top of list, always alert)",
+            if (d.priority < 0) "🔇 Un-ignore" else "🔇 Ignore this device (mute, no alerts)",
+            if (d.trusted) "Unmark as mine" else "Mark as mine (it's my own gear)",
+            "Copy ID / name",
+        )
+        AlertDialog.Builder(this).setTitle(d.title.take(30)).setItems(items) { _, which ->
+            when (which) {
+                0 -> { Engine.setPriority(d.key, if (d.priority > 0) 0 else 1); toast(if (d.priority > 0) "No longer watching" else "Watching: it stays at the top and alerts whenever it appears") }
+                1 -> { Engine.setPriority(d.key, if (d.priority < 0) 0 else -1); toast(if (d.priority < 0) "Un-ignored" else "Ignored: no alerts, listed at the bottom") }
+                2 -> Engine.setTrusted(d.key, !d.trusted)
+                3 -> { getSystemService(android.content.ClipboardManager::class.java)?.setPrimaryClip(android.content.ClipData.newPlainText("device", "${d.title} ${d.id}")); toast("Copied") }
+            }
+            lastListVersion = -1
+        }.show()
     }
 
     // ---------- rendering ----------
 
     private fun refresh() {
         val s = Engine.snapshot
-        val vis = s.devices.filter { mode.matches(it.category) }
+        val q = searchQuery
+        val vis = s.devices.filter { mode.matches(it.category) && (q.isEmpty() || matchesQuery(it, q)) }
+        radar.searchQuery = q
         radar.update(s, Engine.geo.chunks, selectedKey, Engine.geo.origin)
         radar.scanRadiusM = Engine.radiusM
         headingTracker.updateLocation(s.myLat, s.myLon)
@@ -848,7 +943,9 @@ class MainActivity : Activity() {
         val sig = if (d.kind == Kind.MAP) "map" else "${d.avg}dBm"
         val flags = if (d.flags.isEmpty()) "" else "\n   ! " + d.flags.take(3).joinToString("; ")
         val again = if (d.againMark.isNotEmpty()) "${d.againMark} " else ""
-        return "$icon $again${d.title.take(34)}\n   ${sig.padEnd(7)} ~${fmtDist(d.dist)}m (${fmtDist(d.lo)}–${fmtDist(d.hi)})  " +
+        val pri = if (d.priority > 0) "★ " else if (d.priority < 0) "🔇 " else ""
+        val out = if (!d.inRadius) " (outside radius)" else ""
+        return "$icon $pri$again${d.title.take(34)}$out\n   ${sig.padEnd(7)} ~${fmtDist(d.dist)}m (${fmtDist(d.lo)}–${fmtDist(d.hi)})  " +
             "${d.category.short}${if (d.vendor.isNotBlank() && !d.title.contains(d.vendor)) " · " + d.vendor.take(18) else ""}  [${d.score}]$flags"
     }
 
@@ -869,6 +966,7 @@ class MainActivity : Activity() {
                     tv.tag = item
                     tv.text = deviceLine(item)
                     tv.setTextColor(if (item.kind == Kind.MAP) Ui.VIOLET else Ui.levelColor(item.level))
+                    tv.alpha = if (!item.inRadius || item.priority < 0) 0.45f else 1f
                     tv.setBackgroundColor(if (item.key == selectedKey) Ui.SELECT_BG else Color.TRANSPARENT)
                 }
                 is DeviceStore.LogEntry -> {
@@ -916,6 +1014,15 @@ class MainActivity : Activity() {
             styleChip(chip, m == mode)
             chipRow.addView(chip, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { rightMargin = dp(6) })
         }
+        // Search chip at the front: tap to type a term (name, maker, MAC, keyword, cat:tracker)
+        val searchChip = TextView(this).apply {
+            text = "🔍"; textSize = 11f; typeface = Typeface.MONOSPACE; gravity = Gravity.CENTER
+            setPadding(dp(10), dp(6), dp(10), dp(6))
+            setOnClickListener { showSearch() }
+        }
+        styleChip(searchChip, false)
+        chipRow.addView(searchChip, 0, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { rightMargin = dp(6) })
+        this.searchChip = searchChip
         root.addView(HorizontalScrollView(this).apply { isHorizontalScrollBarEnabled = false; addView(chipRow) })
 
         radar = MapView3D(this).apply {
@@ -957,6 +1064,7 @@ class MainActivity : Activity() {
         }
         btnEnv = button("ENV") { cycleEnv() }
         btnRadius = button("RADIUS") { cycleRadius() }
+        btnRadius.setOnLongClickListener { pickRadius(); true }
         btnLog = button("LOG") { showTimeline = !showTimeline; lastListVersion = -1 }
         root.addView(row(btnScan, btnView, btnEnv, btnRadius, btnLog))
 

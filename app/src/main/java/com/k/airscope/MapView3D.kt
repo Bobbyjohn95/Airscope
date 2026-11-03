@@ -193,6 +193,8 @@ class MapView3D(ctx: Context) : View(ctx) {
 
     fun zoomBy(f: Double) { tgtRange = (tgtRange * f).coerceIn(MIN_RANGE, MAX_RANGE); invalidate() }
 
+    /** Search text: only matching devices are drawn (empty = all). */
+    var searchQuery = ""
     /** Scan radius (m, 0 = none): drawn as a ring; zoom fits it. */
     var scanRadiusM = 0
     fun zoomToRadius(r: Int) { scanRadiusM = r; if (r > 0) tgtRange = (r * 1.15).coerceIn(MIN_RANGE, MAX_RANGE); invalidate() }
@@ -642,7 +644,8 @@ class MapView3D(ctx: Context) : View(ctx) {
     private fun drawDevices(c: Canvas, f: LocalProj?, ux: Double, uy: Double, dt: Double) {
         hitX.clear(); hitY.clear(); hitD.clear()
         settling = false
-        val list = snap.devices.filter { mode.matches(it.category) }
+        val q = searchQuery
+        val list = snap.devices.filter { mode.matches(it.category) && (q.isEmpty() || q.split(' ').filter { t -> t.isNotBlank() }.all { t -> it.searchText.contains(t) || it.title.lowercase(java.util.Locale.US).contains(t) }) }
         val a = 1 - exp(-dt / 0.45)
 
         class Item(val d: DeviceView, val x: Double, val y: Double, val z: Double, val placed: Boolean, var depth: Float = 0f, val unknownDir: Boolean = false)
@@ -693,6 +696,7 @@ class MapView3D(ctx: Context) : View(ctx) {
             val alpha = (anim[d.key]?.a ?: 1f)
             val col = if (d.kind == Kind.MAP) Ui.VIOLET else Ui.levelColor(d.level)
             val sel = d.key == selectedKey
+            if (!d.inRadius && !sel) continue // outside the scan radius: not drawn (still in the list)
 
             if (it.placed) {
                 // Uncertainty halo / camera view cone on the ground
@@ -766,7 +770,7 @@ class MapView3D(ctx: Context) : View(ctx) {
             if (sel || d.level == Level.HIGH || d.category == Category.POLICE || d.sightings >= 2) {
                 val p = if (sel) label else text
                 p.color = if (sel) Color.WHITE else col
-                val again = if (d.sightings >= 2) d.againMark + " " else ""
+                val again = (if (d.priority > 0) "★ " else "") + if (d.sightings >= 2) d.againMark + " " else ""
                 val beyond = !it.placed && d.candA == null && d.dist > rangeM * 1.22
                 val t = again + (if (d.kind == Kind.MAP) d.title.removeSuffix(" (mapped)") else d.title) +
                     (if (beyond) " → ${fmtDist(d.dist)} m" else if (!it.placed) " ?" else "")

@@ -15,6 +15,11 @@ object Prefs {
         loaded = true
         val p = p(ctx)
         Engine.store.trustedKeys += p.getStringSet("trusted", emptySet()) ?: emptySet()
+        Engine.store.watchRules = (p.getString("watch_rules", "") ?: "").split('\n').map { it.trim() }.filter { it.isNotEmpty() }
+        for (e in p.getStringSet("priorities", emptySet()) ?: emptySet()) {
+            val k = e.substringBeforeLast('='); val v = e.substringAfterLast('=').toIntOrNull() ?: continue
+            Engine.store.priorities[k] = v
+        }
         // "env_mode" replaces the old "env" setting: everyone starts on AUTO once.
         val mode = p.getString("env_mode", "AUTO")!!
         Engine.envAuto = mode == "AUTO"
@@ -23,6 +28,7 @@ object Prefs {
         Engine.bleOn = p.getBoolean("ble", true)
         Engine.alprOn = p.getBoolean("alpr", true)
         Engine.radiusM = p.getInt("radius_m", 0)
+        Heuristics.alertLevel = p.getInt("alert_level", 1)
         val saved: String? = p.getString("hud_token", null)
         Engine.hudToken = if (!saved.isNullOrEmpty()) saved else {
             val alphabet = "abcdefghjkmnpqrstuvwxyz23456789"
@@ -40,7 +46,16 @@ object Prefs {
             .putBoolean("ble", Engine.bleOn)
             .putBoolean("alpr", Engine.alprOn)
             .putInt("radius_m", Engine.radiusM)
+            .putInt("alert_level", Heuristics.alertLevel)
             .apply()
+    }
+
+    fun saveWatchRules(ctx: Context, rules: List<String>) {
+        p(ctx).edit().putString("watch_rules", rules.joinToString("\n")).apply()
+    }
+
+    fun savePriorities(ctx: Context, m: Map<String, Int>) {
+        p(ctx).edit().putStringSet("priorities", m.map { "${it.key}=${it.value}" }.toHashSet()).apply()
     }
 
     fun saveTrusted(ctx: Context, keys: Set<String>) {

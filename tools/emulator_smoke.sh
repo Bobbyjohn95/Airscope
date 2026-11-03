@@ -159,6 +159,26 @@ if grep -qE "tiles · [0-9]+ roads" "$OUT/03-scanning-walking.txt"; then
 else
   note "  map tiles NOT loaded: $(grep -iE 'map|tiles' "$OUT/03-scanning-walking.txt" | head -1)"
 fi
+note "-- scan radius: cycle through and make sure the list never empties / flickers"
+BEFORE=$(screen_text | grep -c "dBm\|(mapped)")
+for step in 1 2 3; do
+  tap "RADIUS" contains; sleep 2
+  N=$(screen_text | grep -c "dBm\|(mapped)")
+  R=$(screen_text | grep -oE "RADIUS:[A-Za-z0-9]+" | head -1)
+  note "  $R -> $N rows listed (was $BEFORE)"
+done
+shot 05b-radius
+for step in 1 2 3 4; do tap "RADIUS" contains; sleep 1; done
+note "-- search"
+if tap "🔍" contains; then
+  adb shell input text "flock"; sleep 1
+  tap "Search"; sleep 2
+  N=$(screen_text | grep -c "Flock")
+  note "  search 'flock' -> $N Flock rows"
+  shot 05c-search
+  tap "🔍" contains; tap "Clear"
+fi
+
 note "-- view modes"
 tap "3D"; sleep 3; shot 06-view-drive
 tap "DRIVE"; sleep 3; shot 07-view-radar

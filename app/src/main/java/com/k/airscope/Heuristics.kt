@@ -2,6 +2,9 @@ package com.k.airscope
 
 /** Scoring: classifier evidence + generic rules. 25+ = MEDIUM, 50+ = HIGH. */
 object Heuristics {
+    /** 0 = police/trackers/drones/watched only, 1 = normal, 2 = everything MEDIUM and up. */
+    @Volatile var alertLevel = 1
+
     const val PERSIST_MS = 10 * 60_000L
 
     fun securityLabel(caps: String): String = when {
@@ -14,13 +17,14 @@ object Heuristics {
     }
 
     fun score(d: Device, active: List<Device>, now: Long) {
-        if (d.trusted) {
+        if (d.trusted || d.priority < 0) {
             d.score = 0
-            d.flags = listOf("Marked as yours")
+            d.flags = listOf(if (d.trusted) "Marked as yours" else "Ignored (muted)")
             return
         }
         val f = ArrayList<String>()
         var s = 0
+        if (d.priority > 0) { s += 40; f += "On your watch list" }
         for (x in d.findings) {
             s += x.points; f += x.text
         }
@@ -79,8 +83,9 @@ object Heuristics {
     }
 
     /** Should this device trigger a pop-up alert (once)? */
-    fun wantsAlert(d: Device): Boolean = !d.trusted && (
-        d.level == Level.HIGH ||
+    fun wantsAlert(d: Device): Boolean = !d.trusted && d.priority >= 0 && (d.priority > 0 ||
+        (alertLevel >= 2 && d.level >= Level.MEDIUM) ||
+        (alertLevel >= 1 && d.level == Level.HIGH) ||
             (d.bleType in Classifier.TRACKERS && d.level >= Level.MEDIUM) ||
             (d.category == Category.POLICE && d.score >= 45) || // Flock, Axon, Raven, ShotSpotter (not fleet routers alone)
             (d.category == Category.DRONE && d.score >= 25)

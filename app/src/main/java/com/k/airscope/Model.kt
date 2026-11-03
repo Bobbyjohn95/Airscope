@@ -33,6 +33,33 @@ enum class Mode(val label: String, val category: Category?) {
     fun matches(c: Category) = category == null || category == c
 }
 
+/**
+ * Text search / watch rules (pure logic). A term matches a device if it appears in its name, broadcast name, maker,
+ * label, type, ID (MAC) or any detail. Several words = all must match. "cat:tracker" matches a category.
+ */
+object DeviceFilter {
+    fun matches(d: Device, query: String): Boolean {
+        val q = query.trim().lowercase(Locale.US)
+        if (q.isEmpty()) return true
+        val hay = lazy {
+            (listOf(d.id, d.name, d.vendor, d.label, d.category.label, d.category.short, d.bleType, d.displayName()) +
+                d.facts.values + d.flags).joinToString("\n").lowercase(Locale.US)
+        }
+        return q.split(' ').filter { it.isNotBlank() }.all { term ->
+            when {
+                term.startsWith("cat:") -> d.category.name.lowercase(Locale.US).startsWith(term.removePrefix("cat:")) ||
+                    d.category.short.lowercase(Locale.US).startsWith(term.removePrefix("cat:"))
+                else -> hay.value.contains(term)
+            }
+        }
+    }
+}
+
+/** Scan-radius edge with hysteresis: leave only when clearly outside, return only when clearly inside. */
+object RadiusGate {
+    fun next(wasIn: Boolean, distM: Double, radiusM: Double): Boolean = if (wasIn) distM <= radiusM * 1.25 else distM <= radiusM * 0.9
+}
+
 /** One piece of evidence from the classifier or the scoring rules. */
 data class Finding(val points: Int, val text: String)
 
@@ -125,6 +152,11 @@ class Device(val id: String, val kind: Kind, now: Long) {
     var maxLevelLogged: Int = 0
     var alerted: Boolean = false
     var trusted: Boolean = false
+    /** Inside the scan radius (with hysteresis so it doesn't flicker at the edge). */
+    var inRadius: Boolean = true
+    /** User-set priority: 0 normal, 1 watch (always listed first, alerts even at LOW), -1 ignore (muted). */
+    var priority: Int = 0
+    var ruleWatched: Boolean = false
 
     val smoothRssi: Int
         get() = if (kalman.x.isNaN()) rssi else Math.round(kalman.x).toInt()

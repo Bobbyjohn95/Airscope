@@ -198,7 +198,7 @@ object Engine {
             scanner?.syncBle()
             updateAutoEnv(now)
             refreshSession(now)
-            for (d in store.rescore(now)) if (withinRadius(d, now)) deviceAlert?.invoke(d)
+            for (d in store.rescore(now)) if (withinRadius(d, now) && d.priority >= 0) deviceAlert?.invoke(d)
             // Re-estimate map positions for devices with new GPS-tagged samples: least recently estimated
             // first, so a newly appeared device is never starved by busy older ones.
             store.devices.values.asSequence()
@@ -287,14 +287,35 @@ object Engine {
         Locator.addRtt(d.track, pos.lat, pos.lon, meters, std, now, pos.accM)
     }
 
-    /** Engine thread: inside the chosen scan radius? Uses the map fix when there is one, else the estimated distance. */
+    /**
+     * Engine thread: inside the chosen scan radius? Uses the map fix when there is one, else the estimated
+     * distance (its optimistic end, so a noisy estimate doesn't push a device out). Hysteresis: a device has to be
+     * clearly outside (1.25x) to leave and clearly inside (0.9x) to come back, so nothing flickers at the edge.
+     */
     private fun withinRadius(d: Device, now: Long): Boolean {
         val r = radiusM
-        if (r == 0) return true
+        if (r == 0) { d.inRadius = true; return true }
         val la = geo.lat; val lo = geo.lon
-        if (d.track.located && la != null && lo != null) return Geo.distanceM(la, lo, d.track.estLat, d.track.estLon) <= r
-        if (d.selfLat != null && d.selfLon != null && la != null && lo != null) return Geo.distanceM(la, lo, d.selfLat!!, d.selfLon!!) <= r
-        return Distance.estimate(d, env, now).meters <= r
+        val dist = when {
+            d.track.located && la != null && lo != null -> Geo.distanceM(la, lo, d.track.estLat, d.track.estLon)
+            d.selfLat != null && d.selfLon != null && la != null && lo != null -> Geo.distanceM(la, lo, d.selfLat!!, d.selfLon!!)
+            else -> Distance.estimate(d, env, now).let { (it.meters + it.lo) / 2 }
+        }
+        d.inRadius = RadiusGate.next(d.inRadius, dist, r.toDouble())
+        return d.inRadius
+    }
+
+    fun setWatchRules(rules: List<String>) = post {
+        store.watchRules = rules
+        Prefs.saveWatchRules(app, rules)
+        publish()
+    }
+
+    fun setPriority(key: String, p: Int) = post {
+        store.devices[key]?.let { it.priority = p; it.alerted = false; it.maxLevelLogged = 0 }
+        if (p == 0) store.priorities.remove(key) else store.priorities[key] = p
+        Prefs.savePriorities(app, store.priorities)
+        publish()
     }
 
     /** Builds the immutable snapshot (engine thread). */
@@ -310,11 +331,12 @@ object Engine {
         val me = geo.filter.at(android.os.SystemClock.elapsedRealtimeNanos())
         for (d in active) {
             if ((d.kind == Kind.WIFI && !wifiOn) || (d.kind == Kind.BLE && !bleOn)) continue
-            if (!withinRadius(d, now)) continue
+            // Outside the radius: still listed (dimmed, at the bottom) so tracking never breaks, just no alerts
+            withinRadius(d, now)
             views += Snapshot.view(d, env, now, me?.lat ?: lat, me?.lon ?: lon, if (d.kind == Kind.WIFI) ssidCount[d.name] ?: 0 else 0)
         }
         if (alprOn && lat != null && lon != null) for (h in geo.hits()) if (radiusM == 0 || h.dist <= radiusM) views += Snapshot.alprView(h, now)
-        views.sortWith(compareByDescending<DeviceView> { it.score }.thenBy { it.dist })
+        views.sortWith(compareByDescending<DeviceView> { it.priority }.thenByDescending { it.inRadius }.thenByDescending { it.score }.thenBy { it.dist })
         val warning = if (running) scanner?.warning() ?: geo.warning() else null
         val s = Snapshot(
             now, running, warning, views, ArrayList(store.timeline.take(200)), env, geo.status, geo.mapStatus, ++version,

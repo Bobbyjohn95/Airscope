@@ -7,6 +7,10 @@ class DeviceStore {
     val devices = LinkedHashMap<String, Device>()
     val timeline = ArrayList<LogEntry>() // newest first
     val trustedKeys = HashSet<String>()
+    /** Saved watch (+1) / ignore (-1) choices by device key. */
+    val priorities = HashMap<String, Int>()
+    /** Watch rules: any device matching one of these search terms is treated as watched. */
+    @Volatile var watchRules: List<String> = emptyList()
 
     private var lastSummary = ""
 
@@ -18,7 +22,7 @@ class DeviceStore {
         var fresh = false
         val d = devices.getOrPut(key) {
             fresh = true
-            Device(id, kind, now).also { it.trusted = key in trustedKeys }
+            Device(id, kind, now).also { it.trusted = key in trustedKeys; it.priority = priorities[key] ?: 0 }
         }
         // Separate sightings this session: it went quiet for 3+ minutes and came back
         when {
@@ -52,6 +56,10 @@ class DeviceStore {
         val act = active(now)
         val alerts = ArrayList<Device>()
         for (d in act) {
+            // Watch rules: match by text (re-checked every rescore because names/facts arrive over time)
+            if (d.priority == 0 && priorities[d.key] == null && watchRules.any { DeviceFilter.matches(d, it) }) {
+                d.priority = 1; d.ruleWatched = true
+            } else if (d.ruleWatched && watchRules.none { DeviceFilter.matches(d, it) }) { d.priority = 0; d.ruleWatched = false }
             Heuristics.score(d, act, now)
             val lvl = d.level.ordinal
             if (lvl > d.maxLevelLogged) {

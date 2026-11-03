@@ -23,6 +23,11 @@ class DeviceView(
     val ageSec: Long,
     val lastSec: Long,
     val trusted: Boolean,
+    val inRadius: Boolean = true,
+    /** Everything searchable about it, lowercased (name, maker, id, facts), for the search box. */
+    val searchText: String = "",
+    /** 1 = watch list, 0 normal, -1 ignored. */
+    val priority: Int = 0,
     /** Stable placeholder angle (deg) used only while a device's position is unknown. */
     val angle: Float,
     /** Compass bearing from you (deg) when its position is known. */
@@ -141,6 +146,9 @@ class Snapshot(
                 dist = est.meters, lo = est.lo, hi = est.hi, distSrc = est.source, score = d.score, level = d.level,
                 flags = d.flags, facts = facts,
                 ageSec = (now - d.firstSeen) / 1000, lastSec = (now - d.lastSeen) / 1000, trusted = d.trusted,
+                inRadius = d.inRadius, priority = d.priority,
+                searchText = (listOf(d.id, d.name, d.vendor, d.label, d.category.label, d.category.short, d.bleType) + d.facts.values + d.flags)
+                    .joinToString("\n").lowercase(java.util.Locale.US),
                 angle = hashAngle(d.key), bearing = bearing, lat = lat, lon = lon, errM = err,
                 spots = tr.obs.size, spreadM = tr.spreadM,
                 candA = if (ambiguous) tr.estLat to tr.estLon else null,
