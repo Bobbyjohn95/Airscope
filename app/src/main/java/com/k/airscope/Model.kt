@@ -35,20 +35,22 @@ enum class Mode(val label: String, val category: Category?) {
 
 /**
  * Text search / watch rules (pure logic). A term matches a device if it appears in its name, broadcast name, maker,
- * label, type, ID (MAC) or any detail. Several words = all must match. "cat:tracker" matches a category.
+ * label, type, ID (MAC), owner or any detail. Several words = all must match. "cat:tracker" matches a category,
+ * "owner:sarah" a device whose name says who owns it ("owner:" alone = any named owner).
  */
 object DeviceFilter {
     fun matches(d: Device, query: String): Boolean {
         val q = query.trim().lowercase(Locale.US)
         if (q.isEmpty()) return true
         val hay = lazy {
-            (listOf(d.id, d.name, d.vendor, d.label, d.category.label, d.category.short, d.bleType, d.displayName()) +
-                d.facts.values + d.flags).joinToString("\n").lowercase(Locale.US)
+            (listOf(d.id, d.name, d.vendor, d.label, d.category.label, d.category.short, d.bleType, d.displayName(), d.owner) +
+                d.aliases + d.facts.values + d.flags).joinToString("\n").lowercase(Locale.US)
         }
         return q.split(' ').filter { it.isNotBlank() }.all { term ->
             when {
                 term.startsWith("cat:") -> d.category.name.lowercase(Locale.US).startsWith(term.removePrefix("cat:")) ||
                     d.category.short.lowercase(Locale.US).startsWith(term.removePrefix("cat:"))
+                term.startsWith("owner:") -> d.owner.lowercase(Locale.US).let { it.isNotEmpty() && (term.length == 6 || it.contains(term.removePrefix("owner:"))) }
                 else -> hay.value.contains(term)
             }
         }
@@ -76,8 +78,14 @@ class Device(val id: String, val kind: Kind, now: Long) {
     val key: String = kind.name + ":" + id
 
     var name: String = ""
+    /** Person named by the device's own broadcast name ("Sarah's AirPods" -> Sarah), else "". */
+    var owner: String = ""
+    /** Earlier addresses this device used (MAC randomization), newest last. */
+    val aliases = ArrayList<String>()
+    /** "hostname (ip)" when a device on your Wi-Fi announced the same name (mDNS), else "". */
+    var lanNote: String = ""
     var rssi: Int = -100
-    val firstSeen: Long = now
+    var firstSeen: Long = now
     var lastSeen: Long = now
     /** Start of the current continuous sighting (resets after a 2+ minute gap). */
     var presentSince: Long = now

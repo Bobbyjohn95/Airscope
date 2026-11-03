@@ -20,6 +20,11 @@ object Engine {
     val db = VendorDb()
     val geo = GeoTracker()
     val history = HistoryDb()
+    /** Names announced on the Wi-Fi network you're joined to (mDNS / SSDP), receive-only. */
+    val lan = LanDirectory()
+    private var lanListener: LanListener? = null
+    @Volatile var lanOn = true
+    private var lastLanMatch = 0L
     private var lastHistorySave = 0L
     private var lastHistoryTouch = 0L
 
@@ -156,6 +161,7 @@ object Engine {
         store.sessionStart = System.currentTimeMillis()
         store.log("SYS", "New scan session")
         scanner = SignalScanner(app, handler).also { it.start() }
+        syncLan()
         geo.alprEnabled = alprOn
         geo.start(app, handler)
         handler.removeCallbacks(tick)
@@ -169,9 +175,38 @@ object Engine {
         handler.removeCallbacks(tick)
         scanner?.stop()
         scanner = null
+        lanListener?.stop(); lanListener = null
         geo.stop()
         saveHistory()
         publish()
+    }
+
+    /** Engine thread: the LAN listener runs only while scanning and while it's switched on. */
+    private fun syncLan() {
+        val want = running && lanOn
+        if (want && lanListener == null) lanListener = LanListener(app, handler, lan).also { it.start() }
+        if (!want && lanListener != null) { lanListener?.stop(); lanListener = null }
+    }
+
+    fun setLan(on: Boolean) = post {
+        lanOn = on
+        syncLan()
+        Prefs.save(app)
+        publish()
+    }
+
+    fun lanStatus(): String = lan.status + (lanListener?.error?.let { " · $it" } ?: "") + " · ${lan.entries.size} known · ${lanListener?.packets ?: 0} packets"
+
+    /** Engine thread: a BLE device whose broadcast name also shows up as a hostname on your Wi-Fi gets that link. */
+    private fun matchLanNames(now: Long) {
+        if (now - lastLanMatch < 10_000 || lan.entries.isEmpty()) return
+        lastLanMatch = now
+        for (d in store.active(now)) {
+            if (d.name.isBlank()) continue
+            val e = lan.matching(d.name) ?: continue
+            d.lanNote = (e.host.ifBlank { e.title() }) + " (" + e.ip + ")" + (if (e.model.isNotBlank()) " · " + e.model else "")
+            if (d.owner.isBlank() && e.owner.isNotBlank()) d.owner = e.owner
+        }
     }
 
     fun setAlpr(on: Boolean) = post {
@@ -198,6 +233,8 @@ object Engine {
             scanner?.syncBle()
             updateAutoEnv(now)
             refreshSession(now)
+            store.linkRotated(now) // same device under a new random address: keep its history in one place
+            matchLanNames(now)
             for (d in store.rescore(now)) if (withinRadius(d, now) && d.priority >= 0) deviceAlert?.invoke(d)
             // Re-estimate map positions for devices with new GPS-tagged samples: least recently estimated
             // first, so a newly appeared device is never starved by busy older ones.

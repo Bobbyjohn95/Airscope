@@ -34,6 +34,9 @@
     <!-- Network: mapped ALPR data, GitHub updates, local iPhone web HUD -->
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <!-- Receive (never send) the Bonjour/UPnP names devices announce on the Wi-Fi you're joined to. Optional:
+         MORE -> "Names on your Wi-Fi" turns it off; scanning works without it. -->
+    <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />
 
     <!-- Self-updates from your GitHub releases -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
