@@ -1,0 +1,196 @@
+#!/usr/bin/env bash
+# Runs AirScope on an Android emulator the way a person would use it, takes screenshots, and fails
+# if the app crashes, freezes (ANR) or its scan service dies. Used by CI before a build is released,
+# so a broken build never auto-installs on the phone.
+#
+# usage: emulator_smoke.sh <AirScope.apk> <output dir>
+set -u
+APK="$1"
+OUT="$2"
+PKG=com.k.airscope
+mkdir -p "$OUT"
+SUMMARY="$OUT/summary.txt"
+: > "$SUMMARY"
+FAIL=0
+
+note() { echo "$*" | tee -a "$SUMMARY"; }
+shot() { adb exec-out screencap -p > "$OUT/$1.png" 2>/dev/null; note "screenshot $1"; }
+alive() { adb shell pidof "$PKG" >/dev/null 2>&1; }
+
+# Find a view by its text (exact, then "contains") in the UI hierarchy and tap its center.
+tap() {
+  local want="$1" mode="${2:-exact}" long="${3:-}"
+  adb shell uiautomator dump /sdcard/ui.xml >/dev/null 2>&1
+  adb pull /sdcard/ui.xml "$OUT/ui.xml" >/dev/null 2>&1
+  local xy
+  xy=$(python3 - "$OUT/ui.xml" "$want" "$mode" <<'EOF'
+import re, sys, xml.etree.ElementTree as ET
+path, want, mode = sys.argv[1:4]
+try:
+    root = ET.parse(path).getroot()
+except Exception:
+    sys.exit(0)
+for n in root.iter("node"):
+    t = n.get("text") or ""
+    if (mode == "exact" and t.strip() == want) or (mode == "contains" and want in t):
+        x1, y1, x2, y2 = map(int, re.findall(r"\d+", n.get("bounds")))
+        print((x1 + x2) // 2, (y1 + y2) // 2)
+        break
+EOF
+)
+  if [ -z "$xy" ]; then note "  (could not find \"$want\" on screen)"; return 1; fi
+  if [ -n "$long" ]; then
+    set -- $xy; adb shell input swipe "$1" "$2" "$1" "$2" 900
+  else
+    adb shell input tap $xy
+  fi
+  sleep 1.5
+}
+
+screen_text() {
+  adb shell uiautomator dump /sdcard/ui.xml >/dev/null 2>&1
+  adb pull /sdcard/ui.xml "$OUT/ui.xml" >/dev/null 2>&1
+  python3 -c "import sys,xml.etree.ElementTree as E; print('\n'.join(n.get('text') for n in E.parse(sys.argv[1]).getroot().iter('node') if n.get('text')))" "$OUT/ui.xml" 2>/dev/null
+}
+
+# GPS: lon lat (adb emu geo fix takes longitude first). Start near Dallas, GA.
+LAT0=33.9212
+LON0=-84.8410
+gps() { adb emu geo fix "$2" "$1" >/dev/null 2>&1; }
+
+# Walk a 30 m circle (~1.5 m/s) for N seconds
+walk() {
+  python3 - "$1" "$LAT0" "$LON0" <<'EOF' | while read -r la lo; do gps "$la" "$lo"; sleep 1; done
+import math, sys
+n, la0, lo0 = int(sys.argv[1]), float(sys.argv[2]), float(sys.argv[3])
+for t in range(n):
+    a = t / 20.0
+    x, y = 30 * math.sin(a), 30 * math.cos(a)
+    print("%.7f %.7f" % (la0 + y / 111320.0, lo0 + x / (111320.0 * math.cos(math.radians(la0)))))
+EOF
+}
+
+# Drive in a straight line at 31 m/s (~70 mph) for N seconds
+drive() {
+  python3 - "$1" "$LAT0" "$LON0" <<'EOF' | while read -r la lo; do gps "$la" "$lo"; sleep 1; done
+import math, sys
+n, la0, lo0 = int(sys.argv[1]), float(sys.argv[2]), float(sys.argv[3])
+for t in range(n):
+    d = 31.0 * t
+    x, y = d * math.sin(math.radians(70)), d * math.cos(math.radians(70))
+    print("%.7f %.7f" % (la0 + y / 111320.0, lo0 + x / (111320.0 * math.cos(math.radians(la0)))))
+EOF
+}
+
+note "== AirScope emulator smoke test =="
+adb shell getprop ro.build.version.release | sed 's/^/Android /' | tee -a "$SUMMARY"
+adb logcat -c
+adb install -r -g "$APK" | tee -a "$SUMMARY"
+for p in ACCESS_FINE_LOCATION ACCESS_COARSE_LOCATION BLUETOOTH_SCAN NEARBY_WIFI_DEVICES POST_NOTIFICATIONS; do
+  adb shell pm grant "$PKG" "android.permission.$p" >/dev/null 2>&1 || true
+done
+adb shell dumpsys deviceidle whitelist +"$PKG" >/dev/null 2>&1 || true
+adb shell appops set "$PKG" REQUEST_INSTALL_PACKAGES allow >/dev/null 2>&1 || true
+adb shell settings put secure location_mode 3 >/dev/null 2>&1 || true
+adb shell svc wifi enable >/dev/null 2>&1 || true
+gps "$LAT0" "$LON0"
+
+note "-- launch (first run shows the setup checklist)"
+adb shell am start -W -n "$PKG/.MainActivity" | grep -E "Status|TotalTime" | tee -a "$SUMMARY"
+sleep 6
+shot 01-setup-checklist
+screen_text > "$OUT/01-setup-checklist.txt"
+tap "Done"
+sleep 2
+shot 02-main-idle
+
+note "-- start scanning, walk a 30 m loop for 45 s"
+tap "START"
+walk 45
+shot 03-scanning-walking
+screen_text > "$OUT/03-scanning-walking.txt"
+
+note "-- drive at ~70 mph for 50 s"
+drive 25
+shot 04-highway-mid
+drive 25
+shot 05-highway
+screen_text > "$OUT/05-highway.txt"
+
+note "-- modes, 2D view, log"
+tap "POLICE/ALPR"; shot 06-mode-police
+tap "ALL"
+tap "3D"; sleep 2; shot 07-2d-view
+tap "2D"
+tap "LOG"; shot 08-log
+tap "RADAR"
+
+note "-- device details (long-press the first list row)"
+if tap "dBm" contains long; then sleep 1.5; shot 09-device-details; adb shell input keyevent 4; sleep 1; fi
+if tap "dBm" contains; then sleep 2; shot 10-tracking; fi
+
+note "-- updates screen + check (anonymous GitHub API)"
+if tap "MORE ▾"; then
+  if tap "Updates…"; then
+    tap "Check now"; sleep 8
+    shot 11-updates
+    screen_text > "$OUT/11-updates.txt"
+    grep -E "Result|Signed|one-time" "$OUT/11-updates.txt" | sed 's/^/  /' | tee -a "$SUMMARY"
+    tap "Close" || adb shell input keyevent 4
+  fi
+fi
+
+note "-- web HUD"
+tap "HUD"; sleep 3
+URL=$(screen_text | grep -oE "http://[0-9.]+:8787/\?k=[A-Za-z0-9_-]+" | head -1)
+shot 12-hud-dialog
+tap "OK" || adb shell input keyevent 4
+if [ -n "$URL" ]; then
+  KEY="${URL##*k=}"
+  adb forward tcp:8787 tcp:8787 >/dev/null
+  CODE=$(curl -s -o "$OUT/hud-state.json" -w "%{http_code}" "http://127.0.0.1:8787/api/state?k=$KEY")
+  BAD=$(curl -s -o /dev/null -w "%{http_code}" "http://127.0.0.1:8787/api/state?k=wrong")
+  PAGE=$(curl -s -o /dev/null -w "%{http_code}" "http://127.0.0.1:8787/?k=$KEY")
+  note "  HUD /api/state=$CODE  page=$PAGE  wrong-key=$BAD"
+  python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print('  HUD JSON ok:', len(d.get('devices',[])), 'devices, me =', d.get('me'))" "$OUT/hud-state.json" 2>&1 | tee -a "$SUMMARY"
+  [ "$CODE" = "200" ] && [ "$BAD" != "200" ] || { note "FAIL: HUD did not answer correctly"; FAIL=1; }
+else
+  note "  (no HUD URL shown: emulator Wi-Fi may be off)"
+fi
+tap "HUD"
+
+note "-- screen off for 40 s while moving (scan must keep running)"
+adb shell input keyevent 26
+walk 40
+adb shell input keyevent 224
+sleep 2
+adb shell wm dismiss-keyguard >/dev/null 2>&1 || true
+adb shell input keyevent 82 >/dev/null 2>&1 || true
+sleep 2
+shot 13-after-screen-off
+if adb shell dumpsys activity services "$PKG" | grep -q "ScanService"; then note "  scan service still running ✓"; else note "FAIL: scan service died with the screen off"; FAIL=1; fi
+
+note "-- stop scanning"
+tap "STOP"
+sleep 2
+shot 14-stopped
+
+note "== results =="
+adb logcat -d -v time > "$OUT/logcat-full.txt"
+adb logcat -d -b crash -v time > "$OUT/logcat-crash.txt"
+adb shell dumpsys gfxinfo "$PKG" > "$OUT/gfxinfo.txt"
+adb shell dumpsys meminfo "$PKG" > "$OUT/meminfo.txt"
+grep -E "Total frames rendered|Janky frames|50th percentile|90th percentile|99th percentile" "$OUT/gfxinfo.txt" | head -5 | sed 's/^/  /' | tee -a "$SUMMARY"
+grep -E "TOTAL PSS|TOTAL:" "$OUT/meminfo.txt" | head -1 | sed 's/^/  memory /' | tee -a "$SUMMARY"
+grep -E "AirScope|airscope" "$OUT/logcat-full.txt" | grep -iE " W/| E/" | grep -v "uiautomator" > "$OUT/logcat-app-warnings.txt"
+note "  app warnings/errors in log: $(wc -l < "$OUT/logcat-app-warnings.txt")"
+
+if grep -q "Process: $PKG" "$OUT/logcat-crash.txt" || grep -A2 "FATAL EXCEPTION" "$OUT/logcat-full.txt" | grep -q "$PKG"; then
+  note "FAIL: AirScope crashed"
+  grep -A30 "FATAL EXCEPTION" "$OUT/logcat-full.txt" | head -60 >> "$SUMMARY"
+  FAIL=1
+fi
+if grep -q "ANR in $PKG" "$OUT/logcat-full.txt"; then note "FAIL: AirScope froze (ANR)"; FAIL=1; fi
+if ! alive; then note "FAIL: AirScope is not running at the end"; FAIL=1; fi
+[ "$FAIL" = 0 ] && note "PASS: no crashes, no freezes, scan survived screen-off"
+exit $FAIL
