@@ -4,6 +4,15 @@ A personal signal-observation app for the Pixel 8 Pro (Android 10+, GrapheneOS-f
 It **only listens**. It reads Wi-Fi beacons and Bluetooth LE advertisements that devices already
 broadcast. It never connects to, jams, deauths or transmits to anything.
 
+## What's new in v2.6.1: dots stay on the map
+- **Dots that kept disappearing:** a located device's marker was being taken off the map while its row stayed in
+  the list, by a single "it's moving" reading (a wall or a passing truck weakening the signal) or because the hold
+  ran out while the device was still right there. Now: a device known to stay put (Wi-Fi networks, IoT gear) keeps
+  its dot as long as it's still heard and you're standing still, and for 90 s otherwise; one odd reading no longer
+  counts, only a change that persists. Phones and other things that can walk off still lose their old spot after
+  30 s (the honest answer: their old spot goes stale). Placement accuracy is unchanged.
+- The map rests behind dialogs (1 frame/s) so a search can't be starved by a busy map.
+
 ## What's new in v2.6: scan radius that behaves, priorities, search and watch rules
 - **Scan radius fixed:** devices near the edge no longer blink in and out (a device must be clearly outside to
   leave and clearly inside to return), and a device you're tracking never vanishes: outside the radius it stays in the
