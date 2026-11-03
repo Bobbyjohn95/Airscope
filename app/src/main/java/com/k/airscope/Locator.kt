@@ -51,9 +51,17 @@ class LocTrack {
     var lastGoodAt = 0L
     /** When the device was last heard at all (ms). */
     var lastHeardAt = 0L
-    /** Counts new measurement spots (not repeats at the same spot); frozen copy taken at the last good fix. */
+    /** Counts measurements taken from a new place (not repeats where you stand); copy taken at the last good fix. */
     var spotSeq = 0
     var spotSeqAtGood = -1
+    /** Where the last measurement was taken (local m), to tell a new place from the same one. */
+    var lastSpotX = Double.NaN
+    var lastSpotY = Double.NaN
+    /** Whether the fit uses only recent readings (devices that can move): no long holds for those. */
+    var windowed = false
+    /** The latest raw fit (before smoothing / holding), for callers that weigh it against the other candidate. */
+    var fitLat = 0.0
+    var fitLon = 0.0
     /** Learned signal level at 1 m (dBm) once the fit is good; null until then. */
     var p0: Double? = null
     var ambiguous = false
@@ -66,8 +74,9 @@ class LocTrack {
     var estAt = 0L
     /** The readings only make sense if the device itself was moving: there's no fixed spot to show. */
     var moving = false
-    /** When "moving" was first concluded for a device that was on the map (0 = not currently). */
+    /** When "moving" was first concluded for a device that was on the map (0 = not currently), and last seen. */
     var movingSince = 0L
+    var lastMovingAt = 0L
     /** Recent estimates (time ms, x, y, error m), for checking that a device that can move stayed put. */
     val history = ArrayDeque<DoubleArray>()
 }
@@ -102,6 +111,8 @@ object Locator {
     private const val HOLD_MS = 30_000L
     /** ...and while the device is still being heard: the spot was good and nothing says it moved. */
     private const val HOLD_HEARD_MS = 90_000L
+    /** ...and while you have not moved since the good fix either (nothing new to learn from), up to this. */
+    private const val HOLD_STILL_MS = 10 * 60_000L
     private const val HEARD_RECENTLY_MS = 20_000L
     /**
      * A device that is on the map has to look "moving" for this long before its marker is taken down.
@@ -109,11 +120,13 @@ object Locator {
      * a device that really moves keeps looking that way.
      */
     private const val MOVING_CONFIRM_MS = 12_000L
+    /** Moving verdicts further apart than this are separate events, not one persisting one. */
+    private const val MOVING_LINK_MS = 30_000L
 
     fun add(tr: LocTrack, lat: Double, lon: Double, rssi: Double, t: Long, gpsErr: Double = 4.0, env: Env = Env.INDOOR) {
         val p = tr.proj ?: LocalProj(lat, lon).also { tr.proj = it }
         val x = p.x(lon); val y = p.y(lat)
-        tr.lastHeardAt = t
+        heardAt(tr, x, y, t)
         val last = tr.obs.lastOrNull { it.rttM == null }
         if (last != null && hypot(x - last.x, y - last.y) < SAME_SPOT_M && t - last.t < 20_000 &&
             last.pathN == env.n && last.loss == env.extraLoss
@@ -125,7 +138,6 @@ object Locator {
             return
         }
         tr.obs += Obs(x, y, rssi, 1, t, gpsErr, pathN = env.n, loss = env.extraLoss)
-        tr.spotSeq++
         if (tr.obs.size > MAX_OBS) prune(tr.obs)
         tr.dirty = true
     }
@@ -133,11 +145,18 @@ object Locator {
     /** A measured Wi-Fi RTT distance from a GPS position. */
     fun addRtt(tr: LocTrack, lat: Double, lon: Double, meters: Double, std: Double, t: Long, gpsErr: Double) {
         val p = tr.proj ?: LocalProj(lat, lon).also { tr.proj = it }
-        tr.lastHeardAt = t
+        heardAt(tr, p.x(lon), p.y(lat), t)
         tr.obs += Obs(p.x(lon), p.y(lat), Double.NaN, 1, t, gpsErr, meters, std)
-        tr.spotSeq++
         if (tr.obs.size > MAX_OBS) prune(tr.obs)
         tr.dirty = true
+    }
+
+    /** Note a reading: when it was taken and whether from a new place (more than a couple of metres away). */
+    private fun heardAt(tr: LocTrack, x: Double, y: Double, t: Long) {
+        tr.lastHeardAt = t
+        if (tr.lastSpotX.isNaN() || hypot(x - tr.lastSpotX, y - tr.lastSpotY) >= SAME_SPOT_M) {
+            tr.spotSeq++; tr.lastSpotX = x; tr.lastSpotY = y
+        }
     }
 
     /** Drop the sample that adds the least spatial information, keeping the newest few. */
@@ -172,6 +191,7 @@ object Locator {
         tr.estAt = now
         // Results from an older fit must not survive an early return below
         tr.ambiguous = false; tr.altLat = null; tr.altLon = null; tr.moving = false
+        tr.windowed = windowMs != null
         val p = tr.proj ?: return
         val o = if (windowMs == null) tr.obs else tr.obs.filter { now - it.t <= windowMs }
         tr.usedObs = o.size
@@ -267,6 +287,7 @@ object Locator {
         tr.p0 = if (ok && tr.errM < 25 && rssiObs.size >= 6) best.p0 else null
         val rawLat = p.lat(best.y); val rawLon = p.lon(best.x)
         tr.estLat = rawLat; tr.estLon = rawLon
+        tr.fitLat = rawLat; tr.fitLon = rawLon
         settle(tr, ok, rawLat, rawLon, tr.errM, now)
     }
 
@@ -278,10 +299,14 @@ object Locator {
     fun settlePublic(tr: LocTrack, ok: Boolean, lat: Double, lon: Double, err: Double, now: Long) = settle(tr, ok, lat, lon, err, now)
 
     private fun settle(tr: LocTrack, ok: Boolean, lat: Double, lon: Double, err: Double, now: Long) {
-        // "Moving" only cancels the hold once it has persisted; a one-off verdict is treated as a poor estimate
-        val movingNow = tr.moving && tr.located
-        if (!movingNow) tr.movingSince = 0L
-        else if (tr.movingSince == 0L) tr.movingSince = now
+        // "Moving" only cancels the hold once it has persisted; a one-off verdict is treated as a poor estimate.
+        // Verdicts count as one persisting event while they come at most MOVING_LINK_MS apart (estimates in
+        // between may say nothing at all, e.g. too few readings); a good fix clears it.
+        if (tr.moving && tr.located) {
+            if (tr.movingSince == 0L || now - tr.lastMovingAt > MOVING_LINK_MS) tr.movingSince = now
+            tr.lastMovingAt = now
+        }
+        if (ok || !tr.located) tr.movingSince = 0L
         val movingConfirmed = tr.moving && (!tr.located || now - tr.movingSince >= MOVING_CONFIRM_MS)
         if (ok) {
             if (!tr.located || tr.shownSince == 0L) {
@@ -309,17 +334,19 @@ object Locator {
     }
 
     /**
-     * How long a good spot survives poor estimates: 30 s, or 90 s while the device is still being heard and the
-     * latest (poor) fit does not land somewhere else entirely. err <= 0 means "no fit at all" (too few readings).
-     * While you stand still nothing new is learned about where it is, so a spot that was good stays as long as
-     * the device is heard (a persistent "it moved" verdict still takes it down).
+     * How long a good spot survives poor estimates. Devices that can move (phones, wearables, trackers, cars:
+     * fitted on recent readings only) get 30 s, full stop: their old spot goes stale. Fixed gear gets 90 s while
+     * it is still being heard and the latest (poor) fit does not land somewhere else entirely, and up to 10 min
+     * when you have not moved since the good fix either: standing still, nothing new is learned about where it
+     * is, so a persistent "it moved" verdict is the only honest reason to take it down.
+     * err <= 0 means "no fit at all" (too few readings).
      */
     private fun holdMs(tr: LocTrack, lat: Double, lon: Double, err: Double, now: Long): Long {
-        if (now - tr.lastHeardAt >= HEARD_RECENTLY_MS) return HOLD_MS
+        if (tr.windowed || now - tr.lastHeardAt >= HEARD_RECENTLY_MS) return HOLD_MS
         // A fit that found a second candidate spot is a reason to doubt the shown one, not to keep it
         val agrees = err <= 0.0 || (!tr.ambiguous && err <= 2 * MAX_OK_ERR && Geo.distanceM(tr.shownLat, tr.shownLon, lat, lon) <= tr.shownErr)
         if (!agrees) return HOLD_MS
-        return if (tr.spotSeq == tr.spotSeqAtGood) Long.MAX_VALUE else HOLD_HEARD_MS
+        return if (tr.spotSeq == tr.spotSeqAtGood) HOLD_STILL_MS else HOLD_HEARD_MS
     }
 
     /** Minor/major spread of the measurement spots: ~0 for a straight line, ~1 for a loop. */

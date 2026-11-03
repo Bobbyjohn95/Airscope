@@ -235,14 +235,17 @@ object Engine {
         Locator.estimate(tr, prior, sigma, env, now, if (d.category in MOBILE) 120_000L else null)
         d.sideFromMap = false
         // Two equally good spots? Wi-Fi gear and IoT devices sit inside buildings: pick the side with one.
+        // (Compare the fresh fit, not the spot being held on the map from an earlier good fix.)
         if (tr.ambiguous && d.category in FIXED && tr.altLat != null) {
-            val a = geo.buildingAt(tr.estLat, tr.estLon, 4.0)
+            val a = geo.buildingAt(tr.fitLat, tr.fitLon, 4.0)
             val b = geo.buildingAt(tr.altLat!!, tr.altLon!!, 4.0)
             if ((a != null) != (b != null)) {
-                if (b != null) { val la = tr.estLat; val lo = tr.estLon; tr.estLat = tr.altLat!!; tr.estLon = tr.altLon!!; tr.altLat = la; tr.altLon = lo }
+                var la = tr.fitLat; var lo = tr.fitLon
+                if (b != null) { la = tr.altLat!!; lo = tr.altLon!!; tr.altLat = tr.fitLat; tr.altLon = tr.fitLon }
                 val good = tr.rawErrM <= 45
                 tr.ambiguous = !good
-                Locator.settlePublic(tr, good, tr.estLat, tr.estLon, tr.rawErrM, now)
+                tr.estLat = la; tr.estLon = lo // the side with the building is the first candidate shown
+                Locator.settlePublic(tr, good, la, lo, tr.rawErrM, now)
                 d.sideFromMap = tr.located
             }
         }
