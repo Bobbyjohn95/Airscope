@@ -17,9 +17,24 @@ note() { echo "$*" | tee -a "$SUMMARY"; }
 shot() { clear_anr_dialogs; adb exec-out screencap -p > "$OUT/$1.png" 2>/dev/null; note "screenshot $1"; }
 alive() { adb shell pidof "$PKG" >/dev/null 2>&1; }
 
+# uiautomator waits for the screen to go idle; the map redraws constantly, so a dump sometimes fails
+# ("could not get idle state") or leaves a truncated file. Retry a few times, never keep a stale or
+# broken dump, and record every failure so the report says why a step was skipped.
 dump_ui() {
-  adb shell uiautomator dump /sdcard/ui.xml >/dev/null 2>&1
-  adb pull /sdcard/ui.xml "$OUT/ui.xml" >/dev/null 2>&1
+  local try err
+  for try in 1 2 3 4; do
+    adb shell rm -f /sdcard/ui.xml >/dev/null 2>&1
+    err=$(adb shell uiautomator dump /sdcard/ui.xml 2>&1)
+    rm -f "$OUT/ui.xml"
+    adb pull /sdcard/ui.xml "$OUT/ui.xml" >/dev/null 2>&1
+    if python3 -c "import sys,xml.etree.ElementTree as E; E.parse(sys.argv[1])" "$OUT/ui.xml" 2>/dev/null; then
+      [ "$try" -gt 1 ] && echo "ui dump ok after $try tries: $err" >> "$OUT/ui-dump-errors.txt"
+      return 0
+    fi
+    echo "ui dump try $try failed: $err" >> "$OUT/ui-dump-errors.txt"
+    sleep 1.5
+  done
+  return 1
 }
 
 # Another app's "isn't responding" dialog (the emulator's own apps are slow) blocks taps: close it.
@@ -46,7 +61,7 @@ EOF
 tap() {
   local want="$1" mode="${2:-exact}" long="${3:-}"
   clear_anr_dialogs
-  dump_ui
+  dump_ui || { note "  (ui dump failed, could not tap \"$want\": see ui-dump-errors.txt)"; return 1; }
   local xy
   xy=$(python3 - "$OUT/ui.xml" "$want" "$mode" <<'EOF'
 import re, sys, xml.etree.ElementTree as ET
@@ -73,8 +88,7 @@ EOF
 }
 
 screen_text() {
-  adb shell uiautomator dump /sdcard/ui.xml >/dev/null 2>&1
-  adb pull /sdcard/ui.xml "$OUT/ui.xml" >/dev/null 2>&1
+  dump_ui || return 0
   python3 -c "import sys,xml.etree.ElementTree as E; print('\n'.join(n.get('text') for n in E.parse(sys.argv[1]).getroot().iter('node') if n.get('text')))" "$OUT/ui.xml" 2>/dev/null
 }
 
@@ -261,6 +275,7 @@ grep -E "Total frames rendered|Janky frames|50th percentile|90th percentile|99th
 grep -E "TOTAL PSS|TOTAL:" "$OUT/meminfo.txt" | head -1 | sed 's/^/  memory /' | tee -a "$SUMMARY"
 grep -E "AirScope|airscope" "$OUT/logcat-full.txt" | grep -iE " W/| E/" | grep -v "uiautomator" > "$OUT/logcat-app-warnings.txt"
 note "  app warnings/errors in log: $(wc -l < "$OUT/logcat-app-warnings.txt")"
+[ -f "$OUT/ui-dump-errors.txt" ] && note "  ui dump retries/failures: $(wc -l < "$OUT/ui-dump-errors.txt") (ui-dump-errors.txt)"
 
 if grep -q "Process: $PKG" "$OUT/logcat-crash.txt" || grep -A2 "FATAL EXCEPTION" "$OUT/logcat-full.txt" | grep -q "$PKG"; then
   note "FAIL: AirScope crashed"
