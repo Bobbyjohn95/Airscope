@@ -233,6 +233,9 @@ class SignalScanner(ctx: Context, private val handler: Handler) {
         if (c.bleType.isNotEmpty()) d.bleType = c.bleType
         d.refAt1m = c.ref
         d.refSource = c.refSource
+        // Who the device says it belongs to ("Sarah's AirPods", hotspot "Mike-iPhone", WPS name "Johns-MacBook")
+        d.owner = Names.owner(d.name) ?: c.facts["WPS device name"]?.let(Names::ownerFromHostname)
+            ?: c.facts["Swift Pair name"]?.let(Names::owner) ?: d.owner
     }
 
     private fun readWifi() {

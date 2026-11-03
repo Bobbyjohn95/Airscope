@@ -51,6 +51,8 @@ class DeviceView(
     /** Separate appearances this scan session (2+ = it came back) and how far apart they began (m). */
     val sightings: Int = 1,
     val sightSpreadM: Double = 0.0,
+    /** Person the device's own name says it belongs to, else "". */
+    val owner: String = "",
 ) {
     /** "↻3" when it came back this session, else "". */
     val againMark: String get() = if (sightings >= 2) "↻$sightings" else ""
@@ -129,6 +131,9 @@ class Snapshot(
                     if (d.sightSpreadM >= 300) " · first spots ${fmtDist(d.sightSpreadM)} m apart" else ""
             }
             if (d.followM > 50) facts += "Moved with you" to "${fmtDist(d.followM)} m"
+            if (d.owner.isNotBlank()) facts += "Owner" to "${d.owner} (that's what the device's own name says: nothing was looked up)"
+            if (d.lanNote.isNotBlank()) facts += "On your Wi-Fi" to d.lanNote
+            if (d.aliases.isNotEmpty()) facts += "Earlier addresses" to d.aliases.takeLast(4).joinToString(", ") + " (same name and maker: linked across its address changes)"
             when {
                 d.selfLat != null -> facts += "Map position" to "reported by the device (GPS)"
                 lat != null -> facts += "Map position" to String.format(java.util.Locale.US, "%.5f, %.5f ±%d m · %d spots over %d m",
@@ -147,7 +152,7 @@ class Snapshot(
                 flags = d.flags, facts = facts,
                 ageSec = (now - d.firstSeen) / 1000, lastSec = (now - d.lastSeen) / 1000, trusted = d.trusted,
                 inRadius = d.inRadius, priority = d.priority,
-                searchText = (listOf(d.id, d.name, d.vendor, d.label, d.category.label, d.category.short, d.bleType) + d.facts.values + d.flags)
+                searchText = (listOf(d.id, d.name, d.vendor, d.label, d.category.label, d.category.short, d.bleType, d.owner) + d.aliases + d.facts.values + d.flags)
                     .joinToString("\n").lowercase(java.util.Locale.US),
                 angle = hashAngle(d.key), bearing = bearing, lat = lat, lon = lon, errM = err,
                 spots = tr.obs.size, spreadM = tr.spreadM,
@@ -156,6 +161,7 @@ class Snapshot(
                 followM = d.followM,
                 moving = tr.moving,
                 sightings = d.sightings.coerceAtLeast(1), sightSpreadM = d.sightSpreadM,
+                owner = d.owner,
             )
         }
 

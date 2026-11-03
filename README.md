@@ -4,6 +4,24 @@ A personal signal-observation app for the Pixel 8 Pro (Android 10+, GrapheneOS-f
 It **only listens**. It reads Wi-Fi beacons and Bluetooth LE advertisements that devices already
 broadcast. It never connects to, jams, deauths or transmits to anything.
 
+## What's new in v2.7: who a device belongs to, one device across address changes, names on your Wi-Fi
+- **Owner names:** when a device's own name says whose it is ("Sarah's AirPods", "Mike-iPhone", "iPhone de Juan"), the
+  list shows **👤 Sarah** and the details say so. It is only what the owner typed into their device: nothing is looked
+  up anywhere, business names ("McDonald's WiFi") are ignored, and a device named "Office" stays unknown. Search with
+  `owner:sarah` (or `owner:` for anything with a named owner) and WATCH it like any other term.
+- **One device, even when its address changes:** phones, earbuds and hotspots change their random Bluetooth/Wi-Fi
+  address every so often; each change used to look like a brand-new device and reset "stayed with you for 40 min".
+  Now a device that goes quiet and is replaced within 90 s by exactly one new address with the same name, maker and type
+  is kept as one device: presence time, sightings, watch/ignore and "mine" carry over, and the old addresses are listed
+  under "Earlier addresses". Two devices with the same name nearby are never merged.
+- **Names on your Wi-Fi (MORE → On your Wi-Fi):** while the phone is on a Wi-Fi network, AirScope receives the
+  Bonjour/UPnP announcements devices on that network send anyway ("Johns-MacBook-Pro", "Living Room TV", a printer, a
+  Sonos) and lists them with their model and owner. **Receive-only:** it joins the two multicast groups (the standard way
+  to hear these) and never sends a query or connects to anything. Needs Android's multicast permission, which is granted
+  at install with no prompt; turn it off in that dialog if you don't want it. A Bluetooth device whose name matches a
+  name on your Wi-Fi gets an "On your Wi-Fi" line in its details. Works only on the network you're joined to; shows
+  nothing on mobile data.
+
 ## What's new in v2.6: scan radius that behaves, priorities, search and watch rules
 - **Scan radius fixed:** devices near the edge no longer blink in and out (a device must be clearly outside to
   leave and clearly inside to return), and a device you're tracking never vanishes: outside the radius it stays in the

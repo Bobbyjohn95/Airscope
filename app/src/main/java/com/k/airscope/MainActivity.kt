@@ -61,13 +61,14 @@ class MainActivity : Activity() {
 
     private fun matchesQuery(d: DeviceView, q: String): Boolean = q.split(' ').filter { it.isNotBlank() }.all { term ->
         if (term.startsWith("cat:")) d.category.name.lowercase(Locale.US).startsWith(term.removePrefix("cat:")) || d.category.short.lowercase(Locale.US).startsWith(term.removePrefix("cat:"))
+        else if (term.startsWith("owner:")) d.owner.lowercase(Locale.US).let { it.isNotEmpty() && (term.length == 6 || it.contains(term.removePrefix("owner:"))) }
         else d.searchText.contains(term) || d.title.lowercase(Locale.US).contains(term)
     }
 
     /** Search box: filters list and map live; "Watch" saves the term as a rule that alerts on any match. */
     private fun showSearch() {
         val input = EditText(this).apply {
-            setText(searchQuery); hint = "name, maker, MAC, keyword, cat:tracker"; setHintTextColor(Color.GRAY)
+            setText(searchQuery); hint = "name, maker, MAC, owner:sarah, cat:tracker"; setHintTextColor(Color.GRAY)
             textSize = 14f; typeface = Typeface.MONOSPACE; isSingleLine = true; setSelection(text.length)
         }
         val rules = Engine.store.watchRules
@@ -274,6 +275,11 @@ class MainActivity : Activity() {
             startActivity(Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:$packageName")))
         }
         list += Check(
+            "Optional: names on your Wi-Fi", Engine.lanOn,
+            "Receives the Bonjour/UPnP names devices announce on the Wi-Fi you're joined to (\"Johns-MacBook\", \"Living Room TV\"). " +
+                "Receive-only, no new prompt: Android's multicast permission is granted at install. MORE → On your Wi-Fi turns it off.",
+        ) { Engine.setLan(true) }
+        list += Check(
             "Optional: Wi-Fi scan throttling off", false,
             "Developer options → Networking → Wi-Fi scan throttling → off. Otherwise Wi-Fi updates ~every 30 s.",
         ) {
@@ -445,6 +451,7 @@ class MainActivity : Activity() {
         pm.menu.add(0, 4, 0, "Export CSV")
         pm.menu.add(0, 5, 0, "Clear session")
         pm.menu.add(0, 7, 0, "Session log (seen again)")
+        pm.menu.add(0, 13, 0, "On your Wi-Fi (${Engine.lan.active(System.currentTimeMillis()).size} named)…")
         pm.menu.add(0, 11, 0, "Watch rules…")
         pm.menu.add(0, 12, 0, "Alerts: " + arrayOf("critical only", "normal", "everything")[Heuristics.alertLevel] + " (tap to change)")
         pm.menu.add(0, 8, 0, "Diagnostics")
@@ -465,10 +472,39 @@ class MainActivity : Activity() {
                 10 -> exitApp()
                 11 -> showWatchRules()
                 12 -> cycleAlerts()
+                13 -> showLan()
             }
             true
         }
         pm.show()
+    }
+
+    /** Devices announcing themselves (Bonjour / UPnP) on the Wi-Fi network the phone is joined to. */
+    private fun showLan() {
+        val now = System.currentTimeMillis()
+        val rows = Engine.lan.active(now)
+        val tf = SimpleDateFormat("HH:mm", Locale.US)
+        val sb = StringBuilder()
+        sb.append(if (Engine.lanOn) "Listening: ${Engine.lanStatus()}\n" else "OFF (tap the button below to turn it on)\n")
+        sb.append("These are names devices on your current Wi-Fi network announce themselves (Bonjour / UPnP). " +
+            "AirScope only receives them; it never asks or connects. Nothing shows on mobile data or on a network that blocks multicast.\n\n")
+        if (rows.isEmpty()) sb.append(if (Engine.lanOn) "Nothing heard yet. Announcements are occasional: give it a few minutes on a home Wi-Fi.\n" else "")
+        for (e in rows.take(200)) {
+            sb.append("• ").append(e.title().take(40))
+            if (e.owner.isNotBlank()) sb.append("  👤 ").append(e.owner)
+            sb.append('\n')
+            val what = e.what()
+            sb.append("    ").append(e.ip)
+            if (e.host.isNotBlank() && e.host != e.title()) sb.append(" · ").append(e.host.take(32))
+            if (what.isNotBlank()) sb.append("\n    ").append(what.take(90))
+            sb.append("\n    heard ").append(tf.format(Date(e.firstSeen))).append("–").append(tf.format(Date(e.lastSeen))).append('\n')
+        }
+        val tv = text(sb.toString(), 11.5f, Color.LTGRAY).apply { setPadding(dp(16), dp(8), dp(16), dp(8)); setTextIsSelectable(true) }
+        AlertDialog.Builder(this).setTitle("On your Wi-Fi (${rows.size})")
+            .setView(ScrollView(this).apply { addView(tv) })
+            .setPositiveButton("Close", null)
+            .setNeutralButton(if (Engine.lanOn) "Turn off" else "Turn on") { _, _ -> Engine.setLan(!Engine.lanOn); toast(if (Engine.lanOn) "Wi-Fi names off" else "Wi-Fi names on (while scanning)") }
+            .show()
     }
 
     /** Every device seen since START, ones that came back (↻) first. */
@@ -571,6 +607,7 @@ class MainActivity : Activity() {
             }
         }
         append("GrapheneOS: the per-app \"Network\" permission must be on (App info → Permissions).\n")
+        append("Names on your Wi-Fi (mDNS/SSDP, receive-only): ").append(if (Engine.lanOn) Engine.lanStatus() else "off").append('\n')
 
         append("\n== Street map ==\n")
         append("Status: ").append(s.mapStatus.ifEmpty { "not started (tap START)" }).append('\n')
@@ -775,6 +812,7 @@ class MainActivity : Activity() {
             appendLine("Type: ${d.category.label}")
             if (d.vendor.isNotBlank()) appendLine("Maker: ${d.vendor}")
             if (d.name.isNotBlank()) appendLine("Broadcast name: ${d.name}")
+            if (d.owner.isNotBlank()) appendLine("Owner (by its name): ${d.owner}")
             if (d.kind != Kind.MAP) appendLine("Signal: ${d.rssi} dBm now · ${d.avg} dBm smoothed")
             appendLine("Distance: ~${fmtDist(d.dist)} m (likely ${fmtDist(d.lo)}–${fmtDist(d.hi)} m)")
             appendLine("Method: ${d.distSrc}")
@@ -945,8 +983,9 @@ class MainActivity : Activity() {
         val again = if (d.againMark.isNotEmpty()) "${d.againMark} " else ""
         val pri = if (d.priority > 0) "★ " else if (d.priority < 0) "🔇 " else ""
         val out = if (!d.inRadius) " (outside radius)" else ""
+        val who = if (d.owner.isNotBlank()) " · 👤 ${d.owner.take(16)}" else ""
         return "$icon $pri$again${d.title.take(34)}$out\n   ${sig.padEnd(7)} ~${fmtDist(d.dist)}m (${fmtDist(d.lo)}–${fmtDist(d.hi)})  " +
-            "${d.category.short}${if (d.vendor.isNotBlank() && !d.title.contains(d.vendor)) " · " + d.vendor.take(18) else ""}  [${d.score}]$flags"
+            "${d.category.short}${if (d.vendor.isNotBlank() && !d.title.contains(d.vendor)) " · " + d.vendor.take(18) else ""}$who  [${d.score}]$flags"
     }
 
     private inner class RowAdapter : BaseAdapter() {

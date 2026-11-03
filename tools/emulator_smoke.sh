@@ -216,6 +216,15 @@ fi
 if tap "MORE ▾"; then
   if tap "Session log (seen again)"; then shot 11d-session-log; tap "Close" || adb shell input keyevent 4; fi
 fi
+note "-- names on your Wi-Fi (mDNS/SSDP receive-only; the emulator network has none, the dialog must still open)"
+if tap "MORE ▾"; then
+  if tap "On your Wi-Fi" contains; then
+    sleep 1; shot 11e-lan-names
+    screen_text > "$OUT/11e-lan-names.txt"
+    grep -E "Listening|OFF|Nothing heard|can't listen" "$OUT/11e-lan-names.txt" | head -2 | sed 's/^/  /' | tee -a "$SUMMARY"
+    tap "Close" || adb shell input keyevent 4
+  fi
+fi
 
 note "-- web HUD"
 tap "HUD"; sleep 3
