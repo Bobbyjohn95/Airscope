@@ -1,6 +1,8 @@
 package com.k.airscope
 
 import kotlin.math.abs
+import kotlin.math.atan2
+import kotlin.math.pow
 import kotlin.math.cos
 import kotlin.math.hypot
 import kotlin.math.ln
@@ -24,7 +26,12 @@ class LocalProj(val lat0: Double, val lon0: Double) {
  * One measurement taken at a GPS position (local meters).
  * RSSI samples at the same spot are averaged; rttM is set for a Wi-Fi RTT (measured) distance.
  */
-class Obs(val x: Double, val y: Double, var rssi: Double, var n: Int, var t: Long, val gpsErr: Double, val rttM: Double? = null, val rttStd: Double = 0.0)
+class Obs(
+    val x: Double, val y: Double, var rssi: Double, var n: Int, var t: Long, val gpsErr: Double,
+    val rttM: Double? = null, val rttStd: Double = 0.0,
+    /** Path-loss exponent and extra loss (car body) in effect when this was measured. */
+    val pathN: Double = 2.6, val loss: Double = 0.0,
+)
 
 /** Everything we know about where a device is. */
 class LocTrack {
@@ -46,6 +53,10 @@ class LocTrack {
     var usedObs = 0
     /** When the position was last estimated (ms), so every device gets its turn. */
     var estAt = 0L
+    /** The readings only make sense if the device itself was moving: there's no fixed spot to show. */
+    var moving = false
+    /** Recent estimates (time ms, x, y, error m), for checking that a device that can move stayed put. */
+    val history = ArrayDeque<DoubleArray>()
 }
 
 /**
@@ -62,19 +73,33 @@ object Locator {
     const val MAX_OBS = 80
     private const val SAME_SPOT_M = 2.5
     private const val LN10 = 2.302585092994046
+    /** Readings closer than this share the same shadowing (count as one independent reading). */
+    private const val CORR_M = 8L
+    /** Typical slow shadowing + fading spread of a single averaged reading (dB). */
+    private const val SHADOW_DB = 5.5
+    /** How far a device's path-loss exponent may differ from the environment's (1 sigma). */
+    private const val DN_SIGMA = 0.35
+    /** Measured: the raw ~95% radius still comes out too small with real-world shadowing; this makes it honest. */
+    private const val CALIBRATION = 1.7
+    /** Below this error radius a fix is always good enough to show. */
+    private const val MIN_OK_ERR = 25.0
+    /** Above this a "spot" isn't useful on a street map: show distance only. */
+    private const val MAX_OK_ERR = 45.0
 
-    fun add(tr: LocTrack, lat: Double, lon: Double, rssi: Double, t: Long, gpsErr: Double = 4.0) {
+    fun add(tr: LocTrack, lat: Double, lon: Double, rssi: Double, t: Long, gpsErr: Double = 4.0, env: Env = Env.INDOOR) {
         val p = tr.proj ?: LocalProj(lat, lon).also { tr.proj = it }
         val x = p.x(lon); val y = p.y(lat)
         val last = tr.obs.lastOrNull { it.rttM == null }
-        if (last != null && hypot(x - last.x, y - last.y) < SAME_SPOT_M && t - last.t < 20_000) {
+        if (last != null && hypot(x - last.x, y - last.y) < SAME_SPOT_M && t - last.t < 20_000 &&
+            last.pathN == env.n && last.loss == env.extraLoss
+        ) {
             last.rssi = (last.rssi * last.n + rssi) / (last.n + 1)
             last.n = min(last.n + 1, 30)
             last.t = t
             tr.dirty = true
             return
         }
-        tr.obs += Obs(x, y, rssi, 1, t, gpsErr)
+        tr.obs += Obs(x, y, rssi, 1, t, gpsErr, pathN = env.n, loss = env.extraLoss)
         if (tr.obs.size > MAX_OBS) prune(tr.obs)
         tr.dirty = true
     }
@@ -99,17 +124,26 @@ object Locator {
         if (worst >= 0) o.removeAt(worst)
     }
 
-    private class Fit(val x: Double, val y: Double, val p0: Double, val cost: Double, val a: DoubleArray, val m: Int)
+    /** cxx/cyy/cxy: position covariance (unscaled). dn: learned path-loss offset. vx/vy: device velocity (motion model). */
+    private class Fit(
+        val x: Double, val y: Double, val p0: Double, val cost: Double,
+        val cxx: Double, val cyy: Double, val cxy: Double, val m: Int,
+        val dn: Double = 0.0, val vx: Double = 0.0, val vy: Double = 0.0,
+    )
+
+    /** Result of fitting one set of readings: best spot, its ~95% error radius, and a rival spot if one fits as well. */
+    private class Solved(val best: Fit, val err: Double, val rival: Fit?, val scale: Double)
 
     /**
      * @param p0Prior expected RSSI at 1 m; @param p0Sigma how sure we are of it (dB)
+     * @param env kept for callers; each reading carries the distance model that applied when it was taken
      * @param windowMs only use measurements newer than this (devices that move), or null for all
      */
     fun estimate(tr: LocTrack, p0Prior: Double, p0Sigma: Double, env: Env, now: Long, windowMs: Long? = null) {
         tr.dirty = false
         tr.estAt = now
         // Results from an older fit must not survive an early return below
-        tr.ambiguous = false; tr.altLat = null; tr.altLon = null
+        tr.ambiguous = false; tr.altLat = null; tr.altLon = null; tr.moving = false
         val p = tr.proj ?: return
         val o = if (windowMs == null) tr.obs else tr.obs.filter { now - it.t <= windowMs }
         tr.usedObs = o.size
@@ -120,21 +154,141 @@ object Locator {
         val rssiObs = o.filter { it.rttM == null }
         val hasRtt = o.any { it.rttM != null }
         if (n < 5 || (rssiObs.size < 4 && !hasRtt)) { tr.located = false; return }
-        val nExp = env.n
-        fun dist(rssi: Double, p0: Double) = Distance.meters(p0, rssi, env)
         val strongest = rssiObs.maxByOrNull { it.rssi }
-        val dNear = strongest?.let { dist(it.rssi, p0Prior) } ?: (o.mapNotNull { it.rttM }.minOrNull() ?: 20.0)
+        val dNear = strongest?.let { dist(it, p0Prior) } ?: (o.mapNotNull { it.rttM }.minOrNull() ?: 20.0)
         if (spread < max(10.0, 0.45 * dNear)) { tr.located = false; return }
 
-        // ---- starting points
+        val sol = solveAll(o, p0Prior, p0Sigma) ?: run { tr.located = false; return }
+        val best = sol.best
+        var err = sol.err
+        tr.rawErrM = err * CALIBRATION
+        if (sol.rival != null) {
+            val f = sol.rival
+            tr.ambiguous = true
+            tr.altLat = p.lat(f.y); tr.altLon = p.lon(f.x)
+            err = max(err, hypot(f.x - best.x, f.y - best.y) / 2 + err / 2)
+        }
+
+        // Did the device move while you measured it? Compare "fixed spot" with "moving at a steady velocity":
+        // if letting it move explains the readings far better, it was moving and there is no spot to show.
+        if (n >= 10) {
+            val tMid = (o.minOf { it.t } + o.maxOf { it.t }) / 2
+            val mv = lm(o, best.x, best.y, best.p0, p0Prior, p0Sigma, motion = true, tMid = tMid, dn0 = best.dn)
+            if (mv != null) {
+                val speed = hypot(mv.vx, mv.vy)
+                val gain = (best.cost - mv.cost) / sol.scale
+                if (speed > 0.5 && gain > 12) tr.moving = true
+            }
+        }
+
+        // How much of the compass around the device you measured it from: from one side only,
+        // distance (and so position) is poorly pinned down whatever the math says.
+        val coverage = angularCoverage(o, best.x, best.y)
+        if (coverage < 90) err *= 1 + (90 - coverage) / 60
+
+        // Measured along an almost straight line (driving past): which side of the road, and how far from it,
+        // can't be told apart from signal strength. Show both sides instead of guessing.
+        val straight = straightness(o) < 0.12 && !hasRtt
+        if (straight && !tr.ambiguous) {
+            val (mx, my) = mirrorAcrossPath(o, best.x, best.y)
+            if (hypot(mx - best.x, my - best.y) > 8) {
+                tr.ambiguous = true
+                tr.altLat = p.lat(my); tr.altLon = p.lon(mx)
+                err = max(err, hypot(mx - best.x, my - best.y) / 2 + err / 2)
+            }
+        }
+
+        tr.errM = (err * CALIBRATION).coerceIn(3.0, 500.0)
+        val medianD = rssiObs.map { dist(it, best.p0) }.sorted().let { if (it.isEmpty()) dNear else it[it.size / 2] }
+        // A model that doesn't fit (scale >> 1) means something we don't model is going on (moving, odd antenna).
+        val fitsWell = sol.scale < 3.5
+        // The signal has to change as you move (and be reasonably strong) for its position to be knowable:
+        // a weak, flat signal fits "weak and close" as well as "strong and far away".
+        val levels = rssiObs.map { it.rssi + it.loss }.sorted()
+        val informative = hasRtt || (levels.isNotEmpty() && levels.last() >= -90 &&
+            levels[(levels.size * 9) / 10] - levels[levels.size / 10] >= 6.0)
+        var ok = !tr.ambiguous && !tr.moving && fitsWell && informative && coverage >= 40 &&
+            tr.errM <= min(MAX_OK_ERR, max(MIN_OK_ERR, 0.8 * medianD))
+
+        // Devices that can move (phones, wearables, trackers, cars) must hold still: two estimates at least
+        // 45 s apart have to agree before a spot is shown, otherwise it's "moving" (distance only).
+        if (windowMs != null) {
+            while (tr.history.size > 8) tr.history.removeFirst()
+            val older = tr.history.lastOrNull { now - it[0] >= 45_000 }
+            // Not heard in the last 20 s: it may have walked or driven off, so its old spot isn't shown
+            if (now - o.maxOf { it.t } > 20_000) ok = false
+            // Latest readings much weaker than this spot predicts from where you are now: it has moved away
+            val recent = rssiObs.filter { it.t >= now - 15_000 }
+            // Only heard now and then (a lucky reading from far away): not "here" any more
+            if (recent.size < 3 && o.none { it.rttM != null && it.t >= now - 15_000 }) ok = false
+            if (recent.size >= 2) {
+                val resid = recent.map { s ->
+                    val d = max(hypot(best.x - s.x, best.y - s.y), 1.0)
+                    s.rssi + s.loss - (best.p0 - 10 * (s.pathN + best.dn) * log10(d))
+                }.sorted()
+                if (resid[resid.size / 2] < -10) { ok = false; tr.moving = true }
+            }
+            if (ok) {
+                if (older == null) ok = false
+                else if (hypot(older[1] - best.x, older[2] - best.y) > max(12.0, 0.5 * (older[3] + tr.errM))) { ok = false; tr.moving = true }
+            }
+            // Only estimates sharp enough to tell "moved" from "noise" are kept for the comparison
+            if (!tr.ambiguous && fitsWell && tr.errM <= MAX_OK_ERR) tr.history.addLast(doubleArrayOf(now.toDouble(), best.x, best.y, tr.errM))
+        }
+        tr.located = ok
+        tr.p0 = if (tr.located && tr.errM < 25 && rssiObs.size >= 6) best.p0 else null
+        tr.estLat = p.lat(best.y)
+        tr.estLon = p.lon(best.x)
+    }
+
+    /** Minor/major spread of the measurement spots: ~0 for a straight line, ~1 for a loop. */
+    private fun straightness(o: List<Obs>): Double {
+        val n = o.size
+        val mx = o.sumOf { it.x } / n; val my = o.sumOf { it.y } / n
+        var sxx = 0.0; var syy = 0.0; var sxy = 0.0
+        for (s in o) { val dx = s.x - mx; val dy = s.y - my; sxx += dx * dx; syy += dy * dy; sxy += dx * dy }
+        val tr2 = (sxx + syy) / 2
+        val dd = sqrt(max(0.0, (sxx - syy) * (sxx - syy) / 4 + sxy * sxy))
+        val l1 = tr2 + dd; val l2 = max(0.0, tr2 - dd)
+        return if (l1 <= 0) 0.0 else sqrt(l2 / l1)
+    }
+
+    /** Reflect (x, y) across the best-fit line through the measurement spots. */
+    private fun mirrorAcrossPath(o: List<Obs>, x: Double, y: Double): Pair<Double, Double> {
+        val n = o.size
+        val mx = o.sumOf { it.x } / n; val my = o.sumOf { it.y } / n
+        var sxx = 0.0; var syy = 0.0; var sxy = 0.0
+        for (s in o) { val dx = s.x - mx; val dy = s.y - my; sxx += dx * dx; syy += dy * dy; sxy += dx * dy }
+        val ang = 0.5 * atan2(2 * sxy, sxx - syy)
+        val ux = cos(ang); val uy = kotlin.math.sin(ang)
+        val px = x - mx; val py = y - my
+        val along = px * ux + py * uy
+        return (mx + 2 * along * ux - px) to (my + 2 * along * uy - py)
+    }
+
+    private fun dist(s: Obs, p0: Double): Double =
+        10.0.pow((p0 - (s.rssi + s.loss)) / (10 * s.pathN)).coerceIn(0.5, 500.0)
+
+    /** Largest arc (deg, 0..360) of directions from (x, y) toward the measurement spots that contains them all. */
+    private fun angularCoverage(o: List<Obs>, x: Double, y: Double): Double {
+        val angles = o.map { Math.toDegrees(atan2(it.x - x, it.y - y)) }.map { (it + 360) % 360 }.sorted()
+        if (angles.size < 2) return 0.0
+        var maxGap = 360 - angles.last() + angles.first()
+        for (i in 1 until angles.size) maxGap = max(maxGap, angles[i] - angles[i - 1])
+        return 360 - maxGap
+    }
+
+    /** Fit from several starting points (and the mirror of the best), with an honest ~95% error radius. */
+    private fun solveAll(o: List<Obs>, p0Prior: Double, p0Sigma: Double, hint: Fit? = null): Solved? {
+        val rssiObs = o.filter { it.rttM == null }
         val starts = ArrayList<DoubleArray>()
+        hint?.let { starts += doubleArrayOf(it.x, it.y) }
         run { // power-weighted centroid (pulled toward where it was strongest)
             var sx = 0.0; var sy = 0.0; var sw = 0.0
-            for (s in rssiObs) { val w = Math.pow(10.0, (s.rssi + 100) / 10.0); sx += s.x * w; sy += s.y * w; sw += w }
+            for (s in rssiObs) { val w = 10.0.pow((s.rssi + 100) / 10.0); sx += s.x * w; sy += s.y * w; sw += w }
             if (sw > 0) starts += doubleArrayOf(sx / sw, sy / sw)
         }
-        val byStrength = rssiObs.sortedByDescending { it.rssi }.take(3)
-        for (s in byStrength) {
+        for (s in rssiObs.sortedByDescending { it.rssi }.take(3)) {
             starts += doubleArrayOf(s.x, s.y)
             // Path direction around this sample -> try both sides of the path at the estimated distance
             val idx = o.indexOf(s)
@@ -143,148 +297,198 @@ object Locator {
             val len = hypot(dx, dy)
             if (len > 1) {
                 dx /= len; dy /= len
-                val d = dist(s.rssi, p0Prior).coerceIn(2.0, 300.0)
+                val d = dist(s, p0Prior).coerceIn(2.0, 300.0)
                 starts += doubleArrayOf(s.x - dy * d, s.y + dx * d)
                 starts += doubleArrayOf(s.x + dy * d, s.y - dx * d)
             }
         }
-
-        val first = starts.mapNotNull { st -> solve(o, st[0], st[1], p0Prior, p0Sigma, env, nExp) }.sortedBy { it.cost }
-        if (first.isEmpty()) { tr.located = false; return }
+        val first = starts.mapNotNull { st -> solve(o, st[0], st[1], p0Prior, p0Sigma) }.sortedBy { it.cost }
+        if (first.isEmpty()) return null
         // A loop-shaped path can't tell a point from its mirror (circle inversion) when the transmit
         // power is unknown, so always try the mirror of the best answer as well.
+        val n = o.size
         val cx = o.sumOf { it.x } / n; val cy = o.sumOf { it.y } / n
         val r2 = o.sumOf { (it.x - cx) * (it.x - cx) + (it.y - cy) * (it.y - cy) } / n
         val b0 = first[0]
         val vx = b0.x - cx; val vy = b0.y - cy; val vv = vx * vx + vy * vy
-        val mirror = if (vv > 1.0) solve(o, cx + vx * r2 / vv, cy + vy * r2 / vv, p0Prior, p0Sigma, env, nExp) else null
+        val mirror = if (vv > 1.0) solve(o, cx + vx * r2 / vv, cy + vy * r2 / vv, p0Prior, p0Sigma) else null
         val fits = (first + listOfNotNull(mirror)).sortedBy { it.cost }
         val best = fits[0]
 
-        // ---- uncertainty from the (x, y) block of the inverse normal matrix, scaled by fit quality
-        val a = best.a
-        val inv = invert3(a)
-        val dof = max(1, best.m - 3)
+        // ---- uncertainty from the (x, y) block of the inverse normal matrix, scaled by fit quality and by how
+        // many truly independent readings there are: readings a few meters apart share the same shadowing
+        // (walls, trees, cars), so 60 readings along 20 m are worth far fewer than 60.
+        val dof = max(1, best.m - 4)
         val scale = max(1.0, best.cost / dof)
-        var err: Double
-        if (inv == null) err = 500.0 else {
-            val cxx = inv[0] * scale; val cyy = inv[4] * scale; val cxy = inv[1] * scale
+        val cells = HashSet<Long>()
+        for (s in o) cells += (Math.floorDiv(s.x.toLong(), CORR_M) shl 32) xor (Math.floorDiv(s.y.toLong(), CORR_M) and 0xffffffffL)
+        val inflate = max(1.0, n.toDouble() / max(1, cells.size))
+        var err = if (best.cxx.isNaN()) 500.0 else {
+            val k = scale * inflate
+            val cxx = best.cxx * k; val cyy = best.cyy * k; val cxy = best.cxy * k
             val tr2 = (cxx + cyy) / 2
             val lam = tr2 + sqrt(max(0.0, (cxx - cyy) * (cxx - cyy) / 4 + cxy * cxy))
-            err = 2.0 * sqrt(max(lam, 0.0)) // ~95% radius along the worst axis
+            2.0 * sqrt(max(lam, 0.0)) // ~95% radius along the worst axis
         }
-        err += o.map { it.gpsErr }.average() * 0.3
-        err = err.coerceIn(2.0, 500.0)
+        // GPS error is correlated over a walk: it shifts the whole track, so it adds to the error directly
+        val gps = o.map { it.gpsErr }.average()
+        err = sqrt(err * err + gps * gps).coerceIn(2.0, 500.0)
 
         // ---- ambiguity: a clearly different solution that fits nearly as well
-        tr.ambiguous = false
-        tr.altLat = null; tr.altLon = null
-        tr.rawErrM = err
+        var rival: Fit? = null
         for (f in fits.drop(1)) {
             val sep = hypot(f.x - best.x, f.y - best.y)
-            // Likelihood test: delta chi-square (normalized by fit quality) under ~1.5 = no real preference
-            if (sep > max(err, 8.0) && (f.cost - best.cost) / scale < 3.0) {
-                tr.ambiguous = true
-                tr.altLat = p.lat(f.y); tr.altLon = p.lon(f.x)
-                err = max(err, sep / 2 + err / 2)
-                break
-            }
+            if (sep > max(err, 8.0) && (f.cost - best.cost) / scale < 3.0) { rival = f; break }
         }
-
-        tr.errM = err
-        val medianD = rssiObs.map { dist(it.rssi, best.p0) }.sorted().let { if (it.isEmpty()) dNear else it[it.size / 2] }
-        // Two equally good spots (e.g. a point and its mirror across your path): don't guess.
-        // The engine may still pick one using the street map (Wi-Fi gear sits inside buildings).
-        tr.located = !tr.ambiguous && err <= max(18.0, 0.55 * medianD)
-        tr.p0 = if (!tr.ambiguous && err < 25 && rssiObs.size >= 6) best.p0 else null
-        tr.estLat = p.lat(best.y)
-        tr.estLon = p.lon(best.x)
+        return Solved(best, err, rival, scale)
     }
 
-    /** Levenberg-Marquardt over (x, y, P0). Returns null if it diverges. */
-    private fun solve(o: List<Obs>, x0: Double, y0: Double, p0Prior: Double, p0Sigma: Double, env: Env, nExp: Double): Fit? {
-        var x = x0; var y = y0; var p0 = p0Prior
-        var lambda = 1e-2
-        val sShadow2 = env.sigma * env.sigma
+    private fun solve(o: List<Obs>, x0: Double, y0: Double, p0Prior: Double, p0Sigma: Double): Fit? =
+        lm(o, x0, y0, p0Prior, p0Prior, p0Sigma)
 
-        fun residuals(xx: Double, yy: Double, pp: Double, jac: DoubleArray?, out: DoubleArray?): Double {
+    /**
+     * Robust Levenberg-Marquardt. Parameters: device x, y, its transmit level P0, a per-device correction to the
+     * path-loss exponent (walls and antennas differ: learned within about ±0.35), and with [motion] a velocity.
+     * Readings far weaker than the model (fades, your body, a car in between) are down-weighted instead of
+     * dragging the answer away. Returns null if it diverges.
+     */
+    private fun lm(
+        o: List<Obs>, x0: Double, y0: Double, p0Start: Double, p0Prior: Double, p0Sigma: Double,
+        motion: Boolean = false, tMid: Long = 0L, dn0: Double = 0.0,
+    ): Fit? {
+        val np = if (motion) 6 else 4
+        val q = DoubleArray(np)
+        q[0] = x0; q[1] = y0; q[2] = p0Start; q[3] = dn0
+        var lambda = 1e-2
+        // Transmit power stays physically plausible around the prior (stops absurd distances)
+        val p0Lo = p0Prior - (2.5 * p0Sigma + 5); val p0Hi = p0Prior + (2.5 * p0Sigma + 5)
+        val jrow = DoubleArray(np)
+
+        fun eval(p: DoubleArray, a: DoubleArray?, g: DoubleArray?): Double {
             var cost = 0.0
-            if (jac != null) jac.fill(0.0)
-            if (out != null) out.fill(0.0)
+            a?.fill(0.0); g?.fill(0.0)
+            val dn = p[3]
             for (s in o) {
-                val dx = xx - s.x; val dy = yy - s.y
+                val tau = if (motion) (s.t - tMid) / 1000.0 else 0.0
+                val px = p[0] + (if (motion) p[4] * tau else 0.0)
+                val py = p[1] + (if (motion) p[5] * tau else 0.0)
+                val dx = px - s.x; val dy = py - s.y
                 val d = max(hypot(dx, dy), 1.0)
                 val ux = dx / d; val uy = dy / d
-                val r: Double; val jx: Double; val jy: Double; val jp: Double
+                val r: Double
+                val kLo: Double; val kHi: Double
+                jrow.fill(0.0)
                 if (s.rttM != null) {
                     val sg = sqrt(max(s.rttStd, 0.8) * max(s.rttStd, 0.8) + s.gpsErr * s.gpsErr * 0.5)
                     r = (d - s.rttM) / sg
-                    jx = ux / sg; jy = uy / sg; jp = 0.0
+                    jrow[0] = ux / sg; jrow[1] = uy / sg
+                    kLo = 2.5; kHi = 2.5
                 } else {
+                    val nExp = (s.pathN + dn).coerceAtLeast(1.5)
                     val gpsDb = 10 * nExp / LN10 * s.gpsErr * 0.75 / max(d, 3.0)
-                    val sg = sqrt(sShadow2 * (0.45 + 0.55 / min(s.n, 8)) + gpsDb * gpsDb)
-                    val model = pp - 10 * nExp * log10(d) + 0.0
-                    r = (s.rssi + env.extraLoss - model) / sg
+                    val sg = sqrt(SHADOW_DB * SHADOW_DB * (0.45 + 0.55 / min(s.n, 8)) + gpsDb * gpsDb)
+                    val ld = log10(d)
+                    val model = p[2] - 10 * nExp * ld
+                    r = (s.rssi + s.loss - model) / sg
                     val dm = -10 * nExp / (LN10 * d) // d model / d distance
-                    jx = -dm * ux / sg; jy = -dm * uy / sg; jp = -1.0 / sg
+                    jrow[0] = -dm * ux / sg; jrow[1] = -dm * uy / sg
+                    jrow[2] = -1.0 / sg
+                    jrow[3] = 10 * ld / sg
+                    // Fades make readings weaker far more often than stronger: trust weak outliers less
+                    kLo = 1.2; kHi = 2.0
                 }
-                cost += r * r
-                if (jac != null && out != null) accumulate(jac, out, jx, jy, jp, r)
+                if (motion) { jrow[4] = jrow[0] * tau; jrow[5] = jrow[1] * tau }
+                val k = if (r < 0) kLo else kHi
+                val ar = abs(r)
+                val w = if (ar <= k) 1.0 else k / ar
+                cost += if (ar <= k) r * r else 2 * k * ar - k * k // Huber
+                if (a != null && g != null) addRow(a, g, jrow, r, w, np)
             }
-            // Prior on P0
-            val rp = (pp - p0Prior) / p0Sigma
-            cost += rp * rp
-            if (jac != null && out != null) accumulate(jac, out, 0.0, 0.0, 1.0 / p0Sigma, rp)
+            // Priors: transmit level, path-loss correction, and (motion) a gentle pull toward "not moving"
+            fun prior(idx: Int, value: Double, sigma: Double) {
+                val r = value / sigma
+                cost += r * r
+                if (a != null && g != null) { jrow.fill(0.0); jrow[idx] = 1.0 / sigma; addRow(a, g, jrow, r, 1.0, np) }
+            }
+            prior(2, p[2] - p0Prior, p0Sigma)
+            prior(3, dn, DN_SIGMA)
+            if (motion) { prior(4, p[4], 3.0); prior(5, p[5], 3.0) }
             return cost
         }
 
-        val a = DoubleArray(9); val g = DoubleArray(3)
-        var cost = residuals(x, y, p0, a, g)
+        val a = DoubleArray(np * np); val g = DoubleArray(np)
+        var cost = eval(q, a, g)
+        val trial = DoubleArray(np)
         for (iter in 0 until 60) {
             val m = a.copyOf()
-            for (k in 0..2) m[k * 4] = a[k * 4] * (1 + lambda) + 1e-9
-            val step = solve3(m, doubleArrayOf(-g[0], -g[1], -g[2])) ?: break
-            val nx = x + step[0]; val ny = y + step[1]; val np = (p0 + step[2]).coerceIn(-110.0, 10.0)
-            val nc = residuals(nx, ny, np, null, null)
+            for (k in 0 until np) m[k * np + k] = a[k * np + k] * (1 + lambda) + 1e-9
+            val step = solveN(m, DoubleArray(np) { -g[it] }, np) ?: break
+            for (k in 0 until np) trial[k] = q[k] + step[k]
+            trial[2] = trial[2].coerceIn(p0Lo, p0Hi)
+            trial[3] = trial[3].coerceIn(-1.0, 1.2)
+            val nc = eval(trial, null, null)
             if (nc < cost) {
-                x = nx; y = ny; p0 = np; cost = nc
+                System.arraycopy(trial, 0, q, 0, np); cost = nc
                 lambda = max(lambda / 3, 1e-7)
-                residuals(x, y, p0, a, g)
+                eval(q, a, g)
                 if (hypot(step[0], step[1]) < 0.02 && abs(step[2]) < 0.01) break // converged
             } else {
                 lambda = min(lambda * 5, 1e7)
             }
         }
-        if (x.isNaN() || y.isNaN() || hypot(x - x0, y - y0) > 3000) return null
-        residuals(x, y, p0, a, g)
-        return Fit(x, y, p0, cost, a.copyOf(), o.size + 1)
+        if (q[0].isNaN() || q[1].isNaN() || hypot(q[0] - x0, q[1] - y0) > 3000) return null
+        eval(q, a, g)
+        val inv = invertN(a, np)
+        return Fit(
+            q[0], q[1], q[2], cost,
+            inv?.get(0) ?: Double.NaN, inv?.get(np + 1) ?: Double.NaN, inv?.get(1) ?: 0.0, o.size + 2,
+            q[3], if (motion) q[4] else 0.0, if (motion) q[5] else 0.0,
+        )
     }
 
-    private fun accumulate(a: DoubleArray, g: DoubleArray, jx: Double, jy: Double, jp: Double, r: Double) {
-        val j = doubleArrayOf(jx, jy, jp)
-        for (i in 0..2) {
-            g[i] += j[i] * r
-            for (k in 0..2) a[i * 3 + k] += j[i] * j[k]
+    private fun addRow(a: DoubleArray, g: DoubleArray, j: DoubleArray, r: Double, w: Double, np: Int) {
+        for (i in 0 until np) {
+            val ji = j[i]
+            if (ji == 0.0) continue
+            g[i] += w * ji * r
+            for (k in 0 until np) a[i * np + k] += w * ji * j[k]
         }
     }
 
-    private fun solve3(m: DoubleArray, b: DoubleArray): DoubleArray? {
-        val inv = invert3(m) ?: return null
-        return DoubleArray(3) { i -> inv[i * 3] * b[0] + inv[i * 3 + 1] * b[1] + inv[i * 3 + 2] * b[2] }
+    /** Solve m·x = b (m is np×np, row-major) by Gaussian elimination with partial pivoting. */
+    private fun solveN(m: DoubleArray, b: DoubleArray, np: Int): DoubleArray? {
+        val a = m.copyOf(); val x = b.copyOf()
+        for (c in 0 until np) {
+            var piv = c
+            for (r in c + 1 until np) if (abs(a[r * np + c]) > abs(a[piv * np + c])) piv = r
+            if (abs(a[piv * np + c]) < 1e-14) return null
+            if (piv != c) {
+                for (k in 0 until np) { val t = a[c * np + k]; a[c * np + k] = a[piv * np + k]; a[piv * np + k] = t }
+                val t = x[c]; x[c] = x[piv]; x[piv] = t
+            }
+            for (r in c + 1 until np) {
+                val f = a[r * np + c] / a[c * np + c]
+                if (f == 0.0) continue
+                for (k in c until np) a[r * np + k] -= f * a[c * np + k]
+                x[r] -= f * x[c]
+            }
+        }
+        for (c in np - 1 downTo 0) {
+            var s = x[c]
+            for (k in c + 1 until np) s -= a[c * np + k] * x[k]
+            x[c] = s / a[c * np + c]
+        }
+        return x
     }
 
-    private fun invert3(m: DoubleArray): DoubleArray? {
-        val (a, b, c) = Triple(m[0], m[1], m[2])
-        val (d, e, f) = Triple(m[3], m[4], m[5])
-        val (g, h, i) = Triple(m[6], m[7], m[8])
-        val co0 = e * i - f * h; val co1 = -(d * i - f * g); val co2 = d * h - e * g
-        val det = a * co0 + b * co1 + c * co2
-        if (abs(det) < 1e-14) return null
-        return doubleArrayOf(
-            co0 / det, -(b * i - c * h) / det, (b * f - c * e) / det,
-            co1 / det, (a * i - c * g) / det, -(a * f - c * d) / det,
-            co2 / det, -(a * h - b * g) / det, (a * e - b * d) / det,
-        )
+    private fun invertN(m: DoubleArray, np: Int): DoubleArray? {
+        val out = DoubleArray(np * np)
+        for (c in 0 until np) {
+            val e = DoubleArray(np); e[c] = 1.0
+            val col = solveN(m, e, np) ?: return null
+            for (r in 0 until np) out[r * np + c] = col[r]
+        }
+        return out
     }
 
     /** Natural log helper kept for callers converting between dB and power. */

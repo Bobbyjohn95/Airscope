@@ -10,11 +10,31 @@ class DeviceStore {
 
     private var lastSummary = ""
 
+    /** When the current scan session started (START pressed). */
+    var sessionStart = 0L
+
     fun upsert(id: String, kind: Kind, now: Long): Device {
         val key = kind.name + ":" + id
-        return devices.getOrPut(key) {
+        var fresh = false
+        val d = devices.getOrPut(key) {
+            fresh = true
             Device(id, kind, now).also { it.trusted = key in trustedKeys }
         }
+        // Separate sightings this session: it went quiet for 3+ minutes and came back
+        when {
+            fresh || d.lastSeen < sessionStart || d.sightings == 0 -> { d.sightings = 1; d.sightingStart = now; d.sightPlaces.clear(); d.sightSpreadM = 0.0 }
+            now - d.lastSeen > SIGHTING_GAP_MS -> {
+                d.sightings++
+                d.sightingStart = now
+                d.lastGapMs = now - d.lastSeen
+                log("AGAIN", "${d.displayName()} is back (seen ${d.sightings}× this session, gone ${(d.lastGapMs / 60_000)} min)", now)
+            }
+        }
+        return d
+    }
+
+    companion object {
+        const val SIGHTING_GAP_MS = 3 * 60_000L
     }
 
     fun isActive(d: Device, now: Long): Boolean =

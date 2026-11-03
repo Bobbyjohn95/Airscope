@@ -50,7 +50,7 @@ object Signatures {
     private val bareSerial = Regex("^\\d{10}$")
 
     /** Cradlepoint-style default SSID: MODEL-xyz (3 hex from the MAC). */
-    private val fleetRouterSsid = Regex("^(IBR\\d{3,4}|R\\d{3,4}|AER\\d{4}|E\\d{3,4}|CBA\\d{3,4})(LP\\w*)?-[0-9a-f]{3}$", RegexOption.IGNORE_CASE)
+    val fleetRouterSsid = Regex("^(IBR\\d{3,4}|R\\d{3,4}|AER\\d{4}|E\\d{3,4}|CBA\\d{3,4})(LP\\w*)?-[0-9a-f]{3}$", RegexOption.IGNORE_CASE)
 
     val publicSafetyVendor = Regex("(axon|taser|motorola solutions|watchguard|digital ally|kustom signals|l3harris|coban|utility associates|getac|soundthinking|shotspotter|flock safety)", RegexOption.IGNORE_CASE)
     val fleetRouterVendor = Regex("(cradlepoint|sierra wireless|inseego|digi international|peplink|pepwave)", RegexOption.IGNORE_CASE)
@@ -80,8 +80,54 @@ object Signatures {
             flockKeywords.any { s.contains(it) } -> f += Finding(50, "Flock Safety network name")
             s.contains("flck") -> f += Finding(50, "Flock test network name (CVE-2025-59409)")
         }
-        if (fleetRouterSsid.matches(ssid)) f += Finding(30, "Fleet/vehicle router (police, EMS, transit or business)")
         return f
+    }
+
+    /** Who a network name says it belongs to. */
+    enum class Agency(val label: String) {
+        POLICE("Police / sheriff / state patrol"),
+        FIRE("Fire department"),
+        EMS("Ambulance / EMS"),
+        TRAFFIC("Traffic / enforcement camera"),
+        COMMERCIAL("Commercial, transit or utility fleet"),
+    }
+
+    // Network names agencies give their vehicles and gear (e.g. "PCSO-Unit24", "CCPD 1234", "Medic 12", "Engine 5")
+    private val lawSsid = Regex(
+        "(police|sheriff|trooper|state ?patrol|highway ?patrol|\\bgsp\\b|\\bswat\\b|\\bk-?9\\b|\\bmarshal\\b|" +
+            "\\bpd\\b|^[a-z]{1,4}pd[\\s_-]?\\d+\\b|^[a-z]{2,4}so[\\s_-]?\\d+\\b|\\bmdt\\b|\\bdps\\b)",
+        RegexOption.IGNORE_CASE,
+    )
+    private val fireSsid = Regex(
+        "(fire ?(dept|department|station|rescue|engine|truck|district|ems)|\\bfd\\b|^[a-z]{1,4}fd[\\s_-]?\\d+\\b|" +
+            "\\bengine[\\s_-]?\\d|\\bladder[\\s_-]?\\d|\\bquint[\\s_-]?\\d|\\bbattalion\\b|\\brescue[\\s_-]?\\d|\\bsquad[\\s_-]?\\d)",
+        RegexOption.IGNORE_CASE,
+    )
+    private val emsSsid = Regex("(\\bems\\b|\\bmedic[\\s_-]?\\d|ambulance|\\bamr\\b|\\bals[\\s_-]?\\d|\\bbls[\\s_-]?\\d|paramedic)", RegexOption.IGNORE_CASE)
+    private val trafficSsid = Regex(
+        "(traffic ?(cam|signal|control|light)|\\bgdot\\b|iteris|miovision|econolite|verra|redflex|blue ?line ?sol|" +
+            "speed ?cam|red ?light ?cam|school ?zone|\\bits[\\s_-]?cam|signal ?cab)",
+        RegexOption.IGNORE_CASE,
+    )
+    private val commercialSsid = Regex(
+        "(\\bbus\\b|coach|transit|marta|cobblinc|xpress|school|kajeet|\\bups\\b|fedex|amazon|\\bdhl\\b|usps|waste|" +
+            "\\bwm[\\s_-]|republic|uber|lyft|taxi|u-?haul|comcast|xfinity|spectrum|\\bat&?t\\b|\\btow|rental|hertz|" +
+            "enterprise|delivery|freight|logistics|sysco|ryder|penske|fleet|truck|\\bvan\\b|shuttle|campus|church|hotel|" +
+            "power|electric|\\bgas\\b|water|utility|cable|construction|plumb|hvac|pest|lawn)",
+        RegexOption.IGNORE_CASE,
+    )
+
+    /** Agency from a network name, or null. Law/fire/EMS win over commercial words ("Fire Truck 3"). */
+    fun agency(ssid: String): Agency? {
+        if (ssid.isBlank()) return null
+        return when {
+            lawSsid.containsMatchIn(ssid) -> Agency.POLICE
+            fireSsid.containsMatchIn(ssid) -> Agency.FIRE
+            emsSsid.containsMatchIn(ssid) -> Agency.EMS
+            trafficSsid.containsMatchIn(ssid) -> Agency.TRAFFIC
+            commercialSsid.containsMatchIn(ssid) -> Agency.COMMERCIAL
+            else -> null
+        }
     }
 
     fun bleNameFindings(name: String?): List<Finding> {

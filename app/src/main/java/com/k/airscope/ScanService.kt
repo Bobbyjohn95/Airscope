@@ -164,6 +164,18 @@ class ScanService : Service() {
         wakeLock = null
     }
 
+    /**
+     * You removed AirScope from Recents ("closed it completely"): stop scanning, GPS, the HUD and the
+     * notification, like any app you close. (Going to the home screen doesn't call this: scanning continues.)
+     */
+    override fun onTaskRemoved(rootIntent: Intent?) {
+        Engine.post { Engine.store.log("SYS", "App closed from Recents: everything stopped") }
+        cleanup()
+        stopForeground(STOP_FOREGROUND_REMOVE)
+        stopSelf()
+        super.onTaskRemoved(rootIntent)
+    }
+
     override fun onDestroy() {
         if (Engine.running) cleanup()
         super.onDestroy()

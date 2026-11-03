@@ -41,7 +41,14 @@ class DeviceView(
     val candB: Pair<Double, Double>? = null,
     /** Meters it has stayed with you while you moved. */
     val followM: Double = 0.0,
+    /** Its readings say it was moving: no fixed spot. */
+    val moving: Boolean = false,
+    /** Separate appearances this scan session (2+ = it came back) and how far apart they began (m). */
+    val sightings: Int = 1,
+    val sightSpreadM: Double = 0.0,
 ) {
+    /** "↻3" when it came back this session, else "". */
+    val againMark: String get() = if (sightings >= 2) "↻$sightings" else ""
     val located: Boolean get() = lat != null
 }
 
@@ -112,12 +119,17 @@ class Snapshot(
             if (meshCount > 1) facts += "Same network name" to "$meshCount access points (mesh / multi-AP network)"
             if (d.firstEver > 0) facts += "History" to "first seen ${timeFmt.format(java.util.Date(d.firstEver))} · seen on ${d.daysSeen} day${if (d.daysSeen == 1) "" else "s"}"
             else facts += "First seen" to timeFmt.format(java.util.Date(d.firstSeen))
+            if (d.sightings >= 2) {
+                facts += "↻ Seen again" to "${d.sightings} separate times this session (gone ${d.lastGapMs / 60_000} min before coming back)" +
+                    if (d.sightSpreadM >= 300) " · first spots ${fmtDist(d.sightSpreadM)} m apart" else ""
+            }
             if (d.followM > 50) facts += "Moved with you" to "${fmtDist(d.followM)} m"
             when {
                 d.selfLat != null -> facts += "Map position" to "reported by the device (GPS)"
                 lat != null -> facts += "Map position" to String.format(java.util.Locale.US, "%.5f, %.5f ±%d m · %d spots over %d m",
                     lat, lon, err.toInt(), tr.usedObs, tr.spreadM.toInt()) + if (d.sideFromMap) " · side picked from street map" else ""
                 ambiguous -> facts += "Map position" to "one of two spots ±${err.toInt()} m (either side of your path): walk a different way to settle it"
+                tr.moving -> facts += "Map position" to "moving (or carried): no fixed spot to show, distance only"
                 else -> facts += "Map position" to "not located yet (${tr.obs.size} spots over ${tr.spreadM.toInt()} m)"
             }
             tr.p0?.let { facts += "Learned signal level" to "${it.toInt()} dBm at 1 m (improves distance)" }
@@ -134,6 +146,8 @@ class Snapshot(
                 candA = if (ambiguous) tr.estLat to tr.estLon else null,
                 candB = if (ambiguous) tr.altLat!! to tr.altLon!! else null,
                 followM = d.followM,
+                moving = tr.moving,
+                sightings = d.sightings.coerceAtLeast(1), sightSpreadM = d.sightSpreadM,
             )
         }
 

@@ -191,12 +191,95 @@ class GeoTracker {
         lat = p.lat; lon = p.lon; accuracy = p.accM; vx = p.vx; vy = p.vy; fixNanos = filter.lastNanos
         lastRawAt = System.currentTimeMillis()
         warn = null
-        maybeFetchMap()
+        updateMap()
         if (alprEnabled) maybeFetchAlprs()
     }
 
-    // ---------------------------------------------------------------- street map (chunks)
+    // ---------------------------------------------------------------- street map (vector tiles)
 
+    @Volatile private var tileMgr: TileManager? = null
+    /** Map tiles: downloaded, cached on the phone, shared with the offline-download screen. */
+    fun tiles(ctx: Context): TileManager = tileMgr ?: synchronized(this) {
+        tileMgr ?: TileManager(java.io.File(ctx.applicationContext.filesDir, "tiles")).also { tm ->
+            tm.onLoaded = { handler?.post { refreshTiles() } }
+            tileMgr = tm
+        }
+    }
+    /** Fixed drawing origin for the map (moves only after 25 km) so tiles never shift the view. */
+    @Volatile var origin: LocalProj? = null
+        private set
+    /** Predicted road ahead while driving (lat, lon points), for preloading and for drawing. */
+    @Volatile var predicted: List<DoubleArray> = emptyList()
+        private set
+    private var predTiles: List<Tiles.TileId> = emptyList()
+    private var lastPredAt = 0L
+    private var overpassChunks: List<MapData> = emptyList()
+    private var shownKeys = ""
+
+    private fun wantedTiles(la: Double, lo: Double): List<Tiles.TileId> {
+        val fast = speed > 12.0
+        val around = Tiles.around(la, lo, if (fast) 1200.0 else 1500.0, TileManager.Z)
+        return (around + predTiles).distinct()
+    }
+
+    /** Engine thread, on each GPS fix: ask for the tiles around you and along the road ahead. */
+    private fun updateMap() {
+        val la = lat ?: return
+        val lo = lon ?: return
+        val ctx = app ?: return
+        val o = origin
+        if (o == null || Geo.distanceM(o.lat0, o.lon0, la, lo) > 25_000) origin = LocalProj(la, lo)
+        val now = System.currentTimeMillis()
+        val c = course
+        if (speed > 6.0 && c != null) {
+            if (now - lastPredAt > 3_000) {
+                lastPredAt = now
+                val pred = RoutePredictor.predict(chunks, la, lo, c, (speed * 120).coerceIn(1500.0, 6000.0))
+                predicted = pred.main
+                predTiles = RoutePredictor.tiles(pred)
+            }
+        } else if (predTiles.isNotEmpty() || predicted.isNotEmpty()) { predTiles = emptyList(); predicted = emptyList() }
+        tiles(ctx).request(wantedTiles(la, lo))
+        refreshTiles()
+        // Fallback: tile server unreachable and nothing saved for here -> try the old Overpass street query
+        val st = tiles(ctx).stats
+        if (chunks.isEmpty() && st.failed >= 3 && now - st.lastOkAt > 60_000) maybeFetchMap()
+    }
+
+    /** Engine thread: show the tiles that are ready (nearest first). */
+    private fun refreshTiles() {
+        val la = lat ?: return
+        val lo = lon ?: return
+        val tm = tileMgr ?: return
+        val ready = wantedTiles(la, lo).mapNotNull { tm.cached(it) }
+            .sortedBy { Geo.distanceM(it.lat0, it.lon0, la, lo) }
+            .take(24)
+        val keys = ready.joinToString(",") { it.key }
+        if (ready.isEmpty()) {
+            if (chunks.isEmpty() && overpassChunks.isNotEmpty()) { chunks = overpassChunks; mapVersion++ }
+            val st = tm.stats
+            mapStatus = when {
+                st.failed > 0 && st.lastOkAt == 0L -> "map server unreachable (${st.lastError ?: "no answer"})"
+                else -> "downloading map tiles…"
+            }
+            return
+        }
+        if (keys != shownKeys) {
+            shownKeys = keys
+            chunks = ready
+            mapVersion++
+        }
+        val st = tm.stats
+        val roads = ready.sumOf { m -> m.roads.count { !it.labelOnly } }
+        val blds = ready.sumOf { it.buildings.size }
+        mapStatus = "${ready.size} tiles · $roads roads · $blds buildings" +
+            (if (st.failed > 0 && clockMs() - st.lastErrorAt < 30_000) " · some tiles failing (${st.lastError})" else "") +
+            (if (predicted.isNotEmpty()) " · preloading route ahead" else "")
+    }
+
+    private fun clockMs() = System.currentTimeMillis()
+
+    /** Old method (Overpass query), kept only as a fallback when the tile server can't be reached. */
     private fun maybeFetchMap() {
         val la = lat ?: return
         val lo = lon ?: return
@@ -229,8 +312,8 @@ class GeoTracker {
             h.post {
                 mapFetching = false
                 res.onSuccess { (json, data) ->
-                    chunks = (listOf(data) + chunks).take(4)
-                    mapVersion++
+                    overpassChunks = (listOf(data) + overpassChunks).take(4)
+                    if (chunks.isEmpty() || chunks.all { it.key.isEmpty() }) { chunks = overpassChunks; mapVersion++ }
                     mapStatus = "${data.roads.size} roads" + if (!data.fast) " · ${data.buildings.size} buildings" else " (highway mode)"
                     if (!data.fast) saveCache("map_cache.txt", tLat, tLon, json)
                 }.onFailure {
@@ -244,7 +327,8 @@ class GeoTracker {
     private fun loadMapCache() {
         readCache("map_cache.txt")?.let { (la, lo, at, json) ->
             try {
-                chunks = listOf(MapData.parse(json, la, lo, at))
+                overpassChunks = listOf(MapData.parse(json, la, lo, at))
+                chunks = overpassChunks
                 mapVersion++
                 mapStatus = "street map (cached)"
             } catch (_: Exception) { }

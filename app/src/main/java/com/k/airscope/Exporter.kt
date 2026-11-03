@@ -28,6 +28,14 @@ object Exporter {
         }
     }
 
+    fun sessionCsv(rows: List<Engine.SessionRow>): String = buildString {
+        appendLine("kind,id,category,name,vendor,times_seen,first_seen,last_seen,best_rssi,first_spots_apart_m,score")
+        for (r in rows) {
+            appendLine(listOf(r.kind.name, r.key.substringAfter(':'), r.category.name, csv(r.title), csv(r.vendor), r.sightings,
+                dateFmt.format(Date(r.firstSeen)), dateFmt.format(Date(r.lastSeen)), r.bestRssi, r.spreadM.toInt(), r.score).joinToString(","))
+        }
+    }
+
     fun timelineCsv(log: List<DeviceStore.LogEntry>): String = buildString {
         appendLine("time,tag,text")
         for (e in log) appendLine("${dateFmt.format(Date(e.time))},${e.tag},${csv(e.text)}")
@@ -80,6 +88,52 @@ object Exporter {
     private fun pts(a: FloatArray): String = a.joinToString(",", "[", "]") { (Math.round(it * 10) / 10.0).toString() }
 
     /** Street-map geometry for the web HUD (local meters around lat/lon). */
+    /**
+     * Several map tiles merged into one frame (around lat0/lon0) for the web HUD. Buildings only within
+     * [bldM] of the center to keep it small; label-only street-name lines are sent with class 10+.
+     */
+    fun mapJsonMerged(chunks: List<MapData>, lat0: Double, lon0: Double, bldM: Double = 900.0): String {
+        if (chunks.isEmpty()) return "{\"lat\":null}"
+        val p = LocalProj(lat0, lon0)
+        fun shifted(m: MapData, pts: FloatArray): String {
+            val ox = p.x(m.lon0).toFloat(); val oy = p.y(m.lat0).toFloat()
+            val sb = StringBuilder("[")
+            var i = 0
+            while (i < pts.size) {
+                if (i > 0) sb.append(',')
+                sb.append(Math.round(pts[i] + ox)).append(',').append(Math.round(pts[i + 1] + oy))
+                i += 2
+            }
+            return sb.append(']').toString()
+        }
+        return buildString {
+            append(String.format(Locale.US, "{\"lat\":%.6f,\"lon\":%.6f", lat0, lon0))
+            append(",\"roads\":[")
+            var first = true
+            for (m in chunks) for (r in m.roads) {
+                if (!first) append(','); first = false
+                append('[').append(if (r.labelOnly) r.cls + 10 else r.cls).append(',').append(json(r.name ?: "")).append(',').append(shifted(m, r.pts)).append(']')
+            }
+            append("],\"bld\":[")
+            first = true
+            for (m in chunks) {
+                val ox = p.x(m.lon0); val oy = p.y(m.lat0)
+                for (b in m.buildings) {
+                    if (kotlin.math.hypot(b.cx + ox, b.cy + oy) > bldM) continue
+                    if (!first) append(','); first = false
+                    append('[').append(fmt1(b.heightM.toDouble())).append(',').append(shifted(m, b.pts)).append(']')
+                }
+            }
+            append("],\"areas\":[")
+            first = true
+            for (m in chunks) for (a in m.areas) {
+                if (!first) append(','); first = false
+                append('[').append(a.kind).append(',').append(shifted(m, a.pts)).append(']')
+            }
+            append("]}")
+        }
+    }
+
     fun mapJson(m: MapData?): String {
         if (m == null) return "{\"lat\":null}"
         return buildString {

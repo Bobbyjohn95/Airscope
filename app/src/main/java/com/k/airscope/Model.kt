@@ -14,7 +14,7 @@ enum class Category(val label: String, val short: String, val sector: Int) {
     CAMERA_IOT("Cameras & IoT", "CAM/IOT", 3),
     VEHICLE("Vehicles", "VEHICLE", 4),
     DRONE("Drones", "DRONE", 5),
-    POLICE("Police & ALPR", "POLICE", 6),
+    POLICE("Police, fire, EMS & cameras", "POLICE", 6),
     NETWORK("Networks & other", "NET", 7),
 }
 
@@ -27,7 +27,7 @@ enum class Mode(val label: String, val category: Category?) {
     CAMS("CAMS/IOT", Category.CAMERA_IOT),
     VEHICLES("VEHICLES", Category.VEHICLE),
     DRONES("DRONES", Category.DRONE),
-    POLICE("POLICE/ALPR", Category.POLICE),
+    POLICE("POLICE/EMS/ALPR", Category.POLICE),
     NETWORKS("NETWORKS", Category.NETWORK);
 
     fun matches(c: Category) = category == null || category == c
@@ -54,6 +54,14 @@ class Device(val id: String, val kind: Kind, now: Long) {
     var lastSeen: Long = now
     /** Start of the current continuous sighting (resets after a 2+ minute gap). */
     var presentSince: Long = now
+    /** Separate appearances this scan session (gone 3+ min, then back), when the latest began, the last gap. */
+    var sightings: Int = 0
+    var sightingStart: Long = now
+    var lastGapMs: Long = 0L
+    /** Where each sighting began (lat, lon), oldest first, at most 10. */
+    val sightPlaces = ArrayList<DoubleArray>()
+    /** Farthest apart two sightings began (m): showing up again somewhere else matters. */
+    var sightSpreadM: Double = 0.0
     var readings: Int = 0
     var lastWifiTs: Long = 0L
     val kalman = RssiKalman()

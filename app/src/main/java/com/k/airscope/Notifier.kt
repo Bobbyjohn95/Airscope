@@ -121,7 +121,8 @@ object Notifier {
                 d.label.startsWith("Axon") -> "Police equipment nearby (Axon)"
                 d.label.startsWith("Flock") -> "Flock Safety device detected"
                 d.label.startsWith("Raven") -> "Gunshot detector nearby"
-                d.label.startsWith("Fleet") -> "Fleet router nearby (possible police vehicle)"
+                d.label.startsWith("Police vehicle") -> "Police vehicle nearby (by its network name)"
+                d.label.startsWith("Traffic") -> "Traffic / enforcement camera nearby"
                 else -> d.label + " nearby"
             }
             d.category == Category.DRONE -> "Drone nearby: ${d.label}"

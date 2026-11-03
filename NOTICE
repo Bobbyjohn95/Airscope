@@ -18,3 +18,6 @@ Third-party data used:
    Bluetooth SIG Assigned Numbers (company identifiers, 16-bit UUIDs).
 
 4. Axon (Taser International) BLE prefix 00:25:DF per public research (RFParty / ABC News coverage).
+
+Street map tiles: OpenFreeMap (https://openfreemap.org) © OpenMapTiles (https://openmaptiles.org),
+data © OpenStreetMap contributors (ODbL).

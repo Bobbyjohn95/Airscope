@@ -33,12 +33,38 @@ object Engine {
     fun mapJson(): String {
         val v = geo.mapVersion
         mapJsonCache?.let { if (it.first == v) return it.second }
-        return Exporter.mapJson(geo.map).also { mapJsonCache = v to it }
+        val o = geo.origin
+        val json = if (o != null && geo.chunks.isNotEmpty()) Exporter.mapJsonMerged(geo.chunks, geo.lat ?: o.lat0, geo.lon ?: o.lon0) else Exporter.mapJson(geo.map)
+        return json.also { mapJsonCache = v to it }
     }
     @Volatile var running = false
         private set
     @Volatile var wifiOn = true
     @Volatile var bleOn = true
+    /** One device seen during the current scan session (also ones no longer in range). */
+    class SessionRow(
+        val key: String, val title: String, val kind: Kind, val category: Category, val vendor: String,
+        val sightings: Int, val firstSeen: Long, val lastSeen: Long, val bestRssi: Int, val spreadM: Double, val score: Int,
+    )
+
+    /** Everything seen this session, came-back devices first. Refreshed every few seconds. */
+    @Volatile var session: List<SessionRow> = emptyList()
+    @Volatile var sessionStartedAt = 0L
+    private var lastSessionAt = 0L
+
+    private fun refreshSession(now: Long) {
+        if (now - lastSessionAt < 5_000) return
+        lastSessionAt = now
+        sessionStartedAt = store.sessionStart
+        session = store.devices.values.asSequence()
+            .filter { it.lastSeen >= store.sessionStart && it.readings > 0 }
+            .map { SessionRow(it.key, it.displayName(), it.kind, it.category, it.vendor, it.sightings.coerceAtLeast(1),
+                maxOf(it.firstSeen, store.sessionStart), it.lastSeen, it.rssiMax, it.sightSpreadM, it.score) }
+            .sortedWith(compareByDescending<SessionRow> { it.sightings }.thenByDescending { it.score }.thenByDescending { it.lastSeen })
+            .take(1000)
+            .toList()
+    }
+
     /** Distance model in use. With [envAuto] it follows what you're doing; otherwise it's your choice. */
     @Volatile var env = Env.INDOOR
     @Volatile var envAuto = true
@@ -123,6 +149,8 @@ object Engine {
     fun startScanning() {
         if (running) return
         running = true
+        store.sessionStart = System.currentTimeMillis()
+        store.log("SYS", "New scan session")
         scanner = SignalScanner(app, handler).also { it.start() }
         geo.alprEnabled = alprOn
         geo.start(app, handler)
@@ -165,6 +193,7 @@ object Engine {
             val now = System.currentTimeMillis()
             scanner?.syncBle()
             updateAutoEnv(now)
+            refreshSession(now)
             for (d in store.rescore(now)) deviceAlert?.invoke(d)
             // Re-estimate map positions for devices with new GPS-tagged samples: least recently estimated
             // first, so a newly appeared device is never starved by busy older ones.
@@ -208,7 +237,7 @@ object Engine {
             if ((a != null) != (b != null)) {
                 if (b != null) { val la = tr.estLat; val lo = tr.estLon; tr.estLat = tr.altLat!!; tr.estLon = tr.altLon!!; tr.altLat = la; tr.altLon = lo }
                 tr.errM = tr.rawErrM
-                tr.located = tr.rawErrM < 40
+                tr.located = tr.rawErrM <= 45
                 tr.ambiguous = !tr.located
                 d.sideFromMap = tr.located
             }
@@ -225,7 +254,12 @@ object Engine {
      */
     fun recordObservation(d: Device, rssi: Int, now: Long, rxNanos: Long) {
         val pos = geo.positionAt(rxNanos) ?: return
-        Locator.add(d.track, pos.lat, pos.lon, rssi.toDouble(), now, pos.accM)
+        // Remember where each sighting began
+        if (d.sightPlaces.size < d.sightings.coerceAtMost(10)) {
+            for (p in d.sightPlaces) d.sightSpreadM = maxOf(d.sightSpreadM, Geo.distanceM(p[0], p[1], pos.lat, pos.lon))
+            d.sightPlaces += doubleArrayOf(pos.lat, pos.lon)
+        }
+        Locator.add(d.track, pos.lat, pos.lon, rssi.toDouble(), now, pos.accM, env)
         // Following: how far you really traveled while it stayed close and in continuous view.
         // Counted from an anchor point in 10 m+ steps, so GPS jitter while standing still adds nothing.
         val gap = if (d.lastObsNanos > 0) rxNanos - d.lastObsNanos else -1L

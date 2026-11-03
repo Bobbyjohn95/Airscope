@@ -17,6 +17,8 @@ class MapData(
     /** Radius the chunk covers (m); fast = roads-only chunk fetched ahead of you at highway speed. */
     val radiusM: Double = ROAD_RADIUS.toDouble(),
     val fast: Boolean = false,
+    /** Tile id ("z/x/y") when this chunk came from a vector tile; empty for Overpass chunks. */
+    val key: String = "",
 ) {
     /** Building containing the point (local meters), or the nearest one within maxM. */
     fun buildingAt(x: Double, y: Double, maxM: Double = 0.0): Building? {
@@ -34,7 +36,7 @@ class MapData(
     }
 
     /** cls: 0 highway/primary, 1 secondary/tertiary, 2 residential/local, 3 service, 4 foot/cycle path. */
-    class Road(val cls: Int, val name: String?, val pts: FloatArray, val minX: Float, val minY: Float, val maxX: Float, val maxY: Float)
+    class Road(val cls: Int, val name: String?, val pts: FloatArray, val minX: Float, val minY: Float, val maxX: Float, val maxY: Float, val labelOnly: Boolean = false)
 
     class Building(val pts: FloatArray, val heightM: Float, val cx: Float, val cy: Float, val radius: Float, val label: String?)
 

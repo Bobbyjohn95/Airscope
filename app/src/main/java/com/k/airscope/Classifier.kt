@@ -343,7 +343,11 @@ object Classifier {
             "raven" in top -> "Raven gunshot detector"
             "soundthinking" in top || "shotspotter" in top -> "SoundThinking / ShotSpotter sensor"
             "flock" in top || "penguin" in top -> "Flock Safety device"
-            "fleet" in top -> "Fleet / vehicle router"
+            "law-enforcement" in top && "vehicle router" in top -> "Police vehicle"
+            "law-enforcement" in top -> "Law-enforcement network"
+            "fire department" in top -> if ("vehicle router" in top) "Fire truck" else "Fire department network"
+            "ambulance" in top -> if ("vehicle router" in top) "Ambulance / EMS vehicle" else "EMS network"
+            "traffic" in top -> "Traffic / enforcement camera"
             else -> "Public-safety equipment"
         }
     }
@@ -381,16 +385,31 @@ object Classifier {
             if (chips.isNotEmpty()) c.facts["Vendor elements"] = chips.joinToString(", ")
         }
 
-        // --- Police / surveillance
+        // --- Police / fire / EMS / cameras
+        // Vehicle routers (Cradlepoint, Sierra Wireless...) ride in police cars but also in buses, delivery vans and
+        // utility trucks, so a router alone is NOT police: the network name has to say who it belongs to.
         val police = ArrayList<Finding>()
         police += Signatures.macFindings(bssid)
         police += Signatures.ssidFindings(ssid)
-        if (ouiVendor != null && police.none { it.points >= 50 }) {
-            if (Signatures.publicSafetyVendor.containsMatchIn(ouiVendor)) police += Finding(30, "Public-safety equipment maker: $ouiVendor")
-            else if (Signatures.fleetRouterVendor.containsMatchIn(ouiVendor) && police.none { "Fleet" in it.text }) {
-                police += Finding(25, "Mobile/fleet router maker: $ouiVendor (police cars, EMS, transit, business)")
-            } else if (Signatures.fleetRouterVendor.containsMatchIn(ouiVendor)) {
-                c.facts["Router maker"] = "$ouiVendor (common in police cars, EMS, buses and businesses)"
+        val fleetRouter = Signatures.fleetRouterSsid.matches(ssid) || (ouiVendor != null && Signatures.fleetRouterVendor.containsMatchIn(ouiVendor))
+        if (ouiVendor != null && police.none { it.points >= 50 } && Signatures.publicSafetyVendor.containsMatchIn(ouiVendor)) {
+            police += Finding(30, "Public-safety equipment maker: $ouiVendor")
+        }
+        val agency = Signatures.agency(ssid)
+        if (agency != null && (agency != Signatures.Agency.COMMERCIAL || fleetRouter)) c.facts["Network name says"] = agency.label
+        when (agency) {
+            Signatures.Agency.POLICE -> police += Finding(if (fleetRouter) 55 else 40,
+                "Law-enforcement network name" + if (fleetRouter) " on a vehicle router (patrol car / unmarked unit)" else "")
+            Signatures.Agency.FIRE -> police += Finding(30, "Fire department network name" + if (fleetRouter) " on a vehicle router (fire truck)" else "")
+            Signatures.Agency.EMS -> police += Finding(30, "Ambulance / EMS network name" + if (fleetRouter) " on a vehicle router" else "")
+            Signatures.Agency.TRAFFIC -> police += Finding(35, "Traffic / enforcement camera network name")
+            else -> Unit
+        }
+        if (fleetRouter) {
+            c.facts["Router maker"] = (ouiVendor ?: "vehicle router") + " (used by police, EMS, transit and delivery fleets)"
+            when {
+                agency == Signatures.Agency.COMMERCIAL -> c.set(Category.VEHICLE, "Commercial / transit fleet router", 60)
+                agency == null && police.none { it.points >= 50 } -> c.set(Category.VEHICLE, "Fleet vehicle router (unknown fleet)", 60)
             }
         }
         c.findings += police

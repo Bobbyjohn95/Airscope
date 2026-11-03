@@ -91,8 +91,10 @@ class MainActivity : Activity() {
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         mode = runCatching { Mode.valueOf(Prefs.getString(this, "mode", Mode.ALL.name)) }.getOrDefault(Mode.ALL)
         setContentView(buildUi())
-        radar.threeD = Prefs.getBool(this, "view3d", true)
-        radar.onViewChanged = { Prefs.putBool(this, "view3d", radar.threeD) }
+        radar.viewMode = runCatching { MapView3D.ViewMode.valueOf(Prefs.getString(this, "view_mode", "CITY")) }.getOrDefault(MapView3D.ViewMode.CITY)
+        radar.onViewChanged = { Prefs.putString(this, "view_mode", radar.viewMode.name) }
+        radar.predictedRoute = { Engine.geo.predicted }
+        radar.onStatusTap = { showDiagnostics() }
         handleIntent(intent)
         headingTracker = HeadingTracker(this)
         radar.headingSource = headingTracker
@@ -360,7 +362,11 @@ class MainActivity : Activity() {
         pm.menu.add(0, 3, 0, if (Engine.alprOn) "Mapped ALPR alerts: ON" else "Mapped ALPR alerts: OFF")
         pm.menu.add(0, 4, 0, "Export CSV")
         pm.menu.add(0, 5, 0, "Clear session")
+        pm.menu.add(0, 7, 0, "Session log (seen again)")
+        pm.menu.add(0, 8, 0, "Diagnostics")
+        pm.menu.add(0, 9, 0, "Offline map for this area…")
         pm.menu.add(0, 6, 0, "About & limits")
+        pm.menu.add(0, 10, 0, "Exit (stop everything)")
         pm.setOnMenuItemClickListener {
             when (it.itemId) {
                 1 -> showSetup(false)
@@ -369,10 +375,215 @@ class MainActivity : Activity() {
                 4 -> export()
                 5 -> { Engine.clear(); selectedKey = null }
                 6 -> showAbout()
+                7 -> showSession()
+                8 -> showDiagnostics()
+                9 -> showOfflineMap()
+                10 -> exitApp()
             }
             true
         }
         pm.show()
+    }
+
+    /** Every device seen since START, ones that came back (↻) first. */
+    private fun showSession() {
+        val rows = Engine.session
+        val tf = SimpleDateFormat("HH:mm", Locale.US)
+        val again = rows.count { it.sightings >= 2 }
+        val sb = StringBuilder()
+        if (Engine.sessionStartedAt == 0L) sb.append("No scan session yet: tap START.\n")
+        else sb.append("Session since ${tf.format(Date(Engine.sessionStartedAt))} · ${rows.size} devices · $again came back (↻)\n")
+        sb.append("↻N = seen N separate times (gone 3+ min in between).\n\n")
+        for (r in rows.take(300)) {
+            val mark = if (r.sightings >= 2) "↻${r.sightings} " else "   "
+            sb.append(mark).append(r.title.take(30)).append('\n')
+            sb.append("    ").append(r.category.short).append(" · ").append(tf.format(Date(r.firstSeen))).append("–")
+                .append(tf.format(Date(r.lastSeen))).append(" · best ").append(r.bestRssi).append(" dBm")
+            if (r.spreadM >= 300) sb.append(" · ").append(fmtDist(r.spreadM)).append(" m apart")
+            if (r.score > 0) sb.append(" · [").append(r.score).append("]")
+            sb.append('\n')
+        }
+        val tv = text(sb.toString(), 11.5f, Color.LTGRAY).apply { setPadding(dp(16), dp(8), dp(16), dp(8)); setTextIsSelectable(true) }
+        AlertDialog.Builder(this).setTitle("Session log")
+            .setView(ScrollView(this).apply { addView(tv) })
+            .setPositiveButton("Close", null)
+            .setNeutralButton("Export CSV") { _, _ -> export() }
+            .show()
+    }
+
+    /** Everything that can go wrong, in plain words, plus a live network test and a copyable report. */
+    private fun showDiagnostics() {
+        if (isFinishing || isDestroyed) return
+        val tv = text(diagnosticsReport(), 11.5f, Color.LTGRAY).apply { setPadding(dp(16), dp(8), dp(16), dp(8)); setTextIsSelectable(true) }
+        val d = AlertDialog.Builder(this).setTitle("Diagnostics")
+            .setView(ScrollView(this).apply { addView(tv) })
+            .setPositiveButton("Test network", null)
+            .setNeutralButton("Copy report", null)
+            .setNegativeButton("Close", null)
+            .create()
+        d.setOnShowListener {
+            val testBtn = d.getButton(AlertDialog.BUTTON_POSITIVE)
+            testBtn.setOnClickListener {
+                testBtn.isEnabled = false
+                tv.text = diagnosticsReport() + "\n\n== Network test ==\nTesting…"
+                Thread {
+                    val res = networkTest()
+                    ui.post { if (!isDestroyed) { tv.text = diagnosticsReport() + "\n\n== Network test ==\n" + res; testBtn.isEnabled = true } }
+                }.apply { isDaemon = true }.start()
+            }
+            d.getButton(AlertDialog.BUTTON_NEUTRAL).setOnClickListener {
+                getSystemService(android.content.ClipboardManager::class.java)
+                    ?.setPrimaryClip(android.content.ClipData.newPlainText("AirScope diagnostics", tv.text))
+                toast("Diagnostics copied: paste it into a message")
+            }
+        }
+        d.show()
+    }
+
+    private fun yesNo(b: Boolean) = if (b) "yes" else "NO"
+
+    private fun diagnosticsReport(): String = buildString {
+        val s = Engine.snapshot
+        val now = System.currentTimeMillis()
+        fun ago(t: Long) = if (t <= 0L) "never" else "${(now - t) / 1000} s ago"
+        append("AirScope build ").append(runCatching { Updater.installedBuild(this@MainActivity) }.getOrDefault(0L))
+            .append(" · scanning: ").append(yesNo(s.scanning)).append('\n')
+        s.warning?.let { append("⚠ ").append(it).append('\n') }
+
+        append("\n== Permissions ==\n")
+        append("Precise location: ").append(yesNo(granted(Manifest.permission.ACCESS_FINE_LOCATION))).append('\n')
+        if (Build.VERSION.SDK_INT >= 31) append("Nearby devices (Bluetooth): ").append(yesNo(granted(Manifest.permission.BLUETOOTH_SCAN))).append('\n')
+        if (Build.VERSION.SDK_INT >= 33) {
+            append("Nearby Wi-Fi: ").append(yesNo(granted(Manifest.permission.NEARBY_WIFI_DEVICES))).append('\n')
+            append("Notifications: ").append(yesNo(granted(Manifest.permission.POST_NOTIFICATIONS))).append('\n')
+        }
+        append("Battery unrestricted: ").append(yesNo(getSystemService(PowerManager::class.java).isIgnoringBatteryOptimizations(packageName))).append('\n')
+
+        append("\n== GPS ==\n")
+        append("Location on: ").append(yesNo(getSystemService(LocationManager::class.java)?.isLocationEnabled == true)).append('\n')
+        if (s.myLat != null) {
+            append("Fix: ±").append(fmt1(s.myAccM)).append(" m · ").append(s.gnss.ifEmpty { "satellites unknown" }).append('\n')
+            append("Speed: ").append((kotlin.math.hypot(s.myVx, s.myVy) * 2.23694).toInt()).append(" mph · distance model: ")
+                .append(if (Engine.envAuto) "auto (" + Engine.env.label + ")" else Engine.env.label).append('\n')
+        } else append("No fix yet: go outside or near a window. Indoors GPS can take minutes.\n")
+
+        append("\n== Internet ==\n")
+        val cm = getSystemService(android.net.ConnectivityManager::class.java)
+        val caps = cm?.activeNetwork?.let { cm.getNetworkCapabilities(it) }
+        if (caps == null) append("No network connection at all.\n") else {
+            val kind = when {
+                caps.hasTransport(android.net.NetworkCapabilities.TRANSPORT_WIFI) -> "Wi-Fi"
+                caps.hasTransport(android.net.NetworkCapabilities.TRANSPORT_CELLULAR) -> "cellular"
+                caps.hasTransport(android.net.NetworkCapabilities.TRANSPORT_VPN) -> "VPN"
+                else -> "other"
+            }
+            append("Connected via ").append(kind)
+                .append(" · internet verified: ").append(yesNo(caps.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_VALIDATED))).append('\n')
+            val ds = cm.restrictBackgroundStatus
+            if (ds == android.net.ConnectivityManager.RESTRICT_BACKGROUND_STATUS_ENABLED) {
+                append("⚠ Data Saver is ON and limits AirScope on cellular in the background: Settings → Network → Data Saver → allow AirScope.\n")
+            }
+        }
+        append("GrapheneOS: the per-app \"Network\" permission must be on (App info → Permissions).\n")
+
+        append("\n== Street map ==\n")
+        append("Status: ").append(s.mapStatus.ifEmpty { "not started (tap START)" }).append('\n')
+        val tm = Engine.geo.tiles(this@MainActivity)
+        val st = tm.stats
+        append("Source: OpenFreeMap vector tiles (fast, cached on the phone)\n")
+        append("Downloaded ").append(st.downloaded).append(" · from phone storage ").append(st.fromDisk)
+            .append(" · failed ").append(st.failed).append(" · last download ").append(st.lastLatencyMs).append(" ms\n")
+        append("Last success: ").append(ago(st.lastOkAt)).append('\n')
+        st.lastError?.let { append("Last error: ").append(it).append(" (").append(ago(st.lastErrorAt)).append(")\n") }
+        val (n, bytes) = tm.diskUsage()
+        append("Saved on phone: ").append(n).append(" tiles, ").append(bytes / (1024 * 1024)).append(" MB (works offline)\n")
+        if (Engine.geo.predicted.isNotEmpty()) append("Route prediction: preloading ").append(Engine.geo.predicted.size).append(" points ahead\n")
+
+        append("\n== Mapped ALPR cameras ==\n").append(s.alprStatus.ifEmpty { if (Engine.alprOn) "not loaded yet" else "off" }).append('\n')
+
+        append("\n== Radios ==\n")
+        val bt = getSystemService(android.bluetooth.BluetoothManager::class.java)?.adapter
+        append("Bluetooth on: ").append(yesNo(bt?.isEnabled == true)).append(" · BLE devices now: ").append(s.devices.count { it.kind == Kind.BLE }).append('\n')
+        append("Wi-Fi networks now: ").append(s.devices.count { it.kind == Kind.WIFI }).append('\n')
+
+        append("\n== Compass ==\n").append(headingTracker.diagnostics()).append('\n')
+
+        append("\n== Web HUD ==\n").append(if (Engine.hudOn) "on · " + (ScanService.hudUrls().firstOrNull() ?: "no Wi-Fi address") else "off").append('\n')
+        append("\n== Updates ==\n").append(Prefs.getString(this@MainActivity, Updater.PREF_RESULT, "never checked")).append('\n')
+
+        val recent = s.timeline.filter { it.tag == "SYS" && now - it.time < 3_600_000 }.take(8)
+        if (recent.isNotEmpty()) {
+            append("\n== Recent events ==\n")
+            for (e in recent) append(timeFmt.format(Date(e.time))).append("  ").append(e.text).append('\n')
+        }
+    }
+
+    /** Background thread: can AirScope reach the map tiles, the ALPR database and GitHub right now? */
+    private fun networkTest(): String = buildString {
+        val s = Engine.snapshot
+        val la = s.myLat ?: 33.92; val lo = s.myLon ?: -84.84
+        val tile = Tiles.around(la, lo, 10.0, TileManager.Z).first()
+        val checks = listOf(
+            "Map tiles (OpenFreeMap)" to TileManager.url(tile),
+            "ALPR data (Overpass)" to "https://overpass-api.de/api/status",
+            "Updates (GitHub)" to UpdateCheck.LATEST_URL,
+        )
+        var okCount = 0
+        for ((name, url) in checks) {
+            val t0 = System.nanoTime()
+            val r = try {
+                val bytes = TileManager.httpGet(url)
+                okCount++
+                "OK in ${(System.nanoTime() - t0) / 1_000_000} ms (${bytes.size / 1024} KB)"
+            } catch (e: Exception) {
+                "FAILED after ${(System.nanoTime() - t0) / 1_000_000} ms: ${e.message ?: e.javaClass.simpleName}"
+            }
+            append(name).append(": ").append(r).append('\n')
+        }
+        when (okCount) {
+            0 -> append("\nNothing reachable: AirScope has no internet. On GrapheneOS check the app's Network permission; also Data Saver, VPN or airplane mode.")
+            checks.size -> append("\nAll reachable.")
+            else -> append("\nSome services are down or blocked; the rest work. Saved map tiles still work offline.")
+        }
+    }
+
+    /** Save the map around you to the phone so it works with no signal. */
+    private fun showOfflineMap() {
+        val s = Engine.snapshot
+        val la = s.myLat; val lo = s.myLon
+        if (la == null || lo == null) { toast("Needs your GPS position: tap START, wait for a fix, then try again"); return }
+        val tm = Engine.geo.tiles(this)
+        val options = listOf(5_000.0, 15_000.0, 30_000.0)
+        val labels = options.map { r ->
+            val n = Tiles.around(la, lo, r, TileManager.Z).size
+            "${(r / 1609).toInt()} mi around here · $n tiles · about ${(n * 70 / 1024).coerceAtLeast(1)} MB"
+        }
+        AlertDialog.Builder(this).setTitle("Offline map (Wi-Fi recommended)")
+            .setItems(labels.toTypedArray()) { _, which ->
+                val radius = options[which]
+                val msg = text("Starting…", 13f, Color.LTGRAY).apply { setPadding(dp(18), dp(12), dp(18), dp(8)) }
+                var cancel = false
+                val prog = AlertDialog.Builder(this).setTitle("Saving map").setView(msg)
+                    .setNegativeButton("Cancel") { _, _ -> cancel = true }.setCancelable(false).show()
+                Thread {
+                    val failed = tm.downloadArea(la, lo, radius, { done, total, fail ->
+                        ui.post { msg.text = "$done of $total tiles" + if (fail > 0) " · $fail failed" else "" }
+                    }, { cancel })
+                    ui.post {
+                        if (!isDestroyed) prog.dismiss()
+                        toast(if (cancel) "Stopped" else if (failed == 0) "Map saved: it now works here with no signal" else "Saved, but $failed tiles failed: try again on Wi-Fi")
+                    }
+                }.apply { isDaemon = true }.start()
+            }
+            .setNegativeButton("Close", null)
+            .show()
+    }
+
+    /** Stop scanning, GPS, HUD and the notification, then close: nothing keeps running. */
+    private fun exitApp() {
+        Prefs.putBool(this, "was_running", false)
+        if (Engine.running) ScanService.stop(this)
+        finishAndRemoveTask()
     }
 
     private fun showUpdates() {
@@ -449,7 +660,8 @@ class MainActivity : Activity() {
         try {
             saveToDownloads("airscope_devices_$stamp.csv", Exporter.devicesCsv(s.devices))
             saveToDownloads("airscope_timeline_$stamp.csv", Exporter.timelineCsv(s.timeline))
-            toast("Saved 2 CSV files to Downloads/AirScope")
+            saveToDownloads("airscope_session_$stamp.csv", Exporter.sessionCsv(Engine.session))
+            toast("Saved 3 CSV files to Downloads/AirScope")
         } catch (e: Exception) {
             toast("Export failed: ${e.message}")
         }
@@ -511,8 +723,9 @@ class MainActivity : Activity() {
     private fun refresh() {
         val s = Engine.snapshot
         val vis = s.devices.filter { mode.matches(it.category) }
-        radar.update(s, Engine.geo.chunks, selectedKey)
+        radar.update(s, Engine.geo.chunks, selectedKey, Engine.geo.origin)
         headingTracker.updateLocation(s.myLat, s.myLon)
+        headingTracker.updateMotion(kotlin.math.hypot(s.myVx, s.myVy), s.myCourse, s.myAccM)
         Engine.heading = headingTracker.facing
         Engine.headingAcc = headingTracker.facingAcc
         if (headingTracker.needsCalibration && System.currentTimeMillis() - lastCalToast > 300_000L) {
@@ -540,13 +753,14 @@ class MainActivity : Activity() {
             if (now - hudUrlAt > 10_000) { hudUrlAt = now; hudUrl = ScanService.hudUrls().firstOrNull() }
             hudUrl?.let { sb.append("\nHUD ").append(it) }
         }
+        if (s.scanning && s.mapStatus.isNotEmpty() && radar.viewMode != MapView3D.ViewMode.RADAR) sb.append("\nMap: ").append(s.mapStatus.take(70))
         headingTracker.label()?.let { sb.append("\n").append(it) }
         s.warning?.let { sb.append("\n⚠ ").append(it) }
-        status.text = sb.toString()
+        setIfChanged(status, sb.toString())
         status.setTextColor(if (s.warning != null) Ui.AMBER else Ui.DIM)
 
         btnScan.text = if (s.scanning) "STOP" else "START"
-        btnView.text = if (radar.threeD) "3D" else "2D"
+        btnView.text = radar.viewMode.label
         btnCompass.text = if (radar.headingUp) "⬆" else "N"
         btnEnv.text = if (Engine.envAuto) "ENV:AUTO" else "ENV:" + Engine.env.name
         btnLog.text = if (showTimeline) "RADAR" else "LOG"
@@ -567,14 +781,14 @@ class MainActivity : Activity() {
     private fun updateTrack(s: Snapshot) {
         val d = selectedKey?.let { k -> s.devices.firstOrNull { it.key == k } }
         if (d == null) {
-            trackBar.text = if (selectedKey != null) "Signal lost: keep moving slowly, or tap another device" else
+            trackBarText = if (selectedKey != null) "Signal lost: keep moving slowly, or tap another device" else
                 "Tap a device to track it · long-press a row for full details"
             trackBar.setTextColor(Ui.DIM)
             return
         }
         if (d.kind == Kind.MAP) {
             val b = d.bearing!!.toDouble()
-            trackBar.text = "TRACK ${d.title.take(22)}  ${fmtDist(d.dist)} m ${Geo.cardinal16(b)}  ${guidance(s, b)}\n" +
+            trackBarText = "TRACK ${d.title.take(22)}  ${fmtDist(d.dist)} m ${Geo.cardinal16(b)}  ${guidance(s, b)}\n" +
                 "Exact mapped position (OpenStreetMap)"
             trackBar.setTextColor(Ui.VIOLET)
             return
@@ -592,9 +806,11 @@ class MainActivity : Activity() {
                 val db = Geo.distanceM(s.myLat, s.myLon, cb.first, cb.second); val bb = Geo.bearingDeg(s.myLat, s.myLon, cb.first, cb.second)
                 "2 possible spots: ${fmtDist(da)} m ${Geo.cardinal16(ba)} or ${fmtDist(db)} m ${Geo.cardinal16(bb)} · walk sideways to settle it"
             }
+            d.moving -> "it's moving (or being carried): no fixed spot, follow the signal strength"
+            d.followM > 300 -> "moving with you (${fmtDist(d.followM)} so far)"
             else -> "direction unknown: walk ~${maxOf(10, (d.dist * 0.4).toInt())} m around (moved ${d.spreadM.toInt()} m, ${d.spots} spots)"
         }
-        trackBar.text = "TRACK ${d.title.take(20)}  ${d.avg}dBm  ~${fmtDist(d.dist)}m (${fmtDist(d.lo)}–${fmtDist(d.hi)})\n" +
+        trackBarText = "TRACK ${d.title.take(20)}  ${d.avg}dBm  ~${fmtDist(d.dist)}m (${fmtDist(d.lo)}–${fmtDist(d.hi)})\n" +
             "[" + "█".repeat(bars) + "░".repeat(12 - bars) + "] " + where
         trackBar.setTextColor(Ui.levelColor(d.level))
     }
@@ -607,11 +823,18 @@ class MainActivity : Activity() {
         return HeadingMath.turn(bearing, f, headingTracker.facingAcc)
     }
 
+    private var trackBarText: String
+        get() = trackBar.text.toString()
+        set(v) { setIfChanged(trackBar, v) }
+
+    private fun setIfChanged(tv: TextView, v: String) { if (tv.text.toString() != v) tv.text = v }
+
     private fun deviceLine(d: DeviceView): String {
         val icon = when (d.kind) { Kind.WIFI -> "●"; Kind.BLE -> "◆"; Kind.MAP -> "■" }
         val sig = if (d.kind == Kind.MAP) "map" else "${d.avg}dBm"
         val flags = if (d.flags.isEmpty()) "" else "\n   ! " + d.flags.take(3).joinToString("; ")
-        return "$icon ${d.title.take(34)}\n   ${sig.padEnd(7)} ~${fmtDist(d.dist)}m (${fmtDist(d.lo)}–${fmtDist(d.hi)})  " +
+        val again = if (d.againMark.isNotEmpty()) "${d.againMark} " else ""
+        return "$icon $again${d.title.take(34)}\n   ${sig.padEnd(7)} ~${fmtDist(d.dist)}m (${fmtDist(d.lo)}–${fmtDist(d.hi)})  " +
             "${d.category.short}${if (d.vendor.isNotBlank() && !d.title.contains(d.vendor)) " · " + d.vendor.take(18) else ""}  [${d.score}]$flags"
     }
 
@@ -709,9 +932,14 @@ class MainActivity : Activity() {
 
         btnScan = button("START") { toggleScan() }
         btnView = button("3D") {
-            radar.threeD = !radar.threeD
-            Prefs.putBool(this, "view3d", radar.threeD)
-            toast(if (radar.threeD) "3D: two-finger drag up/down to tilt, twist to rotate" else "2D map")
+            val m = radar.cycleView()
+            Prefs.putString(this, "view_mode", m.name)
+            toast(when (m) {
+                MapView3D.ViewMode.RADAR -> "Radar: devices by distance, no street map"
+                MapView3D.ViewMode.MAP -> "Street map (flat)"
+                MapView3D.ViewMode.CITY -> "3D city: two-finger drag up/down to tilt, twist to rotate"
+                MapView3D.ViewMode.DRIVE -> "Drive: turns with the road, zooms with speed, looks ahead"
+            })
         }
         btnEnv = button("ENV") { cycleEnv() }
         btnLog = button("LOG") { showTimeline = !showTimeline; lastListVersion = -1 }

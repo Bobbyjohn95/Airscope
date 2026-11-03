@@ -342,7 +342,7 @@
         ctx.font = "9.5px ui-monospace, Menlo, monospace"; let n = 0; const seen = new Set();
         for (let r = mapData.roads.length - 1; r >= 0 && n < 12; r--) {
           const [c, name, pts] = mapData.roads[r];
-          if (!name || c > 2 || seen.has(name)) continue;
+          if (!name || c % 10 > 2 || seen.has(name)) continue; // 10+ = label-only street name line
           let bx = 0, by = 0, bd = 1e9;
           for (let i = 0; i + 3 < pts.length; i += 2) {
             const vx = pts[i + 2] - pts[i], vy = pts[i + 3] - pts[i + 1], l2 = vx * vx + vy * vy;
@@ -470,7 +470,7 @@
     ctx.fillText((nice >= 1000 ? nice / 1000 + " km" : nice + " m"), 10, h - 28);
     ctx.fillStyle = "rgba(5,9,12,0.8)"; ctx.fillRect(0, h - 18, w, 18);
     ctx.fillStyle = "#4f8a99"; const lg = ["● located  ○ unknown  ┄ 2 possible spots", "● located  ○ unknown  ┄ 2 spots", "● located  ○ unknown"].find((t) => ctx.measureText(t).width < w - 150); if (lg) ctx.fillText(lg, 10, h - 6);
-    const attr = "© OpenStreetMap"; ctx.fillText(attr, w - ctx.measureText(attr).width - 6, h - 6);
+    const attr = "© OpenMapTiles © OpenStreetMap"; ctx.fillText(attr, w - ctx.measureText(attr).width - 6, h - 6);
     const msg = !state.me && source === "live" ? "Waiting for the phone's GPS…" : !mapData && source === "live" ? "Street map loading on the phone…" : null;
     if (msg) { ctx.fillStyle = "#ffc400"; ctx.font = "11px ui-monospace, Menlo, monospace"; ctx.fillText(msg, w / 2 - ctx.measureText(msg).width / 2, 20); }
     if (!follow) { ctx.fillStyle = "#ffc400"; const t = "free view · tap ◎ to follow"; ctx.fillText(t, w / 2 - ctx.measureText(t).width / 2, h - 36); }

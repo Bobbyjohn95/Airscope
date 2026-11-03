@@ -154,10 +154,16 @@ else
 fi
 
 note "-- modes, 2D view, log"
-tap "POLICE/ALPR"; shot 06-mode-police
-tap "ALL"
-tap "3D"; sleep 2; shot 07-2d-view
-tap "2D"
+if grep -qE "tiles · [0-9]+ roads" "$OUT/03-scanning-walking.txt"; then
+  note "  map tiles loaded ✓ ($(grep -oE '[0-9]+ tiles · [0-9]+ roads · [0-9]+ buildings' "$OUT/03-scanning-walking.txt" | head -1))"
+else
+  note "  map tiles NOT loaded: $(grep -iE 'map|tiles' "$OUT/03-scanning-walking.txt" | head -1)"
+fi
+note "-- view modes"
+tap "3D"; sleep 3; shot 06-view-drive
+tap "DRIVE"; sleep 3; shot 07-view-radar
+tap "RADAR"; sleep 3; shot 07b-view-map
+tap "MAP"; sleep 2
 tap "LOG"; shot 08-log
 tap "RADAR"
 
@@ -174,6 +180,21 @@ if tap "MORE ▾"; then
     grep -E "Result|Signed|one-time" "$OUT/11-updates.txt" | sed 's/^/  /' | tee -a "$SUMMARY"
     tap "Close" || adb shell input keyevent 4
   fi
+fi
+
+note "-- diagnostics + network test"
+if tap "MORE ▾"; then
+  if tap "Diagnostics"; then
+    shot 11b-diagnostics
+    tap "Test network"; sleep 12
+    screen_text > "$OUT/11c-diagnostics.txt"
+    shot 11c-diagnostics-network
+    grep -E "Map tiles|ALPR data|Updates \(GitHub\)|reachable" "$OUT/11c-diagnostics.txt" | sed 's/^/  /' | tee -a "$SUMMARY"
+    tap "Close" || adb shell input keyevent 4
+  fi
+fi
+if tap "MORE ▾"; then
+  if tap "Session log (seen again)"; then shot 11d-session-log; tap "Close" || adb shell input keyevent 4; fi
 fi
 
 note "-- web HUD"

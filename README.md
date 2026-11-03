@@ -4,6 +4,32 @@ A personal signal-observation app for the Pixel 8 Pro (Android 10+, GrapheneOS-f
 It **only listens**. It reads Wi-Fi beacons and Bluetooth LE advertisements that devices already
 broadcast. It never connects to, jams, deauths or transmits to anything.
 
+## What's new in v2.4: fast map, honest placement, steady compass, diagnostics
+- **New map engine:** OpenFreeMap vector tiles (pre-built, CDN-served) instead of live Overpass queries. Overpass
+  allows each internet address only two queries at a time, and cell carriers put many customers behind one address,
+  which is why the map often failed off Wi-Fi. Tiles are saved on the phone (places you've been work with no signal),
+  and **MORE → Offline map** saves 3/9/19 miles around you in one go. Overpass remains only as a fallback.
+- **Route prediction while driving:** follows the road you're on through bends and junctions and preloads the map
+  ahead (dashed line). It predicts roads only, never devices.
+- **View modes (VIEW button):** RADAR (no map) · MAP (flat) · 3D (city) · DRIVE (turns with the road, zooms with
+  speed, looks ahead).
+- **Device placement rebuilt and measured** on 1,000 simulated walks and drives with realistic radio fading:
+  "way off" placements fell from 86 to 8, and the error circles are now honest (the truth is inside them most of the
+  time instead of 20%). Devices that move, or are only heard faintly, or were passed on one straight road, are no
+  longer pinned to a wrong spot: they show distance or "2 possible spots" instead.
+- **Facing direction:** gyro-stabilized compass. The magnetometer is only used while the magnetic field matches
+  Earth's (strength and dip angle for where you are), so cars, magnetic mounts and steel no longer make it spin.
+  GPS travel direction takes over while driving.
+- **POLICE/EMS/ALPR mode only shows** police, fire, EMS, law-enforcement gear and traffic/ALPR cameras. Vehicle
+  routers (also used by delivery, transit and utility fleets) count only when their network name says police, sheriff,
+  fire, EMS etc.; unknown fleets go to VEHICLES.
+- **Session log:** devices that disappear for 3+ minutes and come back in the same session get **↻N**; MORE →
+  Session log lists everything seen since START (also exported as CSV).
+- **Diagnostics (MORE → Diagnostics, or tap the map's ⓘ warning):** permissions, GPS, internet (Data Saver,
+  GrapheneOS Network permission), map tiles, radios, compass, HUD, updates, a live network test and "Copy report".
+- **Closing:** removing AirScope from Recents stops everything (scan, GPS, HUD, notification). Going to the home screen
+  keeps it scanning. MORE → Exit also stops everything.
+
 ## What's new in v2.3: tested on a real Android emulator, silent updates, fixes
 - **Every build is tested before it reaches your phone.** GitHub runs it on an Android 15 emulator: permissions,
   walking and 70 mph GPS, every main screen, the web HUD, the updater and screen-off scanning. A build that crashes

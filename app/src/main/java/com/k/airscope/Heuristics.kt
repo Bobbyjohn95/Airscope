@@ -58,6 +58,11 @@ object Heuristics {
                 }
             }
             if (d.smoothRssi > -45) { s += 10; f += "Very close (about 1 m)" }
+            // Came back this session somewhere else: a classic sign of something traveling with you
+            if (d.sightings >= 2 && d.sightSpreadM >= 1000 && d.category != Category.NETWORK && d.category != Category.CAMERA_IOT) {
+                val pts = if (d.bleType in Classifier.TRACKERS) 20 else 10
+                s += pts; f += "Showed up again ${fmtDist(d.sightSpreadM)} m from where it was first seen (${d.sightings}× this session)"
+            }
             if (d.followM > 400) {
                 val km = String.format(java.util.Locale.US, "%.1f", d.followM / 1000)
                 when {

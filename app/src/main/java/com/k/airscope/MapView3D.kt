@@ -58,9 +58,31 @@ class MapView3D(ctx: Context) : View(ctx) {
     var headingAcc: Float = 25f
     /** Read every frame for a smooth needle. */
     var headingSource: HeadingTracker? = null
-    private var keepPitch = false
-    var threeD: Boolean = true
-        set(v) { field = v; if (!keepPitch) tgtPitch = if (v) 52f else 0f }
+    /** RADAR: classic radar, no map · MAP: flat street map · CITY: tilted 3D buildings · DRIVE: heading-up, auto-zoom, looks ahead. */
+    enum class ViewMode(val label: String, val pitch: Float) { RADAR("RADAR", 0f), MAP("MAP", 0f), CITY("3D", 52f), DRIVE("DRIVE", 45f) }
+
+    var viewMode: ViewMode = ViewMode.CITY
+        set(v) {
+            val was = field
+            field = v
+            tgtPitch = v.pitch
+            if (v == ViewMode.DRIVE) { headingUp = true; follow = true }
+            else if (was == ViewMode.DRIVE) headingUp = false
+            invalidate()
+        }
+
+    fun cycleView(): ViewMode {
+        viewMode = ViewMode.values()[(viewMode.ordinal + 1) % ViewMode.values().size]
+        return viewMode
+    }
+
+    /** Tilted (3D-looking) right now. */
+    val threeD: Boolean get() = pitch > 6f
+    /** Predicted road ahead while driving (lat, lon), drawn as a dashed line. */
+    var predictedRoute: () -> List<DoubleArray> = { emptyList() }
+    /** Tapped the map's warning line (e.g. map not loading): open diagnostics. */
+    var onStatusTap: (() -> Unit)? = null
+    private var statusShown = false
     /** Called when a gesture changes 2D/3D, so the choice can be saved. */
     var onViewChanged: (() -> Unit)? = null
     var headingUp: Boolean = false
@@ -134,14 +156,15 @@ class MapView3D(ctx: Context) : View(ctx) {
     private val roadWidths = floatArrayOf(4.2f, 3.0f, 2.0f, 1.3f, 1.0f)
 
     /** [cs] = street-map chunks, newest first (the newest one defines the drawing frame). */
-    fun update(s: Snapshot, cs: List<MapData>, selected: String?) {
+    /** [origin]: fixed drawing frame (from the GPS tracker) so newly loaded tiles never shift the view. */
+    fun update(s: Snapshot, cs: List<MapData>, selected: String?, origin: LocalProj? = null) {
         if (s !== snap || selected != selectedKey || cs !== chunks) invalidate()
         snap = s
         selectedKey = selected
-        if (cs !== chunks) {
+        if (cs !== chunks || (origin != null && origin !== frame)) {
+            if (cs !== chunks) bldCache.clear()
             chunks = cs
-            bldCache.clear()
-            val nf = cs.firstOrNull()?.proj
+            val nf = origin ?: cs.firstOrNull()?.proj
             val old = frame
             if (nf != null && (old == null || old.lat0 != nf.lat0 || old.lon0 != nf.lon0)) {
                 if (old != null) {
@@ -233,7 +256,9 @@ class MapView3D(ctx: Context) : View(ctx) {
             c.drawPath(path, fill)
         }
 
-        if (f != null && chunks.isNotEmpty()) {
+        if (viewMode == ViewMode.RADAR) {
+            drawRadar(c, ux, uy)
+        } else if (f != null && chunks.isNotEmpty()) {
             // Older chunks first so the newest (most detailed, nearest you) draws on top
             val order = chunks.asReversed()
             for (m in order) withChunk(f, m) { drawAreas(c, m, ext) }
@@ -241,6 +266,7 @@ class MapView3D(ctx: Context) : View(ctx) {
             for ((i, m) in chunks.withIndex()) withChunk(f, m) { drawBuildings(c, m, ext, f, i) }
             val seen = HashSet<String>(); roadLabelCount = 0
             for (m in chunks) withChunk(f, m) { drawRoadLabels(c, m, ext, seen) }
+            drawPredicted(c, f)
         } else drawGrid(c)
 
         drawUser(c, ux, uy, now)
@@ -268,7 +294,13 @@ class MapView3D(ctx: Context) : View(ctx) {
 
     private fun stepCamera(dt: Double) {
         val f = frame
-        val me = f?.let { userXY(it) }
+        var me = f?.let { userXY(it) }
+        if (viewMode == ViewMode.DRIVE && me != null) {
+            // Zoom out with speed and look ahead along the road, like a car navigation screen
+            tgtRange = (120.0 + speed * 10).coerceIn(120.0, 900.0)
+            val dir = Math.toRadians(yaw.toDouble())
+            me = (me.first + sin(dir) * rangeM * 0.35) to (me.second + cos(dir) * rangeM * 0.35)
+        }
         if (follow && me != null) {
             // Move with your velocity, then close any remaining gap: no trailing lag at speed
             camX += snap.myVx * dt; camY += snap.myVy * dt
@@ -283,9 +315,9 @@ class MapView3D(ctx: Context) : View(ctx) {
         val a = (1 - exp(-dt / 0.22)).toFloat()
         rangeM = exp(ln(rangeM) + (ln(tgtRange) - ln(rangeM)) * a)
         if (headingUp) {
-            // Driving: turn the map with your GPS course (a compass inside a car is unreliable)
-            val crs = snap.myCourse
-            if (speed > 5.0 && crs != null) tgtYaw = crs.toFloat() else heading?.let { tgtYaw = it }
+            // Driving: the GPS travel direction (with hysteresis); on foot: where the phone faces
+            val mh = headingSource?.mapHeading ?: heading?.toDouble()
+            mh?.let { tgtYaw = it.toFloat() }
         }
         var dy = ((tgtYaw - yaw) % 360 + 540) % 360 - 180
         if (abs(dy) < 0.05f) dy = 0f
@@ -360,7 +392,7 @@ class MapView3D(ctx: Context) : View(ctx) {
             if (cls >= 3 && rangeM > 900) continue
             var n = 0
             for (r in m.roads) {
-                if (r.cls != cls || !visible(r.minX, r.minY, r.maxX, r.maxY, ext)) continue
+                if (r.cls != cls || r.labelOnly || !visible(r.minX, r.minY, r.maxX, r.maxY, ext)) continue
                 var px = 0f; var py = 0f; var have = false
                 var i = 0
                 while (i < r.pts.size) {
@@ -404,11 +436,16 @@ class MapView3D(ctx: Context) : View(ctx) {
                 .takeLast(500)
                 .also { bldCache[m] = BldCache(cx, cy, ext, it) }
         }
-        val tall = pitch > 8f
+        val tallMode = pitch > 8f
+        val extrudeR = rangeM * 1.4
+        val driveR = if (viewMode == ViewMode.DRIVE) 350.0 else Double.MAX_VALUE
         for (b in near) {
+            val dCam = hypot(b.cx - cx, b.cy - cy)
+            if (dCam > driveR) continue
             if (!polyPath(b.pts, 0.0)) continue
             fill.color = cBldFill; fill.alpha = 255
             c.drawPath(path, fill)
+            val tall = tallMode && dCam < extrudeR
             if (!tall) {
                 stroke.color = cBldEdge; stroke.strokeWidth = 1f * dp; stroke.alpha = 255
                 c.drawPath(path, stroke)
@@ -463,6 +500,61 @@ class MapView3D(ctx: Context) : View(ctx) {
             c.drawRect(pr[0] - tw / 2 - 3 * dp, pr[1] - 10 * dp, pr[0] + tw / 2 + 3 * dp, pr[1] + 3 * dp, fill)
             c.drawText(name, pr[0] - tw / 2, pr[1], roadLabel)
         }
+    }
+
+    /** Classic radar: range rings with distances, a sweep, and the compass ring. No street map. */
+    private fun drawRadar(c: Canvas, ux: Double, uy: Double) {
+        stroke.color = Ui.GRID; stroke.strokeWidth = 1f * dp; stroke.alpha = 255
+        val nice = doubleArrayOf(5.0, 10.0, 20.0, 25.0, 50.0, 100.0, 200.0, 250.0, 500.0, 1000.0, 2000.0)
+        val step = nice.firstOrNull { it >= rangeM / 4 } ?: 2000.0
+        text.color = Ui.DIM
+        var r = step
+        while (r <= rangeM * 1.3) {
+            groundCircle(ux, uy, r, 72); c.drawPath(path, stroke)
+            if (project(ux, uy + r, 0.0)) c.drawText(if (r >= 1000) "${(r / 1000).toInt()} km" else "${r.toInt()} m", pr[0] + 3 * dp, pr[1] - 3 * dp, text)
+            r += step
+        }
+        // Cross hairs and compass letters
+        for ((a, l) in listOf(0.0 to "N", 90.0 to "E", 180.0 to "S", 270.0 to "W")) {
+            val rr = rangeM * 1.25
+            val ex = ux + rr * sin(Math.toRadians(a)); val ey = uy + rr * cos(Math.toRadians(a))
+            if (project(ux, uy, 0.0)) {
+                val sx = pr[0]; val sy = pr[1]
+                if (project(ex, ey, 0.0)) {
+                    c.drawLine(sx, sy, pr[0], pr[1], stroke)
+                    text.color = if (l == "N") Ui.RED else Ui.DIM
+                    c.drawText(l, pr[0] - 4 * dp, pr[1] + 4 * dp, text)
+                }
+            }
+        }
+        // Sweep
+        if (snap.scanning && project(ux, uy, 0.0)) {
+            val sx = pr[0]; val sy = pr[1]
+            val a = Math.toRadians(pulse * 360.0)
+            for (k in 0..14) {
+                val aa = a - k * 0.035
+                if (project(ux + rangeM * 1.3 * sin(aa), uy + rangeM * 1.3 * cos(aa), 0.0)) {
+                    stroke.color = Ui.CYAN; stroke.alpha = (90 * (1 - k / 15f)).toInt(); stroke.strokeWidth = 2f * dp
+                    c.drawLine(sx, sy, pr[0], pr[1], stroke)
+                }
+            }
+            stroke.alpha = 255
+        }
+    }
+
+    /** Dashed line along the road the app expects you to take (driving): its tiles are preloaded. */
+    private fun drawPredicted(c: Canvas, f: LocalProj) {
+        val pts = predictedRoute()
+        if (pts.size < 2) return
+        path.reset()
+        var any = false
+        for (p in pts) {
+            if (!project(f.x(p[1]), f.y(p[0]), 0.0)) continue
+            if (!any) { path.moveTo(pr[0], pr[1]); any = true } else path.lineTo(pr[0], pr[1])
+        }
+        if (!any) return
+        dash.color = Ui.CYAN; dash.alpha = 110
+        c.drawPath(path, dash)
     }
 
     private fun drawGrid(c: Canvas) {
@@ -645,10 +737,11 @@ class MapView3D(ctx: Context) : View(ctx) {
                 stroke.color = Color.WHITE; stroke.strokeWidth = 2f * dp; stroke.alpha = 255
                 c.drawCircle(sx, sy, size + 7 * dp, stroke)
             }
-            if (sel || d.level == Level.HIGH || d.category == Category.POLICE) {
+            if (sel || d.level == Level.HIGH || d.category == Category.POLICE || d.sightings >= 2) {
                 val p = if (sel) label else text
                 p.color = if (sel) Color.WHITE else col
-                val t = (if (d.kind == Kind.MAP) d.title.removeSuffix(" (mapped)") else d.title) + if (!it.placed) " ?" else ""
+                val again = if (d.sightings >= 2) d.againMark + " " else ""
+                val t = again + (if (d.kind == Kind.MAP) d.title.removeSuffix(" (mapped)") else d.title) + if (!it.placed) " ?" else ""
                 val s = t.take(if (sel) 28 else 18)
                 fill.color = Ui.BG; fill.alpha = 150
                 c.drawRect(sx + size + 3 * dp, sy - 8 * dp, sx + size + 6 * dp + p.measureText(s), sy + 4 * dp, fill)
@@ -699,7 +792,7 @@ class MapView3D(ctx: Context) : View(ctx) {
         fill.color = Ui.BG; fill.alpha = 200
         c.drawRect(0f, h - 18 * dp, w, h, fill)
         text.color = Ui.DIM
-        val attr = "© OpenStreetMap"
+        val attr = "© OpenMapTiles © OpenStreetMap"
         val attrW = text.measureText(attr)
         c.drawText(attr, w - attrW - 6 * dp, h - 6 * dp, text)
         // Legend: the longest version that fits beside the attribution
@@ -707,15 +800,24 @@ class MapView3D(ctx: Context) : View(ctx) {
         listOf("● located  ○ walk to locate  ┄ 2 possible spots", "● located  ○ unknown  ┄ 2 spots", "● located  ○ unknown")
             .firstOrNull { text.measureText(it) <= room }?.let { c.drawText(it, 10 * dp, h - 6 * dp, text) }
 
+        val problem = snap.mapStatus.contains("unreachable") || snap.mapStatus.contains("failing")
         val msg = when {
-            snap.myLat == null -> "Waiting for GPS… (go outside or near a window)"
-            map == null -> "Street map: " + snap.mapStatus.ifEmpty { "loading…" }
+            snap.myLat == null -> "Waiting for GPS… (go outside or near a window) ⓘ"
+            viewMode == ViewMode.RADAR -> null
+            map == null -> "Map: " + snap.mapStatus.ifEmpty { "loading…" } + " ⓘ"
+            problem -> "Map problem: tap ⓘ for details"
             else -> null
         }
+        statusShown = msg != null
         if (msg != null) {
             label.color = Ui.AMBER
-            c.drawText(msg, w / 2 - label.measureText(msg) / 2, 20 * dp, label)
+            val m = if (label.measureText(msg) > w - 120 * dp) msg.take(46) + "… ⓘ" else msg
+            fill.color = Ui.BG; fill.alpha = 200
+            c.drawRect(w / 2 - label.measureText(m) / 2 - 6 * dp, 6 * dp, w / 2 + label.measureText(m) / 2 + 6 * dp, 26 * dp, fill)
+            c.drawText(m, w / 2 - label.measureText(m) / 2, 20 * dp, label)
         }
+        text.color = Ui.DIM
+        c.drawText(viewMode.label, w - 70 * dp - text.measureText(viewMode.label), 20 * dp, text)
         if (!follow) {
             text.color = Ui.AMBER
             c.drawText("free view · tap ◎ to follow", w / 2 - text.measureText("free view · tap ◎ to follow") / 2, h - 36 * dp, text)
@@ -824,7 +926,9 @@ class MapView3D(ctx: Context) : View(ctx) {
                 twoFinger = false
                 if (tilting) {
                     // Keep the tilt you chose; just record whether that counts as 3D.
-                    keepPitch = true; threeD = pitch > 6f; keepPitch = false
+                    // Tilting switches between the flat map and 3D, keeping the tilt you chose
+                    if (viewMode == ViewMode.MAP && pitch > 6f) { viewMode = ViewMode.CITY; tgtPitch = pitch }
+                    else if (viewMode == ViewMode.CITY && pitch <= 6f) { viewMode = ViewMode.MAP; tgtPitch = pitch }
                     onViewChanged?.invoke()
                 }
                 rotating = false; tilting = false
@@ -839,6 +943,7 @@ class MapView3D(ctx: Context) : View(ctx) {
     }
 
     private fun tap(x: Float, y: Float) {
+        if (statusShown && y < 30 * dp && x > 40 * dp && x < width - 70 * dp) { onStatusTap?.invoke(); return }
         var best: DeviceView? = null
         var bd = (38 * dp) * (38 * dp)
         for (i in hitD.indices) {
