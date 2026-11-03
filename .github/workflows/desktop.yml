@@ -65,8 +65,8 @@ jobs:
           pyinstaller --noconfirm --onedir --name airscope-desktop \
             --add-data "airscope_desktop/hud.html${SEP}." \
             --add-data "airscope_desktop/db${SEP}db" \
-            --collect-all bleak \
-            airscope_desktop/__main__.py
+            --collect-all bleak --paths . \
+            run.py
           cp README.md dist/airscope-desktop/README.md
       - name: Smoke the build
         shell: bash
