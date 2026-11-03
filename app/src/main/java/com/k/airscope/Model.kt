@@ -28,15 +28,19 @@ enum class Mode(val label: String, val category: Category?) {
     VEHICLES("VEHICLES", Category.VEHICLE),
     DRONES("DRONES", Category.DRONE),
     POLICE("POLICE/EMS/ALPR", Category.POLICE),
-    NETWORKS("NETWORKS", Category.NETWORK);
+    NETWORKS("NETWORKS", Category.NETWORK),
+    /** Not a category: anything with a security finding (attack tool, evil twin, weak network, following you). */
+    SECURITY("SECURITY", null);
 
     fun matches(c: Category) = category == null || category == c
+    fun matches(d: DeviceView) = if (this == SECURITY) d.secTags.isNotEmpty() else matches(d.category)
 }
 
 /**
  * Text search / watch rules (pure logic). A term matches a device if it appears in its name, broadcast name, maker,
  * label, type, ID (MAC), owner or any detail. Several words = all must match. "cat:tracker" matches a category,
- * "owner:sarah" a device whose name says who owns it ("owner:" alone = any named owner).
+ * "owner:sarah" a device whose name says who owns it ("owner:" alone = any named owner), "sec:" any security finding
+ * ("sec:attack", "sec:evil", "sec:weak", "sec:follow").
  */
 object DeviceFilter {
     fun matches(d: Device, query: String): Boolean {
@@ -50,6 +54,7 @@ object DeviceFilter {
             when {
                 term.startsWith("cat:") -> d.category.name.lowercase(Locale.US).startsWith(term.removePrefix("cat:")) ||
                     d.category.short.lowercase(Locale.US).startsWith(term.removePrefix("cat:"))
+                term.startsWith("sec:") -> d.secTags.any { term.length == 4 || it.startsWith(term.removePrefix("sec:")) }
                 term.startsWith("owner:") -> d.owner.lowercase(Locale.US).let { it.isNotEmpty() && (term.length == 6 || it.contains(term.removePrefix("owner:"))) }
                 else -> hay.value.contains(term)
             }
@@ -119,6 +124,8 @@ class Device(val id: String, val kind: Kind, now: Long) {
     // Wi-Fi
     var frequency: Int = 0
     var security: String = ""
+    /** WPS advertised in the beacon. */
+    var wps: Boolean = false
     var rttCapable: Boolean = false
     var rttMeters: Double? = null
     var rttStd: Double? = null
@@ -157,6 +164,10 @@ class Device(val id: String, val kind: Kind, now: Long) {
     var sideFromMap = false
 
     // Scoring
+    /** Security tags set by the scorer: attack-tool, evil-twin, weak-wifi, following. Empty = nothing to report. */
+    var secTags: List<String> = emptyList()
+    /** The classifier found attack/audit-hardware evidence (Threats). */
+    var attackTool: Boolean = false
     var flags: List<String> = emptyList()
     var score: Int = 0
     var maxLevelLogged: Int = 0
@@ -220,7 +231,7 @@ class Device(val id: String, val kind: Kind, now: Long) {
     }
 
     fun detail(): String = when (kind) {
-        Kind.WIFI -> listOf(vendor, "$band ch$channel", Heuristics.securityLabel(security))
+        Kind.WIFI -> listOf(vendor, "$band ch$channel", Heuristics.securityLabel(security) + " " + WifiSecurity.grade(security, wps).first + (if (wps) " WPS" else ""))
             .filter { it.isNotBlank() }.joinToString(" · ")
         else -> listOf(vendor, category.short).filter { it.isNotBlank() }.joinToString(" · ")
     }

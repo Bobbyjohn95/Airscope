@@ -13,6 +13,8 @@ class Classification {
     val facts = LinkedHashMap<String, String>()
     val findings = ArrayList<Finding>()
     var remoteId: RemoteId.Info? = null
+    /** Attack/audit hardware evidence found (see Threats). */
+    var attackTool = false
     var prio = 0
         private set
 
@@ -169,6 +171,14 @@ object Classifier {
         if (psVendor != null && police.none { it.points >= 50 }) police += Finding(30, "Public-safety equipment maker: $psVendor")
         c.findings += police
         if (police.sumOf { it.points } >= 25) c.set(Category.POLICE, policeLabel(police), 100)
+
+        // --- Attack / audit hardware (Flipper, Marauder, O.MG, Hak5): a hint from the name, never proof
+        val attack = Threats.bleNameFindings(adv.name) + (if (randomAddr != true) Threats.macFindings(addr) else emptyList())
+        if (attack.isNotEmpty()) {
+            c.findings += attack
+            c.attackTool = true
+            Threats.label(attack)?.let { c.set(Category.NETWORK, it, 95) }
+        }
 
         // --- Drone Remote ID
         adv.svcData16[0xFFFA]?.let { RemoteId.parseBle(it) }?.let { rid ->
@@ -414,6 +424,17 @@ object Classifier {
         }
         c.findings += police
         if (police.sumOf { it.points } >= 25) c.set(Category.POLICE, policeLabel(police), 100)
+
+        // --- Attack / audit hardware (Pineapple, deauther, Marauder, O.MG): a hint from the name, never proof
+        val attack = Threats.ssidFindings(ssid) + Threats.macFindings(bssid)
+        if (attack.isNotEmpty()) {
+            c.findings += attack
+            c.attackTool = attack.any { it.points >= 40 }
+            if (c.attackTool) Threats.label(attack)?.let { c.set(Category.NETWORK, it, 95) }
+        }
+        // --- Security grade (A..F) in plain words
+        val wps = ie?.wps == true
+        WifiSecurity.grade(caps, wps).let { (g, why) -> c.facts["Security grade"] = "$g · $why" }
 
         // --- Drones
         if (ie?.remoteId == true) {

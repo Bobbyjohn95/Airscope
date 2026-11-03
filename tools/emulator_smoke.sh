@@ -227,6 +227,18 @@ if tap "🔍" contains; then
   tap "🔍" contains; tap "Clear"
 fi
 
+note "-- SECURITY chip (last chip: swipe the chip row left first; the row sits at y~440 on the 1080x2400 emulator)"
+adb shell input swipe 900 440 100 440 300; sleep 1
+if tap "SECURITY"; then
+  sleep 2; shot 05d-security-chip
+  screen_text > "$OUT/05d-security.txt"
+  grep -E "SECURITY:" "$OUT/05d-security.txt" | head -1 | sed 's/^/  /' | tee -a "$SUMMARY"
+  adb shell input swipe 100 440 900 440 300; sleep 1
+  tap "ALL" || note "  (could not return to ALL)"
+else
+  note "  (SECURITY chip not found after the swipe)"
+fi
+
 note "-- view modes"
 tap "3D"; sleep 3; shot 06-view-drive
 tap "DRIVE"; sleep 3; shot 07-view-radar

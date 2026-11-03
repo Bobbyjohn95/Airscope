@@ -865,6 +865,76 @@ fun main() {
         check("lan: active list", dir.active(t0 + 1000).size == 2 && dir.active(t0 + 11 * 60_000).isEmpty())
     }
 
+
+    // ---- Security part 1: attack tools, grades, evil twins, following
+    run {
+        fun w(bssid: String, ssid: String, caps: String = "[WPA2-PSK-CCMP][RSN-PSK-CCMP][ESS]") = Classifier.classifyWifi(bssid, ssid, 2437, caps, null, 5, 20, false, db)
+        val pine = w("00:13:37:aa:bb:cc", "Pineapple_3F2A")
+        check("threat: Pineapple default + Hak5 OUI", pine.attackTool && pine.label == "Wi-Fi Pineapple / Hak5 tool" && pine.findings.sumOf { it.points } >= 100, "${pine.label} ${pine.findings}")
+        val pwned = w("aa:bb:cc:dd:ee:01", "pwned", "[ESS]")
+        check("threat: deauther 'pwned'", pwned.attackTool && pwned.label == "Wi-Fi deauther (jamming tool)", pwned.label)
+        check("threat: Marauder SSID", w("aa:bb:cc:dd:ee:02", "MarauderAP").attackTool)
+        check("threat: O.MG", w("aa:bb:cc:dd:ee:03", "O.MG").attackTool && w("aa:bb:cc:dd:ee:03", "OMG Cable").attackTool.not())
+        val fruit = w("aa:bb:cc:dd:ee:04", "Pineapple House")
+        check("threat: a home named Pineapple is not a tool", !fruit.attackTool && fruit.findings.none { it.points >= 40 }, fruit.findings)
+        val free = w("aa:bb:cc:dd:ee:05", "Free WiFi", "[ESS]")
+        check("threat: 'Free WiFi' is only a weak hint", !free.attackTool && free.findings.any { it.points == 10 })
+        val flip = Classifier.classifyBle("80:e1:26:00:00:01", false, AdvParser.parse(ad(name("Flipper Kx9ab3"))), db)
+        check("threat: Flipper Zero BLE name", flip.attackTool && flip.label == "Flipper Zero", flip.label)
+        check("threat: plain 'Flipper' word alone is not", !Classifier.classifyBle("c1:00:00:00:00:01", true, AdvParser.parse(ad(name("Flipper"))), db).attackTool)
+        val mar = Classifier.classifyBle("c1:00:00:00:00:02", true, AdvParser.parse(ad(name("Marauder"))), db)
+        check("threat: Marauder BLE", mar.attackTool)
+        // grades
+        check("grade: WPA3 A", WifiSecurity.grade("[WPA2-SAE-CCMP][RSN-SAE-CCMP][ESS]", false).first == 'A')
+        check("grade: WPA2 B, +WPS C", WifiSecurity.grade("[WPA2-PSK-CCMP][ESS]", false).first == 'B' && WifiSecurity.grade("[WPA2-PSK-CCMP][ESS][WPS]", true).first == 'C')
+        check("grade: WPA2 TKIP-only C", WifiSecurity.grade("[WPA2-PSK-TKIP][ESS]", false).first == 'C')
+        check("grade: WPA1 C weak, WEP D, open F", WifiSecurity.grade("[WPA-PSK-TKIP][ESS]", false).first == 'C' && WifiSecurity.isWeak("[WPA-PSK-TKIP][ESS]", false) &&
+            WifiSecurity.grade("[WEP][ESS]", false).first == 'D' && WifiSecurity.grade("[ESS]", false).first == 'F' && !WifiSecurity.isWeak("[WPA2-PSK-CCMP][ESS]", false))
+        check("grade fact present", w("aa:bb:cc:dd:ee:06", "Home").facts["Security grade"]?.startsWith("B") == true, w("aa:bb:cc:dd:ee:06", "Home").facts["Security grade"])
+        // evil twin via memory
+        val mem = SsidMemory()
+        mem.touch("HomeNet", "[WPA2-PSK-CCMP][ESS]", "00:11:22:33:44:55", 5)
+        check("ssid memory: not learned before 10 min", mem.known.isEmpty())
+        mem.touch("HomeNet", "[WPA2-PSK-CCMP][ESS]", "00:11:22:33:44:55", 12)
+        check("ssid memory: learned", mem.known["HomeNet"]?.bestRank == 3 && mem.known["HomeNet"]?.ouis == setOf("00:11:22"))
+        val twin = mem.findings("HomeNet", "[ESS]", "a4:77:88:99:aa:bb")
+        check("evil twin: known WPA2 network now open from another maker", twin.any { it.points == 45 } && twin.any { it.points == 15 }, twin)
+        check("evil twin: same network, same maker, same security -> nothing", mem.findings("HomeNet", "[WPA2-PSK-CCMP][ESS]", "00:11:22:ff:ff:ff").isEmpty())
+        check("evil twin: unknown name -> nothing", mem.findings("Other", "[ESS]", "00:11:22:ff:ff:ff").isEmpty())
+        val mem2 = SsidMemory(); mem2.load(mem.dump())
+        check("ssid memory: round trip", mem2.known["HomeNet"]?.bestRank == 3 && mem2.known["HomeNet"]?.ouis == setOf("00:11:22") && mem2.known["HomeNet"]?.minutes == 12)
+        Heuristics.ssidMemory = mem
+        val st = DeviceStore(); st.sessionStart = t0
+        val ap = st.upsert("a4:77:88:99:aa:bb", Kind.WIFI, t0).also { it.name = "HomeNet"; it.security = "[ESS]"; it.addReading(-60, t0) }
+        Heuristics.score(ap, listOf(ap), t0)
+        check("evil twin: scored + tagged + alerts", "evil-twin" in ap.secTags && "weak-wifi" in ap.secTags && ap.level >= Level.MEDIUM && Heuristics.wantsAlert(ap), "${ap.secTags} ${ap.score} ${ap.flags}")
+        Heuristics.ssidMemory = null
+        val wps = st.upsert("00:11:22:33:44:66", Kind.WIFI, t0).also { it.name = "Shop"; it.security = "[WPA2-PSK-CCMP][ESS][WPS]"; it.wps = true; it.addReading(-60, t0) }
+        Heuristics.score(wps, listOf(wps), t0)
+        check("WPS: noted, not weak", wps.flags.any { "WPS" in it } && "weak-wifi" !in wps.secTags && wps.level == Level.LOW, wps.flags)
+        // attack tool device alerts at MEDIUM
+        val tool = st.upsert("00:13:37:aa:bb:cc", Kind.WIFI, t0).also { it.name = "Pineapple_3F2A"; it.security = "[ESS]"; it.addReading(-60, t0)
+            val c = w(it.id, it.name, it.security); it.findings = c.findings; it.attackTool = c.attackTool; it.category = c.category; it.label = c.label }
+        Heuristics.score(tool, listOf(tool), t0)
+        check("attack tool: HIGH + tagged + alert", "attack-tool" in tool.secTags && tool.level == Level.HIGH && Heuristics.wantsAlert(tool), "${tool.score} ${tool.secTags}")
+        // following: a non-tracker BLE device that keeps turning up far apart
+        val fol = st.upsert("d1:00:00:00:00:01", Kind.BLE, t0).also { it.name = ""; it.category = Category.PHONE; it.addReading(-70, t0); it.sightings = 3; it.sightSpreadM = 2500.0 }
+        Heuristics.score(fol, listOf(fol), t0)
+        check("following: 3 sightings 2.5 km apart -> tagged, MEDIUM, alert", "following" in fol.secTags && fol.level >= Level.MEDIUM && Heuristics.wantsAlert(fol), "${fol.score} ${fol.flags}")
+        val pass = st.upsert("d1:00:00:00:00:02", Kind.BLE, t0).also { it.category = Category.WEARABLE; it.addReading(-70, t0); it.followM = 2500.0 }
+        Heuristics.score(pass, listOf(pass), t0)
+        check("following: 2.5 km with you -> tagged", "following" in pass.secTags && pass.level >= Level.MEDIUM, "${pass.score}")
+        val ap2 = st.upsert("d1:00:00:00:00:03", Kind.BLE, t0).also { it.category = Category.NETWORK; it.addReading(-70, t0); it.followM = 2500.0; it.sightings = 3; it.sightSpreadM = 2500.0 }
+        Heuristics.score(ap2, listOf(ap2), t0)
+        check("following: beacons/APs never count", "following" !in ap2.secTags)
+        val once = st.upsert("d1:00:00:00:00:04", Kind.BLE, t0).also { it.category = Category.PHONE; it.addReading(-70, t0); it.sightings = 2; it.sightSpreadM = 2500.0 }
+        Heuristics.score(once, listOf(once), t0)
+        check("following: two sightings is not enough", "following" !in once.secTags && !Heuristics.wantsAlert(once), once.flags)
+        // search + mode
+        val v = Snapshot.view(tool, Env.OPEN, t0, null, null)
+        check("sec: search + SECURITY chip", DeviceFilter.matches(tool, "sec:attack") && DeviceFilter.matches(tool, "sec:") && !DeviceFilter.matches(tool, "sec:follow") && Mode.SECURITY.matches(v) && !Mode.SECURITY.matches(Snapshot.view(wps, Env.OPEN, t0, null, null)))
+    }
+
     println(if (failures == 0) "ALL LOGIC TESTS PASSED" else "$failures FAILURE(S)")
     if (failures > 0) throw AssertionError("$failures test failure(s)")
 }

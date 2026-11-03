@@ -233,6 +233,7 @@ class SignalScanner(ctx: Context, private val handler: Handler) {
         if (c.bleType.isNotEmpty()) d.bleType = c.bleType
         d.refAt1m = c.ref
         d.refSource = c.refSource
+        d.attackTool = c.attackTool
         // Who the device says it belongs to ("Sarah's AirPods", hotspot "Mike-iPhone", WPS name "Johns-MacBook")
         val fromName = Names.owner(d.name) ?: c.facts["WPS device name"]?.let(Names::ownerFromHostname) ?: c.facts["Swift Pair name"]?.let(Names::owner)
         if (fromName != null) { d.owner = fromName; d.ownerFromLan = false }
@@ -277,6 +278,7 @@ class SignalScanner(ctx: Context, private val handler: Handler) {
                 }
                 val c = Classifier.classifyWifi(bssid, ssid, r.frequency, d.security, ie, std, width, responder, Engine.db)
                 d.randomAddr = VendorDb.isRandomizedMac(bssid)
+                d.wps = ie?.wps == true
                 apply(d, c)
             }
             // r.timestamp = microseconds since boot when this AP was last heard: exact reception time

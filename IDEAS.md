@@ -20,7 +20,8 @@ Delivery: normal auto-installing releases, one feature group at a time, each thr
    the joined Wi-Fi (receive-only, optional multicast permission). *Status: built, in CI.*
 2. **Security part 1 (v2.8)** — hacker-tool detection (Wi-Fi Pineapple, Flipper Zero, ESP32 Marauder, O.MG, Hak5, BLE
    spam flooders) by broadcast fingerprint; evil-twin / rogue-AP alerts; network security grading with a weak-network
-   filter; "following me" alerts for any BLE device that keeps appearing across places. *Status: next.*
+   filter; "following me" alerts for any BLE device that keeps appearing across places. *Status: built, in CI.
+   BLE spam flooders moved to part 2 (they're detected by rate, not by name).*
 3. **Security part 2 (v2.9)** — home/work baseline + new-device alert at a marked place; Wi-Fi disruption watch
    (all networks vanishing, own connection dropping: indicator, not proof); BLE spoof/spam detection; security incident
    report export. *Status: after v2.8.*
@@ -34,9 +35,9 @@ All of it stays passive: nothing is sent to any device.
   devices, no raw frames), BLE adverts via WinRT (names, manufacturer data). Linux: Wi-Fi via nl80211 scan (needs the
   Wi-Fi adapter; monitor mode is optional and adapter-dependent), BLE via BlueZ. No GPS on most laptops, so placement
   and the map need another position source (manual, or the phone's). Must not become something that transmits.
-- **Decisions K needs to make (asked in chat):** language/stack (Python is quickest; Kotlin/JVM shares the most code
-  with the app; Rust/Go gives single-file binaries); whether the desktop version scans on its own, mirrors the phone
-  (the web HUD already does this today), or both; where it lives (this repo under `desktop/`, or its own repo).
+- **K decided (2026-11-03, in chat):** Python; scans on its own AND mirrors the phone's HUD feed; lives in this repo
+  under `desktop/`; builds come out as CI artifacts (nothing auto-installs). Shares `app/src/main/assets/db` tables and
+  the signature lists. *Status: starts after security part 2 unless K says otherwise.*
 - **Rough size:** 2–4 weeks of coworker runs for a usable beta per OS; beta = unsigned builds attached to CI, not
   auto-installed anywhere.
 

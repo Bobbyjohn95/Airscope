@@ -4,6 +4,25 @@ A personal signal-observation app for the Pixel 8 Pro (Android 10+, GrapheneOS-f
 It **only listens**. It reads Wi-Fi beacons and Bluetooth LE advertisements that devices already
 broadcast. It never connects to, jams, deauths or transmits to anything.
 
+## What's new in v2.8: security part 1 (attack tools, evil twins, network grades, "following you")
+- **SECURITY chip** (last chip in the row; scroll the row) shows only devices with a security finding. Search terms:
+  `sec:attack`, `sec:evil`, `sec:weak`, `sec:follow`, or `sec:` for all of them. The web HUD has the same chip.
+- **Attack / audit hardware:** Wi-Fi Pineapple (default name, Hak5 address), ESP8266 Deauther ("pwned"), ESP32
+  Marauder, O.MG cable implants, Flipper Zero (Bluetooth name), Pwnagotchi and Wi-Fi phishing-tool names are
+  labelled and alert at MEDIUM. Honest limit: these are the names and addresses the tools use out of the box. Anyone
+  can name a network "pwned", and a pentester's Pineapple at a conference is not an attack on you; the text says so.
+  A home network called "Pineapple House" is not flagged.
+- **Evil twins / rogue access points:** AirScope now remembers networks you spend 10+ minutes near (name, strongest
+  security it used, maker of its access points; saved on the phone only). An access point claiming a known name with
+  weaker security than that network ever had (your WPA2 home network showing up open) scores 45 and alerts; a known
+  name from a maker never seen for it is noted at 15 (new router, mesh node, or a copy). The existing "same name open
+  and secured at the same time" check now points at the open one.
+- **Network security grade** in every Wi-Fi row and in details: A WPA3 · B WPA2 · C WPA1 / TKIP-only / WPS on · D WEP ·
+  F open, with the reason in plain words. Weak networks (WPA1, WEP, open) count as security findings.
+- **"Following you" for any device, not just trackers:** a phone, earbud or unknown Bluetooth device that has moved with
+  you for 2 km, or appeared 3+ separate times at places 1.5 km apart in one session, is tagged and alerts at MEDIUM.
+  A passenger's phone will trigger this too: long-press → Mark as mine, or Ignore.
+
 ## What's new in v2.7: who a device belongs to, one device across address changes, names on your Wi-Fi
 - **Owner names:** when a device's own name says whose it is ("Sarah's AirPods", "Mike-iPhone", "iPhone de Juan"), the
   list shows **👤 Sarah** and the details say so. It is only what the owner typed into their device: nothing is looked

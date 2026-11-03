@@ -80,6 +80,7 @@ object Exporter {
         if (d.candA != null && d.candB != null) append(String.format(Locale.US, ",\"cand\":[[%.6f,%.6f],[%.6f,%.6f]]", d.candA.first, d.candA.second, d.candB.first, d.candB.second))
         append(",\"bearing\":").append(d.bearing?.let { fmt1(it.toDouble()) } ?: "null")
         append(",\"flags\":[").append(d.flags.joinToString(",") { json(it) }).append("]")
+        if (d.secTags.isNotEmpty()) append(",\"sec\":[").append(d.secTags.joinToString(",") { json(it) }).append("]")
         append(",\"facts\":[").append(d.facts.joinToString(",") { "[${json(it.first)},${json(it.second)}]" }).append("]")
         append(",\"ageSec\":").append(d.ageSec)
         append("}")

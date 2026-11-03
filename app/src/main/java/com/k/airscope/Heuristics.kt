@@ -4,6 +4,8 @@ package com.k.airscope
 object Heuristics {
     /** 0 = police/trackers/drones/watched only, 1 = normal, 2 = everything MEDIUM and up. */
     @Volatile var alertLevel = 1
+    /** Networks you know (for evil-twin checks); set by the engine, null in tests that don't need it. */
+    @Volatile var ssidMemory: SsidMemory? = null
 
     const val PERSIST_MS = 10 * 60_000L
 
@@ -20,10 +22,13 @@ object Heuristics {
         if (d.trusted || d.priority < 0) {
             d.score = 0
             d.flags = listOf(if (d.trusted) "Marked as yours" else "Ignored (muted)")
+            d.secTags = emptyList()
             return
         }
         val f = ArrayList<String>()
+        val sec = ArrayList<String>()
         var s = 0
+        if (d.attackTool) sec += "attack-tool"
         if (d.priority > 0) { s += 40; f += "On your watch list" }
         for (x in d.findings) {
             s += x.points; f += x.text
@@ -36,15 +41,22 @@ object Heuristics {
             when (securityLabel(d.security)) {
                 "WEP" -> { s += 20; f += "WEP encryption (broken)" }
                 "OPEN" -> { s += 15; f += "Open network (no encryption)" }
+                "WPA" -> { s += 10; f += "WPA1 only (outdated, crackable)" }
             }
+            if (d.wps) { s += 5; f += "WPS on (PIN attack risk on older routers)" }
+            if (WifiSecurity.isWeak(d.security, d.wps)) sec += "weak-wifi"
             if (d.name.isBlank()) {
                 s += 10; f += "Hidden SSID"
             } else {
                 val twins = active.filter { it.kind == Kind.WIFI && it.key != d.key && it.name == d.name }
                 val open = securityLabel(d.security) == "OPEN"
                 if (twins.any { (securityLabel(it.security) == "OPEN") != open }) {
-                    s += 25; f += "Same SSID seen open and secured (possible evil twin)"
+                    s += if (open) 30 else 10
+                    f += if (open) "Same name as a secured network nearby but open: possible evil twin" else "An open copy of this network's name is nearby (see that one)"
+                    if (open) sec += "evil-twin"
                 }
+                val mem = ssidMemory?.findings(d.name, d.security, d.id).orEmpty()
+                for (x in mem) { s += x.points; f += x.text; if (x.points >= 40) sec += "evil-twin" }
             }
             if (VendorDb.isRandomizedMac(d.id)) {
                 s += 10; f += "Randomized MAC (phone hotspot, guest or mesh network)"
@@ -72,18 +84,29 @@ object Heuristics {
                 when {
                     d.bleType in Classifier.TRACKERS -> { s += 35; f += "Tracker has moved with you for $km km" }
                     d.category == Category.POLICE -> { s += 15; f += "Has moved with you for $km km" }
+                    d.followM > 2000 && d.category != Category.NETWORK && d.category != Category.CAMERA_IOT ->
+                        { s += 30; f += "Has moved with you for $km km: not a tracker by type, but it is keeping up with you (a passenger's device, or something hidden?)" }
                     else -> { s += 10; f += "Has moved with you for $km km (yours or a passenger's?)" }
                 }
+            }
+            // Following you across places: 3+ separate appearances that began far apart, in one session
+            val following = (d.followM > 2000 || (d.sightings >= 3 && d.sightSpreadM >= 1500)) &&
+                d.category != Category.NETWORK && d.category != Category.CAMERA_IOT
+            if (following) {
+                sec += "following"
+                if (d.sightings >= 3 && d.sightSpreadM >= 1500) { s += 15; f += "Appeared ${d.sightings} separate times, ${fmtDist(d.sightSpreadM)} m apart: showing up wherever you go" }
             }
         }
         if (d.kind == Kind.WIFI && d.followM > 600) { s += 10; f += "Hotspot moving with you (${(d.followM / 1000).let { String.format(java.util.Locale.US, "%.1f", it) }} km)" }
 
         d.score = s.coerceIn(0, 100)
         d.flags = f
+        d.secTags = sec.distinct()
     }
 
     /** Should this device trigger a pop-up alert (once)? */
     fun wantsAlert(d: Device): Boolean = !d.trusted && d.priority >= 0 && (d.priority > 0 ||
+        (d.level >= Level.MEDIUM && ("attack-tool" in d.secTags || "evil-twin" in d.secTags || "following" in d.secTags)) ||
         (alertLevel >= 2 && d.level >= Level.MEDIUM) ||
         (alertLevel >= 1 && d.level == Level.HIGH) ||
             (d.bleType in Classifier.TRACKERS && d.level >= Level.MEDIUM) ||

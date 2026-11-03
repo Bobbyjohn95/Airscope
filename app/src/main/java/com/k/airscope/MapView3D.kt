@@ -653,7 +653,7 @@ class MapView3D(ctx: Context) : View(ctx) {
         hitX.clear(); hitY.clear(); hitD.clear()
         settling = false
         val q = searchQuery
-        val list = snap.devices.filter { mode.matches(it.category) && (q.isEmpty() || q.split(' ').filter { t -> t.isNotBlank() }.all { t -> it.searchText.contains(t) || it.title.lowercase(java.util.Locale.US).contains(t) }) }
+        val list = snap.devices.filter { mode.matches(it) && (q.isEmpty() || q.split(' ').filter { t -> t.isNotBlank() }.all { t -> it.searchText.contains(t) || it.title.lowercase(java.util.Locale.US).contains(t) }) }
         val a = 1 - exp(-dt / 0.45)
 
         class Item(val d: DeviceView, val x: Double, val y: Double, val z: Double, val placed: Boolean, var depth: Float = 0f, val unknownDir: Boolean = false)

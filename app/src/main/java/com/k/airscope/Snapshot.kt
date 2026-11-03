@@ -53,6 +53,8 @@ class DeviceView(
     val sightSpreadM: Double = 0.0,
     /** Person the device's own name says it belongs to, else "". */
     val owner: String = "",
+    /** Security tags: attack-tool, evil-twin, weak-wifi, following (empty = nothing to report). */
+    val secTags: List<String> = emptyList(),
 ) {
     /** "↻3" when it came back this session, else "". */
     val againMark: String get() = if (sightings >= 2) "↻$sightings" else ""
@@ -152,7 +154,7 @@ class Snapshot(
                 flags = d.flags, facts = facts,
                 ageSec = (now - d.firstSeen) / 1000, lastSec = (now - d.lastSeen) / 1000, trusted = d.trusted,
                 inRadius = d.inRadius, priority = d.priority,
-                searchText = (listOf(d.id, d.name, d.vendor, d.label, d.category.label, d.category.short, d.bleType, d.owner) + d.aliases + d.facts.values + d.flags)
+                searchText = (listOf(d.id, d.name, d.vendor, d.label, d.category.label, d.category.short, d.bleType, d.owner) + d.aliases + d.secTags + d.facts.values + d.flags)
                     .joinToString("\n").lowercase(java.util.Locale.US),
                 angle = hashAngle(d.key), bearing = bearing, lat = lat, lon = lon, errM = err,
                 spots = tr.obs.size, spreadM = tr.spreadM,
@@ -161,7 +163,7 @@ class Snapshot(
                 followM = d.followM,
                 moving = tr.moving,
                 sightings = d.sightings.coerceAtLeast(1), sightSpreadM = d.sightSpreadM,
-                owner = d.owner,
+                owner = d.owner, secTags = d.secTags,
             )
         }
 

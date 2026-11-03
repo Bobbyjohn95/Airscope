@@ -61,6 +61,7 @@ class MainActivity : Activity() {
 
     private fun matchesQuery(d: DeviceView, q: String): Boolean = q.split(' ').filter { it.isNotBlank() }.all { term ->
         if (term.startsWith("cat:")) d.category.name.lowercase(Locale.US).startsWith(term.removePrefix("cat:")) || d.category.short.lowercase(Locale.US).startsWith(term.removePrefix("cat:"))
+        else if (term.startsWith("sec:")) d.secTags.any { term.length == 4 || it.startsWith(term.removePrefix("sec:")) }
         else if (term.startsWith("owner:")) d.owner.lowercase(Locale.US).let { it.isNotEmpty() && (term.length == 6 || it.contains(term.removePrefix("owner:"))) }
         else d.searchText.contains(term) || d.title.lowercase(Locale.US).contains(term)
     }
@@ -866,7 +867,7 @@ class MainActivity : Activity() {
     private fun refresh() {
         val s = Engine.snapshot
         val q = searchQuery
-        val vis = s.devices.filter { mode.matches(it.category) && (q.isEmpty() || matchesQuery(it, q)) }
+        val vis = s.devices.filter { mode.matches(it) && (q.isEmpty() || matchesQuery(it, q)) }
         radar.searchQuery = q
         radar.update(s, Engine.geo.chunks, selectedKey, Engine.geo.origin)
         radar.scanRadiusM = Engine.radiusM

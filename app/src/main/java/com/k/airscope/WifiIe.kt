@@ -10,6 +10,8 @@ class WifiIeInfo {
     var wpsModelNumber: String? = null
     var wpsDeviceName: String? = null
     var wpsCategory: Int? = null
+    /** A WPS information element is present (WPS enabled on the access point). */
+    var wps: Boolean = false
     var remoteId: Boolean = false
     var djiDroneId: Boolean = false
     val vendorOuis = LinkedHashSet<String>()
@@ -73,6 +75,7 @@ object WifiIe {
     }
 
     private fun parseWps(d: ByteArray, info: WifiIeInfo) {
+        info.wps = true
         var i = 4
         while (i + 4 <= d.size) {
             val t = ((d[i].toInt() and 0xFF) shl 8) or (d[i + 1].toInt() and 0xFF)

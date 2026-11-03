@@ -20,6 +20,8 @@ object Engine {
     val db = VendorDb()
     val geo = GeoTracker()
     val history = HistoryDb()
+    /** Networks you've spent time near: best security + makers, for evil-twin checks (saved on the phone only). */
+    val ssids = SsidMemory()
     /** Names announced on the Wi-Fi network you're joined to (mDNS / SSDP), receive-only. */
     val lan = LanDirectory()
     private var lanListener: LanListener? = null
@@ -147,11 +149,16 @@ object Engine {
             val f = java.io.File(app.filesDir, "history.tsv")
             if (f.exists()) history.load(f.readLines().asSequence())
         } catch (_: Exception) { }
+        try {
+            val f = java.io.File(app.filesDir, "ssids.tsv")
+            if (f.exists()) ssids.load(f.readText())
+        } catch (_: Exception) { }
+        Heuristics.ssidMemory = ssids
     }
 
     private fun saveHistory() {
-        if (!history.dirty) return
-        try { java.io.File(app.filesDir, "history.tsv").writeText(history.dump()); history.dirty = false } catch (_: Exception) { }
+        if (history.dirty) try { java.io.File(app.filesDir, "history.tsv").writeText(history.dump()); history.dirty = false } catch (_: Exception) { }
+        if (ssids.dirty) try { java.io.File(app.filesDir, "ssids.tsv").writeText(ssids.dump()); ssids.dirty = false } catch (_: Exception) { }
     }
 
     /** Engine thread. */
@@ -260,9 +267,12 @@ object Engine {
                 .forEach { locate(it, now) }
             if (now - lastHistoryTouch > 60_000) {
                 lastHistoryTouch = now
-                for (d in store.active(now)) if (HistoryDb.shouldTrack(d)) {
-                    val r = history.touch(d.key, now)
-                    d.firstEver = r.first; d.daysSeen = r.days
+                for (d in store.active(now)) {
+                    if (HistoryDb.shouldTrack(d)) {
+                        val r = history.touch(d.key, now)
+                        d.firstEver = r.first; d.daysSeen = r.days
+                    }
+                    if (d.kind == Kind.WIFI && d.name.isNotBlank()) ssids.touch(d.name, d.security, d.id, ((now - d.presentSince) / 60_000).toInt())
                 }
             }
             if (now - lastHistorySave > 5 * 60_000) { lastHistorySave = now; saveHistory() }
