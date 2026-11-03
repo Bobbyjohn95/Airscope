@@ -40,18 +40,13 @@ object Updater {
             .metaData?.getString("airscope.signing") ?: "unknown"
     } catch (_: Exception) { "unknown" }
 
-    /** GitHub's token page, pre-filled: name, read-only Contents permission, 1-year expiry, your account. */
-    val TOKEN_URL = "https://github.com/settings/personal-access-tokens/new?name=AirScope+updater" +
-        "&description=Lets+the+AirScope+app+on+my+phone+download+its+own+updates&target_name=${UpdateCheck.OWNER}" +
-        "&expires_in=366&contents=read"
     val SECRET_URL = "https://github.com/${UpdateCheck.OWNER}/${UpdateCheck.REPO}/settings/secrets/actions/new"
     val RELEASES_URL = "https://github.com/${UpdateCheck.OWNER}/${UpdateCheck.REPO}/releases"
+    /** Repo settings: "Change visibility" (to Public) is at the bottom, in the Danger Zone. */
+    val REPO_SETTINGS_URL = "https://github.com/${UpdateCheck.OWNER}/${UpdateCheck.REPO}/settings"
 
-    /** Pasted tokens often carry spaces or line breaks. */
+    /** A token saved by an older version (private-repo fallback); spaces/line breaks stripped. */
     fun cleanToken(s: String): String = s.filterNot { it.isWhitespace() }
-
-    fun looksLikeToken(t: String): Boolean =
-        (t.startsWith("github_pat_") && t.length >= 40) || (t.startsWith("ghp_") && t.length >= 36)
 
     fun schedule(ctx: Context) {
         val js = ctx.getSystemService(JobScheduler::class.java) ?: return
@@ -76,19 +71,23 @@ object Updater {
     /** Blocking. Returns a human-readable result. */
     fun check(ctx: Context, manual: Boolean): String {
         Prefs.putLong(ctx, PREF_LAST, System.currentTimeMillis())
-        val token = cleanToken(Prefs.getString(ctx, PREF_TOKEN))
-        if (token.isEmpty()) return "No token yet: tap CREATE TOKEN, then paste it here"
-        val c = open(UpdateCheck.LATEST_URL, token, "application/vnd.github+json")
-        val code = c.responseCode
-        if (code == 401) return "GitHub doesn't accept this token (expired, deleted, or only partly copied). Make a new one with CREATE TOKEN."
-        if (code == 403) return "GitHub blocked the request (HTTP 403). Try again in an hour; if it repeats, make a new token."
+        // Public repo: no token or password at all. A token is only an optional fallback for a private repo.
+        var token = cleanToken(Prefs.getString(ctx, PREF_TOKEN))
+        var c = open(UpdateCheck.LATEST_URL, token, "application/vnd.github+json")
+        var code = c.responseCode
+        if (code == 401 && token.isNotEmpty()) { // stale token: try without it (works if the repo is public)
+            token = ""
+            c = open(UpdateCheck.LATEST_URL, token, "application/vnd.github+json")
+            code = c.responseCode
+        }
+        if (code == 403 || code == 429) return "GitHub is rate-limiting this network right now; it will try again later"
         if (code == 404) {
-            // Tell apart "token can't see the repo" from "repo has no stable release yet"
+            // Tell apart "can't see the repo" (private) from "repo has no auto-installable release yet"
             val repoCode = open(UpdateCheck.REPO_URL, token, "application/vnd.github+json").responseCode
-            return if (repoCode == 200) {
-                "Token works ✓. No auto-installable build yet: add the AIRSCOPE_SIGNING_SEED secret on GitHub and run the build once."
-            } else {
-                "This token can't see ${UpdateCheck.REPO}. Make a new one and set Repository access → Only select repositories → ${UpdateCheck.REPO}."
+            return when {
+                repoCode == 200 -> "Connected ✓. No auto-installable build yet: GitHub needs the AIRSCOPE_SIGNING_SEED secret, then one build."
+                token.isEmpty() -> "Can't see the GitHub repo because it's private. Make it public (REPO SETTINGS) and updates need no password."
+                else -> "The saved token can't see ${UpdateCheck.REPO}. Make the repo public instead (REPO SETTINGS)."
             }
         }
         if (code != 200) return "GitHub returned HTTP $code"
@@ -173,7 +172,7 @@ object Updater {
         val mine = signers(pm.getPackageInfo(ctx.packageName, PackageManager.GET_SIGNING_CERTIFICATES))
         val theirs = signers(archive)
         if (theirs.isEmpty() || mine.isEmpty() || theirs.last() != mine.last()) {
-            return "Token works ✓. Build $build is signed with a different key than the AirScope on this phone, so Android " +
+            return "Connected ✓. Build $build is signed with a different key than the AirScope on this phone, so Android " +
                 "won't update it in place. One time only: uninstall AirScope, then install build $build from GitHub Releases " +
                 "(RELEASES button). Updates are automatic after that."
         }

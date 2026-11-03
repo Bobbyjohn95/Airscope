@@ -21,7 +21,6 @@ import android.os.Looper
 import android.os.PowerManager
 import android.provider.MediaStore
 import android.provider.Settings
-import android.text.InputType
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
@@ -29,7 +28,6 @@ import android.view.WindowInsets
 import android.view.WindowManager
 import android.widget.BaseAdapter
 import android.widget.Button
-import android.widget.EditText
 import android.widget.FrameLayout
 import android.widget.HorizontalScrollView
 import android.widget.LinearLayout
@@ -95,9 +93,7 @@ class MainActivity : Activity() {
         headingTracker = HeadingTracker(this)
         radar.headingSource = headingTracker
         Updater.schedule(this)
-        if (System.currentTimeMillis() - Prefs.getLong(this, Updater.PREF_LAST) > 3 * 3_600_000L &&
-            Prefs.getString(this, Updater.PREF_TOKEN).isNotEmpty()
-        ) {
+        if (System.currentTimeMillis() - Prefs.getLong(this, Updater.PREF_LAST) > 3 * 3_600_000L) {
             Updater.checkAsync(this, manual = false)
         }
         if (!Prefs.getBool(this, "setup_seen", false)) {
@@ -340,85 +336,37 @@ class MainActivity : Activity() {
     private fun showUpdates() {
         val box = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(18), dp(8), dp(18), 0) }
         val build = try { Updater.installedBuild(this) } catch (_: Exception) { 0L }
-        val kind = Updater.signingKind(this)
+        val stable = Updater.signingKind(this) == "stable"
         box.addView(text("Installed build: $build\nSource: github.com/${UpdateCheck.OWNER}/${UpdateCheck.REPO} (Releases)\n" +
-            "Checks every ~6 hours when online; installs by itself when you're not scanning.", 12.5f, Color.LTGRAY))
-        if (kind != "stable") {
-            box.addView(text(
-                "\n⚠ This install is signed with a one-time key, so it can't update itself. Fix once:\n" +
-                    "  a. On GitHub add the secret AIRSCOPE_SIGNING_SEED (SET SECRET), then Actions → Build APK → Run workflow.\n" +
-                    "  b. Uninstall AirScope and install that new build from RELEASES. Then do the token steps below.",
-                12f, Ui.AMBER,
-            ))
-            box.addView(row(
-                button("SET SECRET") { openUrl(Updater.SECRET_URL) },
-                button("RELEASES") { openUrl(Updater.RELEASES_URL) },
-            ))
-        }
-
-        box.addView(text("\nGitHub token (read-only; the repo is private)", 13f, Ui.CYAN, bold = true))
-        val saved = Updater.cleanToken(Prefs.getString(this, Updater.PREF_TOKEN))
-        val tokenState = text(
-            if (saved.isEmpty()) "Token: NOT SET" else "Token: saved ✓ (…${saved.takeLast(4)})",
-            12.5f, if (saved.isEmpty()) Ui.RED else Ui.GREEN, bold = true,
-        )
-        box.addView(tokenState)
+            "Checks every ~6 hours when online and installs by itself when you're not scanning. No password needed.", 12.5f, Color.LTGRAY))
         box.addView(text(
-            "1. Tap CREATE TOKEN. GitHub opens with the name, Contents: Read-only and a 1-year expiry filled in.\n" +
-                "2. Repository access → Only select repositories → ${UpdateCheck.REPO}. Tap Generate token, then Copy.\n" +
-                "3. Come back, tap PASTE, then SAVE & CHECK.",
+            if (stable) "\n✓ Signed with your permanent key: this install can update itself."
+            else "\n⚠ This install was signed with a one-time key, so it can't update itself. After GitHub has the " +
+                "AIRSCOPE_SIGNING_SEED secret (SET SECRET), uninstall AirScope once and install the newest build from RELEASES.",
+            12.5f, if (stable) Ui.GREEN else Ui.AMBER,
+        ))
+        if (!stable) box.addView(row(
+            button("SET SECRET") { openUrl(Updater.SECRET_URL) },
+            button("RELEASES") { openUrl(Updater.RELEASES_URL) },
+        ))
+        box.addView(text(
+            "\nIf the result says the repo is private: REPO SETTINGS → scroll to Danger Zone → Change visibility → Public. " +
+                "Then the app can download updates with no token or password.",
             12f, Color.LTGRAY,
         ))
-        val input = EditText(this).apply {
-            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD
-            hint = "(empty: paste your token here)"
-            setHintTextColor(Color.GRAY)
-            setText(saved)
-            textSize = 13f
-            typeface = Typeface.MONOSPACE
-            isSingleLine = true
-        }
-        box.addView(row(
-            button("CREATE TOKEN") { openUrl(Updater.TOKEN_URL) },
-            button("PASTE") {
-                val clip = getSystemService(android.content.ClipboardManager::class.java)?.primaryClip
-                val t = clip?.takeIf { it.itemCount > 0 }?.getItemAt(0)?.coerceToText(this)?.toString().orEmpty()
-                if (t.isBlank()) toast("Clipboard is empty: copy the token on GitHub first") else input.setText(Updater.cleanToken(t))
-            },
-        ))
-        box.addView(input)
+        box.addView(row(button("REPO SETTINGS") { openUrl(Updater.REPO_SETTINGS_URL) }))
         val result = text("Last result: " + Prefs.getString(this, Updater.PREF_RESULT, "never checked"), 12.5f, Ui.AMBER)
         box.addView(result)
         val d = AlertDialog.Builder(this)
             .setTitle("Updates")
             .setView(ScrollView(this).apply { addView(box) })
-            .setPositiveButton("Save & check", null)
-            .setNeutralButton("Remove token", null)
+            .setPositiveButton("Check now", null)
             .setNegativeButton("Close", null)
             .create()
         d.setOnShowListener {
             d.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
-                val t = Updater.cleanToken(input.text.toString())
-                if (t.isEmpty()) {
-                    result.text = "Result: paste a token first (CREATE TOKEN → copy it on GitHub → PASTE)"
-                    return@setOnClickListener
-                }
-                if (!Updater.looksLikeToken(t)) {
-                    result.text = "Result: that doesn't look like a GitHub token. It should start with github_pat_ and be about 90 characters."
-                    return@setOnClickListener
-                }
-                Prefs.putString(this, Updater.PREF_TOKEN, t)
-                tokenState.text = "Token: saved ✓ (…${t.takeLast(4)})"
-                tokenState.setTextColor(Ui.GREEN)
                 result.text = "Checking…"
                 Updater.checkAsync(this, manual = true) { msg -> ui.post { result.text = "Result: $msg" } }
-            }
-            d.getButton(AlertDialog.BUTTON_NEUTRAL).setOnClickListener {
-                Prefs.putString(this, Updater.PREF_TOKEN, "")
-                input.setText("")
-                tokenState.text = "Token: NOT SET"
-                tokenState.setTextColor(Ui.RED)
-                result.text = "Result: token removed from this phone"
             }
         }
         d.show()

@@ -87,26 +87,26 @@ broadcast. It never connects to, jams, deauths or transmits to anything.
 
 **Upgrading from build 2 or earlier:** uninstall the old AirScope first (it was signed with a different key), then install the new one.
 
-## Automatic updates (one-time setup, about 3 minutes on your phone)
+## Automatic updates (one-time setup on github.com, no password in the app)
 Android only installs an update signed with the **same key** as the installed app. GitHub's build machines are wiped
 after every build, so the key is regenerated from one secret passphrase each time. The passphrase lives only in GitHub's
 encrypted secrets and never in the code. Builds made without it are published as **pre-releases** marked "one-time key",
 and the updater ignores them.
 
 1. **Add the signing secret** (in AirScope: MORE → Updates… → **SET SECRET** opens the page).
-   - Name: `AIRSCOPE_SIGNING_SEED`
-   - Value: a long passphrase **you make up** (20+ characters, e.g. five random words). Don't reuse a password.
+   It must be under Settings → Secrets and variables → **Actions** → *Repository secrets*
+   (not Environments, Codespaces or Dependabot).
+   - Name: `AIRSCOPE_SIGNING_SEED` (exactly)
+   - Value: a long passphrase **you make up** (20+ characters). You never type it into the app.
      Keep a copy somewhere safe: if you ever change it, you'll have to reinstall once more.
-2. **Rebuild.** Repo → Actions → **Build APK** → **Run workflow** (or push any change).
-3. **Reinstall once.** Uninstall AirScope, then install the new build from **Releases** (not marked "one-time key").
-4. **Give the app read access to the repo** (the repo is private). In AirScope: MORE → **Updates…**
-   - **CREATE TOKEN** opens GitHub with everything filled in (name, Contents: Read-only, 1-year expiry).
-   - Set Repository access → *Only select repositories* → `Airscope`, tap **Generate token**, then copy it.
-   - Back in AirScope tap **PASTE**, then **Save & check**. "Up to date" means it works.
+2. **Make the repo public** so the app can download builds without a token: repo → Settings → General →
+   Danger Zone → **Change visibility → Public**. Nothing secret is in the code; the signing passphrase stays private.
+3. **Rebuild.** Repo → Actions → **Build APK** → **Run workflow** (or push any change).
+4. **Reinstall once.** Uninstall AirScope, then install the new build from **Releases** (not marked "one-time key").
 5. In the setup checklist, allow **"Install unknown apps"** for AirScope.
 
-The Updates screen tells you if the installed copy uses a one-time key, if the token is missing, expired, or can't see the
-repo, and if there's no auto-installable build yet.
+The Updates screen shows whether the installed copy has the permanent key, and why a check failed (repo private, no
+auto-installable build yet, rate limit). A private repo still works if an older version saved a GitHub token.
 
 After that, AirScope checks for new builds about every 6 hours.
 - **Not scanning:** it installs the update by itself.
