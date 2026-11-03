@@ -59,6 +59,8 @@ class LocTrack {
     var lastSpotY = Double.NaN
     /** Whether the fit uses only recent readings (devices that can move): no long holds for those. */
     var windowed = false
+    /** Set by the caller for gear that is known to stay put (Wi-Fi access points, IoT): the only kind that gets the long holds. */
+    var longHold = false
     /** The latest raw fit (before smoothing / holding), for callers that weigh it against the other candidate. */
     var fitLat = 0.0
     var fitLon = 0.0
@@ -185,13 +187,15 @@ object Locator {
      * @param p0Prior expected RSSI at 1 m; @param p0Sigma how sure we are of it (dB)
      * @param env kept for callers; each reading carries the distance model that applied when it was taken
      * @param windowMs only use measurements newer than this (devices that move), or null for all
+     * @param longHold the device is known to stay put, so a good spot may be held longer than 30 s (see holdMs)
      */
-    fun estimate(tr: LocTrack, p0Prior: Double, p0Sigma: Double, env: Env, now: Long, windowMs: Long? = null) {
+    fun estimate(tr: LocTrack, p0Prior: Double, p0Sigma: Double, env: Env, now: Long, windowMs: Long? = null, longHold: Boolean = false) {
         tr.dirty = false
         tr.estAt = now
         // Results from an older fit must not survive an early return below
         tr.ambiguous = false; tr.altLat = null; tr.altLon = null; tr.moving = false
         tr.windowed = windowMs != null
+        tr.longHold = longHold
         val p = tr.proj ?: return
         val o = if (windowMs == null) tr.obs else tr.obs.filter { now - it.t <= windowMs }
         tr.usedObs = o.size
@@ -334,15 +338,15 @@ object Locator {
     }
 
     /**
-     * How long a good spot survives poor estimates. Devices that can move (phones, wearables, trackers, cars:
-     * fitted on recent readings only) get 30 s, full stop: their old spot goes stale. Fixed gear gets 90 s while
+     * How long a good spot survives poor estimates. Everything gets 30 s. Only gear the caller marks as staying
+     * put (Wi-Fi access points, IoT: not phones, not "unknown BLE device", not police gear) gets more: 90 s while
      * it is still being heard and the latest (poor) fit does not land somewhere else entirely, and up to 10 min
      * when you have not moved since the good fix either: standing still, nothing new is learned about where it
      * is, so a persistent "it moved" verdict is the only honest reason to take it down.
      * err <= 0 means "no fit at all" (too few readings).
      */
     private fun holdMs(tr: LocTrack, lat: Double, lon: Double, err: Double, now: Long): Long {
-        if (tr.windowed || now - tr.lastHeardAt >= HEARD_RECENTLY_MS) return HOLD_MS
+        if (tr.windowed || !tr.longHold || now - tr.lastHeardAt >= HEARD_RECENTLY_MS) return HOLD_MS
         // A fit that found a second candidate spot is a reason to doubt the shown one, not to keep it
         val agrees = err <= 0.0 || (!tr.ambiguous && err <= 2 * MAX_OK_ERR && Geo.distanceM(tr.shownLat, tr.shownLon, lat, lon) <= tr.shownErr)
         if (!agrees) return HOLD_MS

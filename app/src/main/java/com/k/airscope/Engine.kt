@@ -232,7 +232,10 @@ object Engine {
             return
         }
         val (prior, sigma) = Distance.locatorPrior(d)
-        Locator.estimate(tr, prior, sigma, env, now, if (d.category in MOBILE) 120_000L else null)
+        // Long holds only for gear that stays put: Wi-Fi networks/IoT and recognised IoT gadgets. An unknown BLE
+        // device is filed under NETWORK too, but is as likely a phone in a pocket, so it gets the short hold.
+        val staysPut = d.category in FIXED && (d.kind == Kind.WIFI || d.category == Category.CAMERA_IOT)
+        Locator.estimate(tr, prior, sigma, env, now, if (d.category in MOBILE) 120_000L else null, longHold = staysPut)
         d.sideFromMap = false
         // Two equally good spots? Wi-Fi gear and IoT devices sit inside buildings: pick the side with one.
         // (Compare the fresh fit, not the spot being held on the map from an earlier good fix.)

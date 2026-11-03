@@ -285,9 +285,9 @@ class MapView3D(ctx: Context) : View(ctx) {
         val busy = touching || flingX != 0.0 || flingY != 0.0 || settling || headingMoved ||
             abs(ln(rangeM / tgtRange)) > 0.002 || abs(Geo.signedDiff(yaw.toDouble(), tgtYaw.toDouble())) > 0.1 ||
             abs(pitch - tgtPitch) > 0.1 || (follow && me != null && (speed > 0.3 || hypot(camX - me.first, camY - me.second) > 0.05))
-        // Behind a dialog (or another window) the map is not being looked at: stop the frame loop until it is
-        // front again, so a heavy map can't starve the dialog's input. New data still redraws it (update()).
-        if (!hasWindowFocus()) return
+        // Behind a dialog (or in split screen next to the focused app) the map is not what's being looked at:
+        // tick at 1 fps instead of 20-60 so a heavy map can't starve the dialog's input. Full rate resumes on focus.
+        if (!hasWindowFocus()) { postInvalidateDelayed(1000); return }
         if (busy) postInvalidateOnAnimation() else postInvalidateDelayed(IDLE_FRAME_MS)
     }
 

@@ -286,7 +286,7 @@ fun main() {
         tl.moving = true; Locator.settlePublic(tl, false, 0.0, 0.0, 0.0, 23_000L)
         check("Locator hold: moving verdicts interleaved with blank estimates still take it down", !tl.located)
         // A one-off verdict long ago is not linked to a new one
-        val to = LocTrack()
+        val to = LocTrack().apply { longHold = true }
         Locator.settlePublic(to, true, 33.92, -84.84, 12.0, 0L)
         to.moving = true; Locator.settlePublic(to, false, 0.0, 0.0, 0.0, 5_000L)
         to.moving = false; Locator.settlePublic(to, false, 0.0, 0.0, 0.0, 10_000L)
@@ -310,7 +310,7 @@ fun main() {
         Locator.estimate(te, -60.0, 8.0, Env.OPEN, 40_000L, 120_000L)
         check("Locator hold: phone, gone after 30 s even while heard and standing still", !te.located)
         // Fixed gear: still being heard and nothing says it moved: the spot stays well past 30 s, but not forever
-        val tk = LocTrack()
+        val tk = LocTrack().apply { longHold = true }
         Locator.settlePublic(tk, true, 33.92, -84.84, 12.0, 0L)
         Locator.add(tk, 33.9201, -84.8401, -70.0, 50_000L, 3.0)
         Locator.settlePublic(tk, false, 0.0, 0.0, 0.0, 60_000L)
@@ -319,31 +319,38 @@ fun main() {
         Locator.settlePublic(tk, false, 0.0, 0.0, 0.0, 95_000L)
         check("Locator hold: heard-hold ends after 90 s", !tk.located)
         // A poor fit that lands somewhere else entirely (or finds a second candidate) is not "nothing new"
-        val td = LocTrack()
+        val td = LocTrack().apply { longHold = true }
         Locator.settlePublic(td, true, 33.92, -84.84, 12.0, 0L)
         Locator.add(td, 33.9201, -84.8401, -70.0, 40_000L, 3.0)
         Locator.settlePublic(td, false, 33.9205, -84.8405, 30.0, 41_000L) // ~70 m away: disagrees
         check("Locator hold: a fit elsewhere ends the hold at 30 s", !td.located)
-        val ta = LocTrack()
+        val ta = LocTrack().apply { longHold = true }
         Locator.settlePublic(ta, true, 33.92, -84.84, 12.0, 0L)
         Locator.add(ta, 33.9201, -84.8401, -70.0, 40_000L, 3.0)
         ta.ambiguous = true; ta.altLat = 33.9205; ta.altLon = -84.8405
         Locator.settlePublic(ta, false, 33.92001, -84.84001, 30.0, 41_000L)
         check("Locator hold: an ambiguous fit ends the hold at 30 s", !ta.located)
         // Standing still: nothing new is learned, so fixed gear keeps a good spot as long as it is heard...
-        val ts = LocTrack()
+        val ts = LocTrack().apply { longHold = true }
         Locator.add(ts, 33.92, -84.84, -60.0, 0L, 3.0)
         Locator.settlePublic(ts, true, 33.9202, -84.8402, 12.0, 1_000L)
         for (t in 15_000L..300_000L step 15_000L) Locator.add(ts, 33.92, -84.84, -60.0 + (t / 15_000 % 3), t, 3.0)
         Locator.settlePublic(ts, false, 33.9202, -84.8402, 30.0, 150_000L)
-        Locator.estimate(ts, -60.0, 8.0, Env.OPEN, 305_000L)
+        Locator.estimate(ts, -60.0, 8.0, Env.OPEN, 305_000L, longHold = true)
         check("Locator hold: standing still keeps a heard fixed device's spot (5 min)", ts.located && ts.obs.size == 1 && ts.spotSeq == ts.spotSeqAtGood)
+        // The same for a device not known to stay put (an unknown BLE gadget, police gear): 30 s only
+        val tu = LocTrack()
+        Locator.add(tu, 33.92, -84.84, -60.0, 0L, 3.0)
+        Locator.settlePublic(tu, true, 33.9202, -84.8402, 12.0, 1_000L)
+        for (t in 15_000L..60_000L step 15_000L) Locator.add(tu, 33.92, -84.84, -60.0, t, 3.0)
+        Locator.estimate(tu, -60.0, 8.0, Env.OPEN, 61_000L)
+        check("Locator hold: not known to stay put -> 30 s hold even while heard and standing still", !tu.located)
         // ...but not forever, and a persistent "moving" verdict still takes it down
         ts.moving = true; Locator.settlePublic(ts, false, 33.9202, -84.8402, 30.0, 306_000L)
         check("Locator hold: standing still, one moving verdict is ignored", ts.located)
         ts.moving = true; Locator.settlePublic(ts, false, 33.9202, -84.8402, 30.0, 320_000L)
         check("Locator hold: standing still, persistent moving verdict takes it down", !ts.located)
-        val tz = LocTrack()
+        val tz = LocTrack().apply { longHold = true }
         Locator.add(tz, 33.92, -84.84, -60.0, 0L, 3.0)
         Locator.settlePublic(tz, true, 33.9202, -84.8402, 12.0, 1_000L)
         Locator.add(tz, 33.92, -84.84, -60.0, 11 * 60_000L, 3.0)
@@ -351,7 +358,7 @@ fun main() {
         check("Locator hold: standing still ends after 10 min without a good fix", !tz.located)
         // The real thing for a phone: walk past it (located), stop, then it walks away while still heard.
         // Its old spot must not stay on the map (fitted on recent readings only, 30 s hold at most).
-        var everLocated = false; var staleShownFor = 0L
+        var locatedAtStart = 0; var staleShownFor = 0L
         for (seed in 1..6) {
             val r2 = java.util.Random(seed.toLong())
             val tp = LocTrack(); var t = 0L; var lastEst = 0L
@@ -364,16 +371,17 @@ fun main() {
             for ((px, py) in loop) repeat(3) { hear(px, py, 6.0, -4.0); t += 700 }
             val (sx, sy) = loop.last()
             val tWalk = t
-            while (t < tWalk + 180_000) { hear(sx, sy, 6.0, -4.0); t += 2_000; if (tp.located) everLocated = true } // stand still 3 min
+            while (t < tWalk + 20_000) { hear(sx, sy, 6.0, -4.0); t += 2_000 } // stop for 20 s
             val t0 = t
-            while (t < t0 + 150_000) { // the phone walks off at 1.3 m/s
+            if (tp.located) locatedAtStart++ else continue
+            while (t < t0 + 150_000) { // the phone walks off at 1.3 m/s while its spot is on the map
                 val s = (t - t0) / 1000.0
                 hear(sx, sy, 6.0 + 1.3 * s * 0.7, -4.0 + 1.3 * s * 0.7)
                 if (tp.located && s > 60) staleShownFor = maxOf(staleShownFor, (s - 60).toLong())
                 t += 2_000
             }
         }
-        check("Locator hold: walk-away scenario exercised (phone located at least once)", everLocated)
+        check("Locator hold: walk-away scenario exercised (phone on the map when it starts walking)", locatedAtStart >= 2, "located at start in $locatedAtStart of 6 seeds")
         check("Locator hold: phone that walks away loses its old spot within 60 s", staleShownFor == 0L, "stale for ${staleShownFor}s more")
     }
 
