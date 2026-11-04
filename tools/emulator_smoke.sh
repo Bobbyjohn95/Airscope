@@ -228,13 +228,22 @@ if tap "🔍" contains; then
 fi
 
 # Vertical center of the chip row, read from the last UI dump (the status text above it changes height).
+# Vertical centre of the chip row: from the live dump, or from where a chip was last seen when the dump failed
+# (the header above the chips keeps its height between steps).
 chip_row_y() {
-  python3 - "$OUT/ui.xml" <<'PY'
+  python3 - "$OUT/ui.xml" "$OUT/ui-cache.tsv" <<'PY'
 import re, sys, xml.etree.ElementTree as ET
 try:
     for n in ET.parse(sys.argv[1]).getroot().iter("node"):
         if (n.get("text") or "").strip() in ("ALL", "PHONES", "NETWORKS"):
             b = list(map(int, re.findall(r"\d+", n.get("bounds")))); print((b[1] + b[3]) // 2); sys.exit(0)
+except Exception:
+    pass
+try:
+    for line in open(sys.argv[2], encoding="utf-8"):
+        k, v = line.rstrip("\n").split("\t")
+        if k in ("ALL", "PHONES", "NETWORKS"):
+            print(v.split()[1]); sys.exit(0)
 except Exception:
     pass
 print(0)
@@ -244,20 +253,32 @@ PY
 note "-- SECURITY chip (last chip: swipe the chip row left first) and sec: search"
 dump_ui; Y=$(chip_row_y)
 if [ "$Y" -gt 0 ]; then
-  adb shell input swipe 900 "$Y" 100 "$Y" 300; sleep 1
+  # A fast 300 ms swipe reaches the emulator as a near-tap and selected CAMS/IOT instead of scrolling (build 41 run):
+  # swipe slowly, twice, so the row ends fully scrolled with SECURITY as the right-most chip.
+  adb shell input swipe 1000 "$Y" 60 "$Y" 900; sleep 0.5
+  adb shell input swipe 1000 "$Y" 60 "$Y" 900; sleep 1
   if tap "SECURITY"; then
     sleep 2; shot 05d-security-chip
     screen_text > "$OUT/05d-security.txt"
     grep -E "SECURITY:" "$OUT/05d-security.txt" | head -1 | sed 's/^/  /' | tee -a "$SUMMARY"
-    adb shell input swipe 100 "$Y" 900 "$Y" 300; sleep 1
-    tap "ALL" || note "  (could not return to ALL)"
   else
-    # Not a hard FAIL: UI dumps are flaky on the emulator (see IDEAS.md); a person checks the screenshot.
-    sleep 1; shot 05d-security-chip-missing
-    note "WARN: SECURITY chip not found after swiping the chip row (check 05d-security-chip-missing.png)"
+    # The dump usually fails here (constant map redraw, see IDEAS.md) and SECURITY has never been in the cache,
+    # so tap where the right-most chip sits once the row is fully scrolled and let the screenshot be the proof.
+    note "  (tapping the right-most chip blind: SECURITY sits there after the scroll)"
+    adb shell input tap 1000 "$Y"; sleep 2; shot 05d-security-chip
+    screen_text > "$OUT/05d-security.txt"
+    if grep -q "SECURITY:" "$OUT/05d-security.txt" 2>/dev/null; then
+      grep -E "SECURITY:" "$OUT/05d-security.txt" | head -1 | sed 's/^/  /' | tee -a "$SUMMARY"
+    else
+      # Not a hard FAIL: UI dumps are flaky on the emulator; a person checks the screenshot.
+      note "WARN: could not confirm the SECURITY chip from the UI dump (check 05d-security-chip.png)"
+    fi
   fi
+  adb shell input swipe 60 "$Y" 1000 "$Y" 900; sleep 0.5
+  adb shell input swipe 60 "$Y" 1000 "$Y" 900; sleep 1
+  tap "ALL" || { note "  (could not find ALL: tapping where it was last seen)"; adb shell input tap 179 "$Y"; sleep 1.5; }
 else
-  note "  (chip row not in the UI dump: SECURITY chip step skipped)"
+  note "  (chip row not found: SECURITY chip step skipped)"
 fi
 
 note "-- view modes"
