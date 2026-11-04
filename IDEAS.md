@@ -12,6 +12,17 @@ Coworkers: add bigger ideas here with what / why / risk / size. K: delete a line
   same constant redraw**, so many steps run blind or are skipped (see summary.txt of any run). The caching above
   fixes the cause; meanwhile the script could press Back after the search step and use the cached button
   positions more. Small, test-only; no release needed. (Coworker can do this without a yes.)
+  *2026-11-04:* tried. The chip row can't be scrolled by the test at all while the map redraws (a swipe arrives as
+  a tap and selects the chip under the finger), so the SECURITY chip has never been exercised on the emulator; it
+  is only checked by the JVM tests and by eye on the phone. The same branch run also hit the Search-dialog ANR again
+  (main thread waiting on the render thread, 88% in the emulator's software renderer), the one v2.6.1 worked around: it
+  is flaky, emulator-specific as far as we can tell, and the street-layer cache above is the real fix for both. Branch
+  `smoke-security-chip` holds the script tidy-up (off-screen chips no longer poison the tap cache; plain WARN when the
+  row didn't scroll); it merges with the next real release, not on its own.
+- **CI actions are several major versions behind** (checkout v5→v7, setup-java v5→v6, setup-python v5→v7,
+  upload-artifact v4→v7, download-artifact v4→v8, gradle/actions v4→v6, emulator-runner v2 current). Everything
+  still works. Bumping touches the publish job (download-artifact), which coworkers must not change, and a failed
+  bump would block releases: K's call. Size: 10 lines; needs one branch run to prove the emulator job still works.
 
 ## Approved by K (2026-11-03, in chat): build and ship in small releases
 Delivery: normal auto-installing releases, one feature group at a time, each through the full ship path.
