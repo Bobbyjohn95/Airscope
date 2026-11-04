@@ -43,6 +43,9 @@ for n in root.iter("node"):
     t = (n.get("text") or "").strip()
     if t and "\n" not in t and len(t) < 40:
         x1, y1, x2, y2 = map(int, re.findall(r"\d+", n.get("bounds")))
+        # A chip scrolled off the screen reports off-screen bounds: don't let it poison the cache.
+        if x1 < 0 or y1 < 0 or x2 > 1080 or x2 <= x1:
+            continue
         seen[t] = "%d %d" % ((x1 + x2) // 2, (y1 + y2) // 2)
 with open(cache, "w", encoding="utf-8") as f:
     for k, v in seen.items(): f.write(k + "\t" + v + "\n")
