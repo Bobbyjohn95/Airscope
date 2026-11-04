@@ -256,30 +256,21 @@ PY
 note "-- SECURITY chip (last chip: swipe the chip row left first) and sec: search"
 dump_ui; Y=$(chip_row_y)
 if [ "$Y" -gt 0 ]; then
-  # A fast 300 ms swipe reaches the emulator as a near-tap and selected CAMS/IOT instead of scrolling (build 41 run):
-  # swipe slowly, twice, so the row ends fully scrolled with SECURITY as the right-most chip.
-  adb shell input swipe 1000 "$Y" 60 "$Y" 900; sleep 0.5
+  # Honest limit: while the map redraws every frame the emulator delivers a swipe on the chip row as a tap
+  # (300 ms and 900 ms gestures both selected the chip under the finger in the build 41 run and a branch run), so the row
+  # rarely scrolls here. Try slowly, prove it with the screenshot, and don't pretend otherwise.
   adb shell input swipe 1000 "$Y" 60 "$Y" 900; sleep 1
   if tap "SECURITY"; then
     sleep 2; shot 05d-security-chip
     screen_text > "$OUT/05d-security.txt"
     grep -E "SECURITY:" "$OUT/05d-security.txt" | head -1 | sed 's/^/  /' | tee -a "$SUMMARY"
   else
-    # The dump usually fails here (constant map redraw, see IDEAS.md) and SECURITY has never been in the cache,
-    # so tap where the right-most chip sits once the row is fully scrolled and let the screenshot be the proof.
-    note "  (tapping the right-most chip blind: SECURITY sits there after the scroll)"
-    adb shell input tap 1000 "$Y"; sleep 2; shot 05d-security-chip
-    screen_text > "$OUT/05d-security.txt"
-    if grep -q "SECURITY:" "$OUT/05d-security.txt" 2>/dev/null; then
-      grep -E "SECURITY:" "$OUT/05d-security.txt" | head -1 | sed 's/^/  /' | tee -a "$SUMMARY"
-    else
-      # Not a hard FAIL: UI dumps are flaky on the emulator; a person checks the screenshot.
-      note "WARN: could not confirm the SECURITY chip from the UI dump (check 05d-security-chip.png)"
-    fi
+    # Not a hard FAIL: see IDEAS.md (street-layer cache) for the fix to the cause; a person checks the screenshot.
+    sleep 1; shot 05d-security-chip-missing
+    note "WARN: SECURITY chip not reached (chip row did not scroll on the emulator; check 05d-security-chip-missing.png)"
   fi
-  adb shell input swipe 60 "$Y" 1000 "$Y" 900; sleep 0.5
   adb shell input swipe 60 "$Y" 1000 "$Y" 900; sleep 1
-  tap "ALL" || { note "  (could not find ALL: tapping where it was last seen)"; adb shell input tap 179 "$Y"; sleep 1.5; }
+  tap "ALL" || note "  (could not return to ALL)"
 else
   note "  (chip row not found: SECURITY chip step skipped)"
 fi
