@@ -198,10 +198,16 @@ sleep 18
 shot 05-highway
 screen_text > "$OUT/05-highway.txt"
 wait $DRIVE_PID
-if grep -q "mph" "$OUT/05-highway.txt" && grep -qi "inside a car" "$OUT/05-highway.txt"; then
-  note "  highway detected ✓ ($(grep -o '[0-9]* mph' "$OUT/05-highway.txt" | head -1), car distance model)"
+# Either screenshot counts: the UI-dump retries after 04-highway-mid often push 05-highway past the end of the
+# simulated drive, and once the fixes stop the app rightly shows no speed (the car model stays on for a minute).
+HWY=""
+for f in "$OUT/04-highway-mid.txt" "$OUT/05-highway.txt"; do
+  if grep -q "mph" "$f" && grep -qi "inside a car" "$f"; then HWY="$f"; break; fi
+done
+if [ -n "$HWY" ]; then
+  note "  highway detected ✓ ($(grep -o '[0-9]* mph' "$HWY" | head -1), car distance model, $(basename "$HWY" .txt))"
 else
-  note "  highway NOT detected: $(grep -E 'GPS|auto' "$OUT/05-highway.txt" | head -1)"
+  note "  highway NOT detected: $(cat "$OUT/04-highway-mid.txt" "$OUT/05-highway.txt" | grep -E 'GPS|auto' | head -1)"
 fi
 
 note "-- modes, 2D view, log"
