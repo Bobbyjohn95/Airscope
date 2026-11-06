@@ -22,6 +22,11 @@ Coworkers: add bigger ideas here with what / why / risk / size. K: delete a line
   *2026-11-05:* the same branch also fixes the "highway NOT detected" line that every run since v2.3 has shown: the
   app does show "71 mph · inside a car" mid-drive, the script just read the later screenshot, taken after the simulated
   drive had ended. Test-only, no release.
+  *2026-11-06:* the script tidy-up shipped with the build that fixed the offline-map progress race (the "Offline area:
+  every tile saved" JVM test failed on CI once on 11-05 because two download threads reported progress out of order).
+  Freshness checks of upstream sources (flock-you-esp32, OpenFreeMap TileJSON, Overpass, Actions tags) are still
+  blocked for the unattended coworker (web fetch needs an approval nobody is there to give); the emulator run shows
+  tiles + Overpass live. overpass-api.de answered 502 once in that run; the kumi.systems fallback covered it.
 - **CI actions are several major versions behind** (checkout v5→v7, setup-java v5→v6, setup-python v5→v7,
   upload-artifact v4→v7, download-artifact v4→v8, gradle/actions v4→v6, emulator-runner v2 current). Everything
   still works. Bumping touches the publish job (download-artifact), which coworkers must not change, and a failed
