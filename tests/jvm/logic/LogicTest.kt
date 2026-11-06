@@ -626,9 +626,10 @@ fun main() {
         val tm3 = TileManager(dir, { calls++; ByteArray(16) { 1 } }, threads = 2)
         tm3.request(ids); waitFor { tm3.stats.fromDisk >= ids.size }
         check("Tiles: second run loads from the phone, no network", calls == c0 && tm3.stats.fromDisk >= ids.size, "${calls - c0} downloads")
-        var last = 0
-        val failed = tm3.downloadArea(33.92, -84.84, 3000.0, { d, _, _ -> last = d }, { false })
+        var last = 0; var outOfOrder = 0
+        val failed = tm3.downloadArea(33.92, -84.84, 3000.0, { d, _, _ -> if (d <= last) outOfOrder++; last = d }, { false })
         check("Offline area: every tile saved", failed == 0 && last == Tiles.around(33.92, -84.84, 3000.0, 14).size, "$failed failed, $last done")
+        check("Offline area: progress reported in order", outOfOrder == 0, "$outOfOrder steps went backwards")
         dir.deleteRecursively()
     }
 

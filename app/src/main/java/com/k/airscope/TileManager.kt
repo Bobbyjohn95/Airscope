@@ -202,8 +202,7 @@ class TileManager(
             if (cancelled()) break
             val f = file(id)
             if (f.exists() && clock() - f.lastModified() < MAX_AGE_MS) {
-                synchronized(lock) { done++ }
-                onProgress(done, total, failed)
+                synchronized(lock) { done++; onProgress(done, total, failed) }
                 continue
             }
             sem.acquire()
@@ -216,8 +215,9 @@ class TileManager(
                     synchronized(lock) { failed++ }
                     stats.failed++; stats.lastError = (e.message ?: e.javaClass.simpleName).take(120); stats.lastErrorAt = clock()
                 } finally {
-                    synchronized(lock) { done++ }
-                    onProgress(done, total, failed)
+                    // Count and report under one lock so progress never arrives out of order
+                    // ("16 of 16" then "15 of 16") when two downloads finish together.
+                    synchronized(lock) { done++; onProgress(done, total, failed) }
                     sem.release()
                 }
             }

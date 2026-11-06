@@ -4,6 +4,12 @@ A personal signal-observation app for the Pixel 8 Pro (Android 10+, GrapheneOS-f
 It **only listens**. It reads Wi-Fi beacons and Bluetooth LE advertisements that devices already
 broadcast. It never connects to, jams, deauths or transmits to anything.
 
+## What's new in v2.9.1: offline-map progress counts in order
+- **Save map (offline area):** the "N of M tiles" progress text could briefly count backwards when two tiles finished at
+  the same moment; the counter is now updated and reported in one step. The same race made a test fail on CI now and
+  then. No other behaviour changes; the emulator test script is tidier (SECURITY chip step says plainly when it couldn't
+  scroll the chip row; highway detection is read from the mid-drive screenshot).
+
 ## What's new in v2.9: security part 2 (places, disruption watch, pairing spam, report)
 - **Places (MORE → Places: home / work):** mark where you are (150 m around the spot; needs a GPS fix better than
   ±50 m). After 30+ minutes there on 3 different days AirScope knows what's normally there; from then on fixed gear
