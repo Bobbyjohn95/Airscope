@@ -627,7 +627,10 @@ fun main() {
         tm3.request(ids); waitFor { tm3.stats.fromDisk >= ids.size }
         check("Tiles: second run loads from the phone, no network", calls == c0 && tm3.stats.fromDisk >= ids.size, "${calls - c0} downloads")
         var last = 0; var outOfOrder = 0
-        val failed = tm3.downloadArea(33.92, -84.84, 3000.0, { d, _, _ -> if (d <= last) outOfOrder++; last = d }, { false })
+        // Pair up the offline downloads so two tiles finish at the same moment (the ordering race needs that).
+        val pair = java.util.concurrent.CyclicBarrier(2)
+        val tm4 = TileManager(dir, { calls++; try { pair.await(300, java.util.concurrent.TimeUnit.MILLISECONDS) } catch (e: Exception) { pair.reset() }; ByteArray(16) { 1 } }, threads = 2)
+        val failed = tm4.downloadArea(33.92, -84.84, 3000.0, { d, _, _ -> if (d <= last) outOfOrder++; last = d }, { false })
         check("Offline area: every tile saved", failed == 0 && last == Tiles.around(33.92, -84.84, 3000.0, 14).size, "$failed failed, $last done")
         check("Offline area: progress reported in order", outOfOrder == 0, "$outOfOrder steps went backwards")
         dir.deleteRecursively()

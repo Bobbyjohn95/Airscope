@@ -236,7 +236,6 @@ if tap "🔍" contains; then
   tap "🔍" contains; tap "Clear"
 fi
 
-# Vertical center of the chip row, read from the last UI dump (the status text above it changes height).
 # Vertical centre of the chip row: from the live dump, or from where a chip was last seen when the dump failed
 # (the header above the chips keeps its height between steps).
 chip_row_y() {

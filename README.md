@@ -8,7 +8,7 @@ broadcast. It never connects to, jams, deauths or transmits to anything.
 - **Save map (offline area):** the "N of M tiles" progress text could briefly count backwards when two tiles finished at
   the same moment; the counter is now updated and reported in one step. The same race made a test fail on CI now and
   then. No other behaviour changes; the emulator test script is tidier (SECURITY chip step says plainly when it couldn't
-  scroll the chip row; highway detection is read from the mid-drive screenshot).
+  scroll the chip row; highway detection counts the mid-drive screenshot, not only the one after the drive).
 
 ## What's new in v2.9: security part 2 (places, disruption watch, pairing spam, report)
 - **Places (MORE → Places: home / work):** mark where you are (150 m around the spot; needs a GPS fix better than
