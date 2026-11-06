@@ -19,6 +19,9 @@ Coworkers: add bigger ideas here with what / why / risk / size. K: delete a line
   is flaky, emulator-specific as far as we can tell, and the street-layer cache above is the real fix for both. Branch
   `smoke-security-chip` holds the script tidy-up (off-screen chips no longer poison the tap cache; plain WARN when the
   row didn't scroll); it merges with the next real release, not on its own.
+  *2026-11-05:* the same branch also fixes the "highway NOT detected" line that every run since v2.3 has shown: the
+  app does show "71 mph · inside a car" mid-drive, the script just read the later screenshot, taken after the simulated
+  drive had ended. Test-only, no release.
 - **CI actions are several major versions behind** (checkout v5→v7, setup-java v5→v6, setup-python v5→v7,
   upload-artifact v4→v7, download-artifact v4→v8, gradle/actions v4→v6, emulator-runner v2 current). Everything
   still works. Bumping touches the publish job (download-artifact), which coworkers must not change, and a failed
