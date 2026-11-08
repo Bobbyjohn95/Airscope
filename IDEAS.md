@@ -33,6 +33,9 @@ Coworkers: add bigger ideas here with what / why / risk / size. K: delete a line
   to other repos is refused). **K's call:** either allow the coworker's web fetches to github.com, openfreemap.org,
   overpass-api.de, ieee.org, wireshark.org and bitbucket.org, or accept that signatures / Actions versions are only
   checked when K is around. The emulator run already proves tiles + Overpass work each day.
+  *2026-11-08:* build 49 still live and healthy (no new CI runs; dev_check green; the only compiler warnings are two
+  harmless "condition is always true" null checks in PositionFilter). Nothing shipped: no candidate met the bar.
+  Upstream freshness blocked for the 5th day (same reason), not retried further. Weekly roundup sent to K.
 - **CI actions are several major versions behind** (checkout v5→v7, setup-java v5→v6, setup-python v5→v7,
   upload-artifact v4→v7, download-artifact v4→v8, gradle/actions v4→v6, emulator-runner v2 current). Everything
   still works. Bumping touches the publish job (download-artifact), which coworkers must not change, and a failed
