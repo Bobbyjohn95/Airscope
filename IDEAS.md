@@ -39,6 +39,8 @@ Coworkers: add bigger ideas here with what / why / risk / size. K: delete a line
   *2026-11-09:* build 49 still live, not prerelease; no new CI runs; dev_check green. Nothing shipped: no candidate met
   the bar (the only `@Suppress("DEPRECATION")` spots are intentional: edge-to-edge on older Android and the updater,
   which coworkers don't touch). Upstream freshness blocked for the 6th day (one try, same permission prompt).
+  *2026-11-10:* build 49 still live, not prerelease; no new CI runs; dev_check green. Nothing shipped: no candidate met
+  the bar. Upstream freshness blocked for the 7th day (one try, same permission prompt); still K's call above.
 - **CI actions are several major versions behind** (checkout v5→v7, setup-java v5→v6, setup-python v5→v7,
   upload-artifact v4→v7, download-artifact v4→v8, gradle/actions v4→v6, emulator-runner v2 current). Everything
   still works. Bumping touches the publish job (download-artifact), which coworkers must not change, and a failed
