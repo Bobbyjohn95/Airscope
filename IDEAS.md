@@ -45,6 +45,9 @@ Coworkers: add bigger ideas here with what / why / risk / size. K: delete a line
   the bar. Freshness, partial: OpenFreeMap TileJSON answered 200 with the same attribution (OpenFreeMap / OpenMapTiles /
   OpenStreetMap) and a planet dataset dated 2026-11-01; the app's `planet/latest` URL and credit line still match.
   GitHub fetches (flock-you-esp32 signatures, Actions tags) still blocked unattended (8th day); still K's call above.
+  *2026-11-12:* build 49 still live, not prerelease; no new CI runs; dev_check green. Nothing shipped: no candidate met
+  the bar. GitHub fetches (flock-you-esp32 signatures, Actions tags) still blocked unattended (9th day, one try); still
+  K's call above.
 - **CI actions are several major versions behind** (checkout v5→v7, setup-java v5→v6, setup-python v5→v7,
   upload-artifact v4→v7, download-artifact v4→v8, gradle/actions v4→v6, emulator-runner v2 current). Everything
   still works. Bumping touches the publish job (download-artifact), which coworkers must not change, and a failed
