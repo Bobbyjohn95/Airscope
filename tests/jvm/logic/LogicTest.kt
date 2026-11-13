@@ -116,11 +116,11 @@ fun main() {
     check("FlockSafety word still -> POLICE", wifi("02:aa:bb:cc:dd:02", "FlockSafety-Cam").category == Category.POLICE)
     check("Flock word still -> POLICE", wifi("02:aa:bb:cc:dd:02", "Flock Cam 2").category == Category.POLICE)
     check("Penguin-<serial> SSID still -> POLICE", wifi("02:aa:bb:cc:dd:02", "Penguin-1234567890").category == Category.POLICE)
-    for (n in listOf("Stanford_Guest", "Oxford Apartments", "Clifford", "Rhonda's WiFi", "Campbell Family", "Camden 2.4", "Cambridge Inn", "Charlotte", "Carlos", "Ernest Home", "Wizards Den", "Camry", "Camaro Club", "Huerta", "Despy", "Kasandra")) {
+    for (n in listOf("Stanford_Guest", "Oxford Apartments", "Clifford", "Rhonda's WiFi", "Campbell Family", "Camden 2.4", "Cambridge Inn", "Charlotte", "Carlos", "Ernest Home", "Wizards Den", "Camry", "Camaro Club", "Huerta", "Despy", "Kasandra", "Lincolnshire")) {
         val h = wifi("02:aa:bb:cc:dd:03", n)
         check("\"$n\" is not a car or camera", h.category != Category.VEHICLE && h.category != Category.CAMERA_IOT && h.findings.none { "Camera/IoT-style" in it.text }, "${h.category} ${h.label} ${h.findings}")
     }
-    for (n in listOf("Ford SYNC", "Ford_SYNC", "FordPass", "FordWiFi-1234", "MyFord Touch", "Honda HFT", "MyHonda", "2019Honda", "LincolnWiFi", "Lincoln-MKZ", "OBDII", "WiFi_OBDII", "VeepeakOBD", "Veepeak-OBD2")) check("\"$n\" still -> VEHICLE", wifi("02:aa:bb:cc:dd:04", n).category == Category.VEHICLE, n)
+    for (n in listOf("Ford SYNC", "Ford_SYNC", "FordPass", "FordWiFi-1234", "MyFord Touch", "Honda HFT", "MyHonda", "2019Honda", "LincolnWiFi", "Lincoln-MKZ", "Lincoln_Navigator", "MyLincoln", "OBDII", "WiFi_OBDII", "VeepeakOBD", "Veepeak-OBD2")) check("\"$n\" still -> VEHICLE", wifi("02:aa:bb:cc:dd:04", n).category == Category.VEHICLE, n)
     for (n in listOf("Wyze Cam v3", "WyzeCam", "IPCAM-1234", "Cam_2", "BackyardCams", "CamHi", "Dashcam", "Camera_Front", "Arlo-5G", "MyArlo", "NETGEAR_ARLO", "SpyCam", "Mini_Spy", "Nest-Hub", "Google_Nest", "GoogleNest", "WiZ_Bulb", "Hue Bridge", "Hue_Bridge", "HueBridge", "Philips_hue")) {
         val h = wifi("02:aa:bb:cc:dd:05", n)
         check("\"$n\" still camera/IoT or car", h.category == Category.CAMERA_IOT || h.category == Category.VEHICLE, "${h.category} ${h.label}")

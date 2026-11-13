@@ -113,10 +113,10 @@ class CoreTests(unittest.TestCase):
         self.assertEqual(core.classify_wifi("02:aa:bb:cc:dd:02", "Flock Cam 2", "[WPA2-PSK-CCMP][ESS]", self.db).category, "POLICE")
         self.assertEqual(core.classify_wifi("02:aa:bb:cc:dd:02", "Penguin-1234567890", "[WPA2-PSK-CCMP][ESS]", self.db).category, "POLICE")
         for n in ("Stanford_Guest", "Oxford Apartments", "Clifford", "Rhonda's WiFi", "Campbell Family", "Camden 2.4",
-                  "Cambridge Inn", "Charlotte", "Carlos", "Ernest Home", "Wizards Den", "Camry", "Camaro Club", "Huerta", "Despy", "Kasandra"):
+                  "Cambridge Inn", "Charlotte", "Carlos", "Ernest Home", "Wizards Den", "Camry", "Camaro Club", "Huerta", "Despy", "Kasandra", "Lincolnshire"):
             c = core.classify_wifi("02:aa:bb:cc:dd:03", n, "[WPA2-PSK-CCMP][ESS]", self.db)
             self.assertNotIn(c.category, ("VEHICLE", "CAMERA_IOT"), f"{n}: {c.category} {c.label}")
-        for n in ("Ford SYNC", "Ford_SYNC", "FordPass", "FordWiFi-1234", "MyFord Touch", "Honda HFT", "MyHonda", "2019Honda", "LincolnWiFi", "Lincoln-MKZ", "OBDII", "WiFi_OBDII", "VeepeakOBD", "Veepeak-OBD2"):
+        for n in ("Ford SYNC", "Ford_SYNC", "FordPass", "FordWiFi-1234", "MyFord Touch", "Honda HFT", "MyHonda", "2019Honda", "LincolnWiFi", "Lincoln-MKZ", "Lincoln_Navigator", "MyLincoln", "OBDII", "WiFi_OBDII", "VeepeakOBD", "Veepeak-OBD2"):
             self.assertEqual(core.classify_wifi("02:aa:bb:cc:dd:04", n, "[WPA2-PSK-CCMP][ESS]", self.db).category, "VEHICLE", n)
         for n in ("Wyze Cam v3", "WyzeCam", "IPCAM-1234", "Cam_2", "BackyardCams", "CamHi", "Dashcam", "Camera_Front", "Arlo-5G", "MyArlo", "NETGEAR_ARLO", "SpyCam", "Mini_Spy", "Nest-Hub", "Google_Nest", "GoogleNest", "WiZ_Bulb", "Hue Bridge", "Hue_Bridge", "HueBridge", "Philips_hue"):
             self.assertIn(core.classify_wifi("02:aa:bb:cc:dd:05", n, "[WPA2-PSK-CCMP][ESS]", self.db).category, ("CAMERA_IOT", "VEHICLE"), n)
