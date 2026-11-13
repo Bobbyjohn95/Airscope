@@ -107,6 +107,18 @@ class CoreTests(unittest.TestCase):
         self.assertEqual(core.security_grade("[RSN-SAE-CCMP][ESS]")[0], "A")
         self.assertEqual(core.security_grade("[WPA2-PSK-CCMP][ESS]", wps=True)[0], "C")
         self.assertTrue(core.is_weak("[WEP][ESS]")); self.assertFalse(core.is_weak("[WPA2-PSK-CCMP][ESS]"))
+        # name words must be whole words: neighbours' networks are not cameras, cars or Flock gear
+        for n in ("Penguin_5G", "Club Penguin", "Flockhart Family"):
+            self.assertNotEqual(core.classify_wifi("02:aa:bb:cc:dd:01", n, "[WPA2-PSK-CCMP][ESS]", self.db).category, "POLICE", n)
+        self.assertEqual(core.classify_wifi("02:aa:bb:cc:dd:02", "Flock Cam 2", "[WPA2-PSK-CCMP][ESS]", self.db).category, "POLICE")
+        for n in ("Stanford_Guest", "Oxford Apartments", "Clifford", "Rhonda's WiFi", "Campbell Family", "Camden 2.4",
+                  "Cambridge Inn", "Charlotte", "Carlos", "Ernest Home", "Wizards Den", "Camry"):
+            c = core.classify_wifi("02:aa:bb:cc:dd:03", n, "[WPA2-PSK-CCMP][ESS]", self.db)
+            self.assertNotIn(c.category, ("VEHICLE", "CAMERA_IOT"), f"{n}: {c.category} {c.label}")
+        for n in ("Ford SYNC", "MyFord Touch", "Honda HFT", "OBDII"):
+            self.assertEqual(core.classify_wifi("02:aa:bb:cc:dd:04", n, "[WPA2-PSK-CCMP][ESS]", self.db).category, "VEHICLE", n)
+        for n in ("Wyze Cam v3", "IPCAM-1234", "Camera_Front", "Arlo-5G", "Nest-Hub", "WiZ_Bulb"):
+            self.assertEqual(core.classify_wifi("02:aa:bb:cc:dd:05", n, "[WPA2-PSK-CCMP][ESS]", self.db).category, "CAMERA_IOT", n)
 
     def test_ble_classification(self):
         tag = core.classify_ble("f1:22:33:44:55:66", None, {0x004C: bytes([0x12, 0x19]) + bytes(25)}, set(), {}, self.db, True)
@@ -119,6 +131,10 @@ class CoreTests(unittest.TestCase):
         self.assertTrue(flip.attack_tool); self.assertEqual(flip.label, "Flipper Zero")
         tile = core.classify_ble("c1:00:00:00:00:01", None, {}, {0xFEED}, {}, self.db, True)
         self.assertEqual(tile.ble_type, "Tile tracker")
+        pingu = core.classify_ble("c8:11:22:33:44:55", "Penguin-1234567890", {}, set(), {}, self.db, False)
+        self.assertEqual(pingu.category, "POLICE")
+        for n in ("Penguins Fan", "Flockhart"):
+            self.assertNotEqual(core.classify_ble("c8:11:22:33:44:56", n, {}, set(), {}, self.db, False).category, "POLICE", n)
 
     def test_owner(self):
         self.assertEqual(core.owner("Sarah's AirPods"), "Sarah")

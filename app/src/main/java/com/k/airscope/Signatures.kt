@@ -45,7 +45,11 @@ object Signatures {
     val RAVEN_RANGE = 0x3100..0x3500
 
     private val flockSsidExact = Regex("^flock-[0-9a-f]{6}$", RegexOption.IGNORE_CASE)
-    private val flockKeywords = listOf("flocksafety", "flock", "penguin", "pigvision", "fs ext battery")
+    // Whole words only: "Flockhart", "Club Penguin" or "Penguin_5G" are home networks, not cameras.
+    private val flockWord = Regex("(^|[^a-z])flock([^a-z]|$)")
+    private val penguinWord = Regex("(^|[^a-z])penguin([^a-z]|$)")
+    private val flockStart = Regex("^flock([^a-z]|$)")
+    private val penguinStart = Regex("^penguin([^a-z]|$)")
     private val penguinSerial = Regex("^penguin-\\d{10}$", RegexOption.IGNORE_CASE)
     private val bareSerial = Regex("^\\d{10}$")
 
@@ -77,7 +81,10 @@ object Signatures {
         when {
             flockSsidExact.matches(ssid) -> f += Finding(70, "Flock camera setup network (Flock-XXXXXX)")
             s.contains("flock camera net") -> f += Finding(65, "Flock camera network (\"Flock Camera net.\")")
-            flockKeywords.any { s.contains(it) } -> f += Finding(50, "Flock Safety network name")
+            s.contains("flocksafety") || s.contains("pigvision") || s.contains("fs ext battery") || flockWord.containsMatchIn(s) ->
+                f += Finding(50, "Flock Safety network name")
+            // A Penguin is Flock's battery module name on BLE; on Wi-Fi the word alone is a weak hint, not a camera.
+            penguinWord.containsMatchIn(s) -> f += Finding(20, "\"Penguin\" in network name (Flock module word; weak on its own)")
             s.contains("flck") -> f += Finding(50, "Flock test network name (CVE-2025-59409)")
         }
         return f
@@ -136,8 +143,8 @@ object Signatures {
         val l = n.lowercase(Locale.US)
         return when {
             l == "fs ext battery" -> listOf(Finding(60, "Flock \"FS Ext Battery\" pack"))
-            penguinSerial.matches(n) || l.startsWith("penguin") -> listOf(Finding(55, "Flock Penguin battery/camera module"))
-            l.startsWith("flock") || l.startsWith("pigvision") -> listOf(Finding(55, "Flock Safety BLE device"))
+            penguinSerial.matches(n) || penguinStart.containsMatchIn(l) -> listOf(Finding(55, "Flock Penguin battery/camera module"))
+            flockStart.containsMatchIn(l) || l.startsWith("flocksafety") || l.startsWith("pigvision") -> listOf(Finding(55, "Flock Safety BLE device"))
             l.startsWith("axon") -> listOf(Finding(55, "Axon device name"))
             l == "raven" -> listOf(Finding(30, "Possible Raven gunshot detector (name only)"))
             l == "dfutarg" -> listOf(Finding(5, "Nordic firmware-update mode (seen on Flock packs mid-update)"))

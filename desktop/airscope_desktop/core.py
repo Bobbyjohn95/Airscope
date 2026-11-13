@@ -29,8 +29,10 @@ def _rx(s: str) -> re.Pattern:
 PHONE_NAME = _rx(r"(iphone|ipad|galaxy (s|a|z|note)|\bpixel \d|oneplus|\bmoto|redmi|poco|xperia|nothing phone|'s phone|android_|\bphone\b)")
 COMPUTER_NAME = _rx(r"(macbook|imac|mac mini|mac studio|desktop-|laptop-|thinkpad|surface|chromebook|\bpc\b|ideapad|xps)")
 WEARABLE_NAME = _rx(r"(watch|band|buds|airpods|beats|\bwh-|\bwf-|jbl|bose|jabra|sennheiser|soundcore|skullcandy|fitbit|garmin|oura|whoop|amazfit|mi band|versa|forerunner|fenix|venu|polar|suunto|coros|earbuds|headphones|headset|hearing)")
-VEHICLE_NAME = _rx(r"(tesla|chevrolet|chevy|\bgmc\b|buick|cadillac|ford|lincoln|toyota|lexus|honda|acura|nissan|infiniti|hyundai|\bkia\b|subaru|mazda|jeep|dodge|chrysler|\bram\b|bmw|mercedes|\baudi\b|\bvw\b|volkswagen|volvo|porsche|rivian|polestar|uconnect|\bsync\b|carplay|android auto|\bmmi\b|obd|vgate|elm327|dash ?cam|70mai|viofo|blackvue|nextbase|\bcar\b|car ?hotspot|my ?car)")
-CAMERA_IOT_NAME = _rx(r"(cam|ipc|dvr|nvr|wyze|v380|tuya|smartlife|esp[_-]|blink|arlo|^ring|yi[-_]|xmeye|jxl|spy|hidvr|hikvision|dahua|reolink|eufy|tapo|kasa|govee|hue|switchbot|meross|wiz|\bled\b|bulb|plug|\block\b|roku|chromecast|echo|fire ?tv|sonos|printer|\bhp-|epson|canon|brother|\btv\b|bravia|vizio|nest|ecobee|doorbell|thermostat|sensor)")
+VEHICLE_NAME = _rx(r"(tesla|chevrolet|chevy|\bgmc\b|buick|cadillac|\bford\b|myford|\blincoln\b|toyota|lexus|\bhonda|acura|nissan|infiniti|hyundai|\bkia\b|subaru|mazda|jeep|dodge|chrysler|\bram\b|bmw|mercedes|\baudi\b|\bvw\b|volkswagen|volvo|porsche|rivian|polestar|uconnect|\bsync\b|carplay|android auto|\bmmi\b|\bobd|vgate|elm327|dash ?cam|70mai|viofo|blackvue|nextbase|\bcar\b|car ?hotspot|my ?car)")
+# "cam" only as a word, a prefix of camera or next to digits/-/_ (Campbell, Camden, Cambridge are not cameras).
+_CAM = r"cam(era|\d|[_-]|\b)"
+CAMERA_IOT_NAME = _rx(r"(" + _CAM + r"|ipc|dvr|nvr|wyze|v380|tuya|smartlife|esp[_-]|blink|\barlo|^ring|yi[-_]|xmeye|jxl|\bspy|hidvr|hikvision|dahua|reolink|eufy|tapo|\bkasa|govee|\bhue\b|switchbot|meross|(^|[^a-z])wiz([^a-z]|$)|\bled\b|bulb|plug|\block\b|roku|chromecast|echo|fire ?tv|sonos|printer|\bhp-|epson|canon|brother|\btv\b|bravia|vizio|\bnest|ecobee|doorbell|thermostat|sensor)")
 DRONE_NAME = _rx(r"(dji|mavic|tello|skydio|anafi|autel|\bspark-|phantom|fpv|\bmini \d|avata)")
 HOTSPOT_NAME = _rx(r"(iphone|android|galaxy|pixel|hotspot|moto|oneplus|redmi|'s phone|^direct-.*android)")
 FLEET_ROUTER_SSID = _rx(r"^(IBR\d{3,4}|R\d{3,4}|AER\d{4}|E\d{3,4}|CBA\d{3,4})(LP\w*)?-[0-9a-f]{3}$")
@@ -59,7 +61,11 @@ FLOCK_BLE_COMPANY = 0x09C8
 RAVEN_NAMED = {0x3100, 0x3200, 0x3300, 0x3400, 0x3500}
 
 FLOCK_SSID_EXACT = _rx(r"^flock-[0-9a-f]{6}$")
-FLOCK_KEYWORDS = ["flocksafety", "flock", "penguin", "pigvision", "fs ext battery"]
+# Whole words only: "Flockhart", "Club Penguin" or "Penguin_5G" are home networks, not cameras.
+FLOCK_WORD = _rx(r"(^|[^a-z])flock([^a-z]|$)")
+PENGUIN_WORD = _rx(r"(^|[^a-z])penguin([^a-z]|$)")
+FLOCK_START = _rx(r"^flock([^a-z]|$)")
+PENGUIN_START = _rx(r"^penguin([^a-z]|$)")
 PENGUIN_SERIAL = _rx(r"^penguin-\d{10}$")
 PUBLIC_SAFETY_VENDOR = _rx(r"(axon|taser|motorola solutions|watchguard|digital ally|kustom signals|l3harris|coban|utility associates|getac|soundthinking|shotspotter|flock safety)")
 FLEET_ROUTER_VENDOR = _rx(r"(cradlepoint|sierra wireless|inseego|digi international|peplink|pepwave)")
@@ -118,8 +124,10 @@ def police_ssid_findings(ssid: str) -> List[Finding]:
         return [Finding(70, "Flock camera setup network (Flock-XXXXXX)")]
     if "flock camera net" in s:
         return [Finding(65, 'Flock camera network ("Flock Camera net.")')]
-    if any(k in s for k in FLOCK_KEYWORDS):
+    if "flocksafety" in s or "pigvision" in s or "fs ext battery" in s or FLOCK_WORD.search(s):
         return [Finding(50, "Flock Safety network name")]
+    if PENGUIN_WORD.search(s):  # Flock's battery module word; on Wi-Fi a weak hint on its own
+        return [Finding(20, '"Penguin" in network name (Flock module word; weak on its own)')]
     if "flck" in s:
         return [Finding(50, "Flock test network name (CVE-2025-59409)")]
     return []
@@ -568,9 +576,9 @@ def classify_ble(addr: str, name: Optional[str], mfr: Dict[int, bytes], uuid16: 
     low = n.lower()
     if low == "fs ext battery":
         police.append(Finding(60, 'Flock "FS Ext Battery" pack'))
-    elif PENGUIN_SERIAL.match(n) or low.startswith("penguin"):
+    elif PENGUIN_SERIAL.match(n) or PENGUIN_START.search(low):
         police.append(Finding(55, "Flock Penguin battery/camera module"))
-    elif low.startswith("flock") or low.startswith("pigvision"):
+    elif FLOCK_START.search(low) or low.startswith("flocksafety") or low.startswith("pigvision"):
         police.append(Finding(55, "Flock Safety BLE device"))
     elif low.startswith("axon"):
         police.append(Finding(55, "Axon device name"))

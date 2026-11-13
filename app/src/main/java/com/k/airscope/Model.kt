@@ -93,6 +93,9 @@ fun fmtDist(m: Double): String = when {
     else -> fmt1(m / 1000) + "k"
 }
 
+/** Distance with its unit for sentences: "350 m", "1.5 km" (fmtDist alone gives "1.5k", which must not get " m" appended). */
+fun fmtDistUnit(m: Double): String = if (m < 1000) "${fmtDist(m)} m" else "${fmt1(m / 1000)} km"
+
 /** One observed transmitter. Pure Kotlin; owned by the engine thread. */
 class Device(val id: String, val kind: Kind, now: Long) {
     val key: String = kind.name + ":" + id

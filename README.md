@@ -4,6 +4,16 @@ A personal signal-observation app for the Pixel 8 Pro (Android 10+, GrapheneOS-f
 It **only listens**. It reads Wi-Fi beacons and Bluetooth LE advertisements that devices already
 broadcast. It never connects to, jams, deauths or transmits to anything.
 
+## What's new in v2.9.2: fewer wrong labels from look-alike network names
+- **Names are matched as whole words now.** A neighbour's "Penguin_5G", "Club Penguin" or "Flockhart" network no
+  longer shows up as a Flock Safety camera (the word *Penguin* alone on Wi-Fi is now only a weak hint; Flock's real
+  names, `Flock-XXXXXX`, "Flock Camera net.", FlockSafety and the `Penguin-<serial>` Bluetooth modules still count in
+  full). "Stanford_Guest", "Oxford", "Clifford" and "Rhonda" are no longer cars (they contained *ford* / *honda*), and
+  "Campbell", "Camden", "Cambridge", "Camry", "Charlotte", "Carlos", "Ernest" and "Wizards" are no longer cameras or
+  smart-home gear (they contained *cam* / *arlo* / *nest* / *wiz*). Real camera, car and Flock names still match; the
+  desktop beta got the same rules.
+- The "showed up again … apart" and "appeared N times … apart" notes now say "2.5 km" instead of "2.5k m".
+
 ## What's new in v2.9.1: offline-map progress counts in order
 - **Save map (offline area):** the "N of M tiles" progress text could briefly count backwards when two tiles finished at
   the same moment; the counter is now updated and reported in one step. The same race made a test fail on CI now and

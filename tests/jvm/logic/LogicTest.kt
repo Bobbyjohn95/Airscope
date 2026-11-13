@@ -59,6 +59,10 @@ fun main() {
 
     val penguin = Classifier.classifyBle("c8:11:22:33:44:55", false, AdvParser.parse(ad(name("Penguin-1234567890"))), db)
     check("Penguin battery -> POLICE/Flock", penguin.category == Category.POLICE && penguin.label == "Flock Safety device", penguin.label)
+    val pingu = Classifier.classifyBle("c8:11:22:33:44:56", false, AdvParser.parse(ad(name("Penguins Fan"))), db)
+    check("BLE 'Penguins Fan' is not Flock", pingu.category != Category.POLICE, pingu.label)
+    val flockhart = Classifier.classifyBle("c8:11:22:33:44:57", false, AdvParser.parse(ad(name("Flockhart"))), db)
+    check("BLE 'Flockhart' is not Flock", flockhart.category != Category.POLICE, flockhart.label)
 
     val flockCo = Classifier.classifyBle("d2:11:22:33:44:55", true, AdvParser.parse(ad(mfr(0x09C8, 1, 2))), db)
     check("Flock company 0x09C8 -> POLICE", flockCo.category == Category.POLICE)
@@ -104,6 +108,22 @@ fun main() {
     check("Flock Camera net. -> POLICE", wifi("06:aa:bb:cc:dd:ee", "Flock Camera net.").category == Category.POLICE)
     check("Flock OUI BSSID -> POLICE", wifi("b4:1e:52:01:02:03", "x").category == Category.POLICE)
     check("Flock exact default MAC 70 pts", wifi("00:03:7f:50:00:01", "").findings.any { it.points == 70 })
+    // Name words must be whole words: neighbours' networks are not cameras or cars
+    for (n in listOf("Penguin_5G", "Club Penguin", "Flockhart Family")) {
+        val h = wifi("02:aa:bb:cc:dd:01", n)
+        check("\"$n\" is not a Flock camera", h.category != Category.POLICE && h.findings.none { it.points >= 50 }, "${h.category} ${h.findings}")
+    }
+    check("FlockSafety word still -> POLICE", wifi("02:aa:bb:cc:dd:02", "FlockSafety-Cam").category == Category.POLICE)
+    check("Flock word still -> POLICE", wifi("02:aa:bb:cc:dd:02", "Flock Cam 2").category == Category.POLICE)
+    for (n in listOf("Stanford_Guest", "Oxford Apartments", "Clifford", "Rhonda's WiFi", "Campbell Family", "Camden 2.4", "Cambridge Inn", "Charlotte", "Carlos", "Ernest Home", "Wizards Den", "Camry")) {
+        val h = wifi("02:aa:bb:cc:dd:03", n)
+        check("\"$n\" is not a car or camera", h.category != Category.VEHICLE && h.category != Category.CAMERA_IOT && h.findings.none { "Camera/IoT-style" in it.text }, "${h.category} ${h.label} ${h.findings}")
+    }
+    for (n in listOf("Ford SYNC", "MyFord Touch", "Honda HFT", "OBDII", "Veepeak-OBD2")) check("\"$n\" still -> VEHICLE", wifi("02:aa:bb:cc:dd:04", n).category == Category.VEHICLE, n)
+    for (n in listOf("Wyze Cam v3", "IPCAM-1234", "Dashcam", "Camera_Front", "Arlo-5G", "SpyCam", "Nest-Hub", "WiZ_Bulb", "Hue Bridge")) {
+        val h = wifi("02:aa:bb:cc:dd:05", n)
+        check("\"$n\" still camera/IoT or car", h.category == Category.CAMERA_IOT || h.category == Category.VEHICLE, "${h.category} ${h.label}")
+    }
     val cp = wifi("00:30:44:aa:bb:cc", "IBR900-1b2")
     check("Cradlepoint IBR900 default name -> VEHICLE, not police", cp.category == Category.VEHICLE && cp.label.startsWith("Fleet vehicle router"), "${cp.category} ${cp.label} ${cp.findings}")
     val sierra = wifi("00:a0:d5:aa:bb:cc", "AirLink")
@@ -946,6 +966,8 @@ fun main() {
         val fol = ble("d1:00:00:00:00:01", Category.PHONE, n = 3, spread = 2500.0)
         Heuristics.score(fol, listOf(fol), t0)
         check("following: 3 sightings 2.5 km apart -> tagged, MEDIUM, alert", "following" in fol.secTags && fol.level >= Level.MEDIUM && Heuristics.wantsAlert(fol), "${fol.score} ${fol.flags}")
+        check("following text says km, not \"k m\"", fol.flags.any { "2.5 km apart" in it } && fol.flags.none { "k m" in it }, fol.flags)
+        check("fmtDistUnit", fmtDistUnit(350.0) == "350 m" && fmtDistUnit(1500.0) == "1.5 km" && fmtDistUnit(4.2) == "4.2 m")
         val unknown = ble("d1:00:00:00:00:05", Category.NETWORK, "Unknown BLE device", n = 4, spread = 5000.0)
         Heuristics.score(unknown, listOf(unknown), t0)
         check("following: unknown BLE device counts", "following" in unknown.secTags, unknown.flags)

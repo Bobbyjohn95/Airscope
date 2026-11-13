@@ -587,7 +587,7 @@ class MainActivity : Activity() {
             sb.append(mark).append(r.title.take(30)).append('\n')
             sb.append("    ").append(r.category.short).append(" · ").append(tf.format(Date(r.firstSeen))).append("–")
                 .append(tf.format(Date(r.lastSeen))).append(" · best ").append(r.bestRssi).append(" dBm")
-            if (r.spreadM >= 300) sb.append(" · ").append(fmtDist(r.spreadM)).append(" m apart")
+            if (r.spreadM >= 300) sb.append(" · ").append(fmtDistUnit(r.spreadM)).append(" apart")
             if (r.score > 0) sb.append(" · [").append(r.score).append("]")
             sb.append('\n')
         }

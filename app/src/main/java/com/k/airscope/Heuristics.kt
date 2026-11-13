@@ -82,7 +82,7 @@ object Heuristics {
             // Came back this session somewhere else: a classic sign of something traveling with you
             if (d.sightings >= 2 && d.sightSpreadM >= 1000 && d.category != Category.NETWORK && d.category != Category.CAMERA_IOT) {
                 val pts = if (d.bleType in Classifier.TRACKERS) 20 else 10
-                s += pts; f += "Showed up again ${fmtDist(d.sightSpreadM)} m from where it was first seen (${d.sightings}× this session)"
+                s += pts; f += "Showed up again ${fmtDistUnit(d.sightSpreadM)} from where it was first seen (${d.sightings}× this session)"
             }
             if (d.followM > 400) {
                 val km = String.format(java.util.Locale.US, "%.1f", d.followM / 1000)
@@ -97,7 +97,7 @@ object Heuristics {
             // alone is not enough (every passenger's phone does that), and a bus/train full of devices is not a tail.
             val crowd = active.count { it.kind == Kind.BLE && it.followM > 2000 && !fixedGear(it) && it.bleType !in Classifier.TRACKERS }
             if (d.sightings >= 3 && d.sightSpreadM >= 1500 && !fixedGear(d)) {
-                s += 15; f += "Appeared ${d.sightings} separate times, ${fmtDist(d.sightSpreadM)} m apart: showing up wherever you go"
+                s += 15; f += "Appeared ${d.sightings} separate times, ${fmtDistUnit(d.sightSpreadM)} apart: showing up wherever you go"
                 if (crowd <= 4) sec += "following" else f += "(many devices are travelling with you right now: transit or a group, so no alert)"
             }
         }
