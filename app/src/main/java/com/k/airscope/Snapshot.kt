@@ -181,7 +181,7 @@ class Snapshot(
                 title = a.title(), name = "", vendor = a.manufacturer ?: "", detail = "mapped · ${Geo.cardinal(h.bearing)}",
                 rssi = 0, avg = 0, dist = h.dist, lo = h.dist * 0.95, hi = h.dist * 1.05, distSrc = "GPS + mapped location",
                 score = if (h.dist < 300) 60 else 30, level = if (h.dist < 300) Level.HIGH else Level.MEDIUM,
-                flags = listOf("Mapped ${a.kindLabel()} ${fmtDist(h.dist)} m ${Geo.cardinal(h.bearing)}"),
+                flags = listOf("Mapped ${a.kindLabel()} ${fmtDistUnit(h.dist)} ${Geo.cardinal(h.bearing)}"),
                 facts = facts, ageSec = 0, lastSec = 0, trusted = false,
                 angle = h.bearing.toFloat(), bearing = h.bearing.toFloat(), lat = a.lat, lon = a.lon, errM = 5.0,
                 spots = 0, spreadM = 0.0,
