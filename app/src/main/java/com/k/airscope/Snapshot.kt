@@ -130,9 +130,9 @@ class Snapshot(
             else facts += "First seen" to timeFmt.format(java.util.Date(d.firstSeen))
             if (d.sightings >= 2) {
                 facts += "↻ Seen again" to "${d.sightings} separate times this session (gone ${d.lastGapMs / 60_000} min before coming back)" +
-                    if (d.sightSpreadM >= 300) " · first spots ${fmtDist(d.sightSpreadM)} m apart" else ""
+                    if (d.sightSpreadM >= 300) " · first spots ${fmtDistUnit(d.sightSpreadM)} apart" else ""
             }
-            if (d.followM > 50) facts += "Moved with you" to "${fmtDist(d.followM)} m"
+            if (d.followM > 50) facts += "Moved with you" to fmtDistUnit(d.followM)
             if (d.owner.isNotBlank()) facts += "Owner" to d.owner + (if (d.ownerFromLan) " (from the matching hostname on your Wi-Fi)" else " (that's what the device's own name says: nothing was looked up)")
             if (d.lanNote.isNotBlank()) facts += "On your Wi-Fi" to d.lanNote
             if (d.aliases.isNotEmpty()) facts += "Earlier addresses" to d.aliases.takeLast(4).joinToString(", ") + " (same name and maker: linked across its address changes)"

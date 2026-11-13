@@ -781,7 +781,7 @@ class MapView3D(ctx: Context) : View(ctx) {
                 val again = (if (d.priority > 0) "★ " else "") + if (d.sightings >= 2) d.againMark + " " else ""
                 val beyond = !it.placed && d.candA == null && d.dist > rangeM * 1.22
                 val t = again + (if (d.kind == Kind.MAP) d.title.removeSuffix(" (mapped)") else d.title) +
-                    (if (beyond) " → ${fmtDist(d.dist)} m" else if (!it.placed) " ?" else "")
+                    (if (beyond) " → ${fmtDistUnit(d.dist)}" else if (!it.placed) " ?" else "")
                 val s = t.take(if (sel) 28 else 18)
                 fill.color = Ui.BG; fill.alpha = 150
                 c.drawRect(sx + size + 3 * dp, sy - 8 * dp, sx + size + 6 * dp + p.measureText(s), sy + 4 * dp, fill)

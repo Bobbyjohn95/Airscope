@@ -115,14 +115,15 @@ object Patterns {
     val phoneName = rx("(iphone|ipad|galaxy (s|a|z|note)|\\bpixel \\d|oneplus|\\bmoto|redmi|poco|xperia|nothing phone|'s phone|android_|\\bphone\\b)")
     val computerName = rx("(macbook|imac|mac mini|mac studio|desktop-|laptop-|thinkpad|surface|chromebook|\\bpc\\b|ideapad|xps)")
     val wearableName = rx("(watch|band|buds|airpods|beats|\\bwh-|\\bwf-|jbl|bose|jabra|sennheiser|soundcore|skullcandy|fitbit|garmin|oura|whoop|amazfit|mi band|versa|forerunner|fenix|venu|polar|suunto|coros|earbuds|headphones|headset|hearing)")
-    val vehicleName = rx("(tesla|chevrolet|chevy|\\bgmc\\b|buick|cadillac|\\bford\\b|myford|\\blincoln\\b|toyota|lexus|\\bhonda|acura|nissan|infiniti|hyundai|\\bkia\\b|subaru|mazda|jeep|dodge|chrysler|\\bram\\b|bmw|mercedes|\\baudi\\b|\\bvw\\b|volkswagen|volvo|porsche|rivian|polestar|uconnect|\\bsync\\b|carplay|android auto|\\bmmi\\b|\\bobd|vgate|elm327|dash ?cam|70mai|viofo|blackvue|nextbase|\\bcar\\b|car ?hotspot|my ?car)")
+    val vehicleName = rx("(tesla|chevrolet|chevy|\\bgmc\\b|buick|cadillac|(?<![a-z])ford(?![a-z])|myford|fordpass|fordwifi|(?<![a-z])lincoln|toyota|lexus|(?<![a-z])honda|myhonda|acura|nissan|infiniti|hyundai|\\bkia\\b|subaru|mazda|jeep|dodge|chrysler|\\bram\\b|bmw|mercedes|\\baudi\\b|\\bvw\\b|volkswagen|volvo|porsche|rivian|polestar|uconnect|\\bsync\\b|carplay|android auto|\\bmmi\\b|obd|vgate|elm327|dash ?cam|70mai|viofo|blackvue|nextbase|\\bcar\\b|car ?hotspot|my ?car)")
     val teslaBle = Regex("^S[0-9a-f]{16}[CDPR]$")
-    // "cam" only as a word, a prefix of camera or next to digits/-/_ : Campbell, Camden and Cambridge are not cameras;
-    // likewise Charlotte/Carlos (arlo), Despy (spy), Ernest (nest), Wizard (wiz), Huerta (hue).
-    private const val CAM = "cam(era|\\d|[_-]|\\b)"
-    val cameraIotName = rx("($CAM|ipc|dvr|nvr|wyze|v380|tuya|smartlife|esp[_-]|blink|\\barlo|^ring|yi[-_]|xmeye|jxl|\\bspy|hidvr|hikvision|dahua|reolink|eufy|tapo|\\bkasa|govee|\\bhue\\b|switchbot|meross|(^|[^a-z])wiz([^a-z]|$)|\\bled\\b|bulb|plug|\\block\\b|roku|chromecast|echo|fire ?tv|sonos|printer|\\bhp-|epson|canon|brother|\\btv\\b|bravia|vizio|\\bnest|ecobee|doorbell|thermostat|sensor)")
+    // Word boundaries that treat digits and "_" as separators (unlike \b): "cam" must not be followed by a letter
+    // (WyzeCam, IPCAM-1, Cam_2, BackyardCams, camera yes; Campbell, Camden, Cambridge, Camry no), and arlo / spy / nest /
+    // hue / kasa must start a word (Charlotte, Despy, Ernest, Huerta are not gadgets; Google_Nest, MyArlo, Hue_Bridge are).
+    private const val CAM = "cam(era|s)?(?![a-z])|camhi"
+    val cameraIotName = rx("($CAM|ipc|dvr|nvr|wyze|v380|tuya|smartlife|esp[_-]|blink|(?<![a-z])arlo|myarlo|^ring|yi[-_]|xmeye|jxl|(?<![a-z])spy|spycam|hidvr|hikvision|dahua|reolink|eufy|tapo|(?<![a-z])kasa(?![a-z])|govee|(?<![a-z])hue(?![a-z])|huebridge|philips.?hue|switchbot|meross|(^|[^a-z])wiz([^a-z]|$)|\\bled\\b|bulb|plug|\\block\\b|roku|chromecast|echo|fire ?tv|sonos|printer|\\bhp-|epson|canon|brother|\\btv\\b|bravia|vizio|(?<![a-z])nest|googlenest|ecobee|doorbell|thermostat|sensor)")
     val droneName = rx("(dji|mavic|tello|skydio|anafi|autel|\\bspark-|phantom|fpv|\\bmini \\d|avata)")
-    val cameraName = rx("($CAM|ipc|dvr|nvr|wyze|v380|xmeye|jxl|\\bspy|hidvr|hikvision|dahua|reolink|eufy|blink|\\barlo|^ring|esp[_-]|tuya|smartlife)")
+    val cameraName = rx("($CAM|ipc|dvr|nvr|wyze|v380|xmeye|jxl|(?<![a-z])spy|spycam|hidvr|hikvision|dahua|reolink|eufy|blink|(?<![a-z])arlo|myarlo|^ring|esp[_-]|tuya|smartlife)")
     val hotspotName = rx("(iphone|android|galaxy|pixel|hotspot|moto|oneplus|redmi|'s phone|^direct-.*android)")
 
     val wearableVendor = rx("(garmin|fitbit|polar|suunto|oura|whoop|huami|zepp|amazfit|bose|jabra|gn audio|gn hearing|sennheiser|skullcandy|harman|bang & olufsen|shokz|sonova|oticon|widex|starkey|bragi|nothing technology)")

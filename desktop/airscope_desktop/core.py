@@ -29,10 +29,10 @@ def _rx(s: str) -> re.Pattern:
 PHONE_NAME = _rx(r"(iphone|ipad|galaxy (s|a|z|note)|\bpixel \d|oneplus|\bmoto|redmi|poco|xperia|nothing phone|'s phone|android_|\bphone\b)")
 COMPUTER_NAME = _rx(r"(macbook|imac|mac mini|mac studio|desktop-|laptop-|thinkpad|surface|chromebook|\bpc\b|ideapad|xps)")
 WEARABLE_NAME = _rx(r"(watch|band|buds|airpods|beats|\bwh-|\bwf-|jbl|bose|jabra|sennheiser|soundcore|skullcandy|fitbit|garmin|oura|whoop|amazfit|mi band|versa|forerunner|fenix|venu|polar|suunto|coros|earbuds|headphones|headset|hearing)")
-VEHICLE_NAME = _rx(r"(tesla|chevrolet|chevy|\bgmc\b|buick|cadillac|\bford\b|myford|\blincoln\b|toyota|lexus|\bhonda|acura|nissan|infiniti|hyundai|\bkia\b|subaru|mazda|jeep|dodge|chrysler|\bram\b|bmw|mercedes|\baudi\b|\bvw\b|volkswagen|volvo|porsche|rivian|polestar|uconnect|\bsync\b|carplay|android auto|\bmmi\b|\bobd|vgate|elm327|dash ?cam|70mai|viofo|blackvue|nextbase|\bcar\b|car ?hotspot|my ?car)")
-# "cam" only as a word, a prefix of camera or next to digits/-/_ (Campbell, Camden, Cambridge are not cameras).
-_CAM = r"cam(era|\d|[_-]|\b)"
-CAMERA_IOT_NAME = _rx(r"(" + _CAM + r"|ipc|dvr|nvr|wyze|v380|tuya|smartlife|esp[_-]|blink|\barlo|^ring|yi[-_]|xmeye|jxl|\bspy|hidvr|hikvision|dahua|reolink|eufy|tapo|\bkasa|govee|\bhue\b|switchbot|meross|(^|[^a-z])wiz([^a-z]|$)|\bled\b|bulb|plug|\block\b|roku|chromecast|echo|fire ?tv|sonos|printer|\bhp-|epson|canon|brother|\btv\b|bravia|vizio|\bnest|ecobee|doorbell|thermostat|sensor)")
+VEHICLE_NAME = _rx(r"(tesla|chevrolet|chevy|\bgmc\b|buick|cadillac|(?<![a-z])ford(?![a-z])|myford|fordpass|fordwifi|(?<![a-z])lincoln|toyota|lexus|(?<![a-z])honda|myhonda|acura|nissan|infiniti|hyundai|\bkia\b|subaru|mazda|jeep|dodge|chrysler|\bram\b|bmw|mercedes|\baudi\b|\bvw\b|volkswagen|volvo|porsche|rivian|polestar|uconnect|\bsync\b|carplay|android auto|\bmmi\b|obd|vgate|elm327|dash ?cam|70mai|viofo|blackvue|nextbase|\bcar\b|car ?hotspot|my ?car)")
+# Letters-only word boundaries (digits and "_" separate): WyzeCam, IPCAM-1, Cam_2, camera yes; Campbell, Camden, Camry no.
+_CAM = r"cam(era|s)?(?![a-z])|camhi"
+CAMERA_IOT_NAME = _rx(r"(" + _CAM + r"|ipc|dvr|nvr|wyze|v380|tuya|smartlife|esp[_-]|blink|(?<![a-z])arlo|myarlo|^ring|yi[-_]|xmeye|jxl|(?<![a-z])spy|spycam|hidvr|hikvision|dahua|reolink|eufy|tapo|(?<![a-z])kasa(?![a-z])|govee|(?<![a-z])hue(?![a-z])|huebridge|philips.?hue|switchbot|meross|(^|[^a-z])wiz([^a-z]|$)|\bled\b|bulb|plug|\block\b|roku|chromecast|echo|fire ?tv|sonos|printer|\bhp-|epson|canon|brother|\btv\b|bravia|vizio|(?<![a-z])nest|googlenest|ecobee|doorbell|thermostat|sensor)")
 DRONE_NAME = _rx(r"(dji|mavic|tello|skydio|anafi|autel|\bspark-|phantom|fpv|\bmini \d|avata)")
 HOTSPOT_NAME = _rx(r"(iphone|android|galaxy|pixel|hotspot|moto|oneplus|redmi|'s phone|^direct-.*android)")
 FLEET_ROUTER_SSID = _rx(r"^(IBR\d{3,4}|R\d{3,4}|AER\d{4}|E\d{3,4}|CBA\d{3,4})(LP\w*)?-[0-9a-f]{3}$")
@@ -122,6 +122,8 @@ def police_ssid_findings(ssid: str) -> List[Finding]:
     s = ssid.lower()
     if FLOCK_SSID_EXACT.match(ssid):
         return [Finding(70, "Flock camera setup network (Flock-XXXXXX)")]
+    if PENGUIN_SERIAL.match(ssid):
+        return [Finding(55, "Flock Penguin module name (Penguin-<serial>)")]
     if "flock camera net" in s:
         return [Finding(65, 'Flock camera network ("Flock Camera net.")')]
     if "flocksafety" in s or "pigvision" in s or "fs ext battery" in s or FLOCK_WORD.search(s):

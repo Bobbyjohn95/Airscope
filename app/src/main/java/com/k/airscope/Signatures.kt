@@ -80,6 +80,7 @@ object Signatures {
         val f = ArrayList<Finding>()
         when {
             flockSsidExact.matches(ssid) -> f += Finding(70, "Flock camera setup network (Flock-XXXXXX)")
+            penguinSerial.matches(ssid) -> f += Finding(55, "Flock Penguin module name (Penguin-<serial>)")
             s.contains("flock camera net") -> f += Finding(65, "Flock camera network (\"Flock Camera net.\")")
             s.contains("flocksafety") || s.contains("pigvision") || s.contains("fs ext battery") || flockWord.containsMatchIn(s) ->
                 f += Finding(50, "Flock Safety network name")

@@ -1020,7 +1020,7 @@ class MainActivity : Activity() {
                 "2 possible spots: ${fmtDist(da)} m ${Geo.cardinal16(ba)} or ${fmtDist(db)} m ${Geo.cardinal16(bb)} · walk sideways to settle it"
             }
             d.moving -> "it's moving (or being carried): no fixed spot, follow the signal strength"
-            d.followM > 300 -> "moving with you (${fmtDist(d.followM)} so far)"
+            d.followM > 300 -> "moving with you (${fmtDistUnit(d.followM)} so far)"
             else -> "direction unknown: walk ~${maxOf(10, (d.dist * 0.4).toInt())} m around (moved ${d.spreadM.toInt()} m, ${d.spots} spots)"
         }
         trackBarText = "TRACK ${d.title.take(20)}  ${d.avg}dBm  ~${fmtDist(d.dist)}m (${fmtDist(d.lo)}–${fmtDist(d.hi)})\n" +

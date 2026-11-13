@@ -151,7 +151,7 @@ object Notifier {
     fun alprAlert(ctx: Context, h: AlprHit, course: Double?) {
         val a = h.alpr
         val where = if (course != null && Geo.angleDiff(h.bearing, course) <= 45) "ahead" else Geo.cardinal(h.bearing)
-        val title = "${a.title().removeSuffix(" (mapped)")} ${fmtDist(h.dist)} m $where"
+        val title = "${a.title().removeSuffix(" (mapped)")} ${fmtDistUnit(h.dist)} $where"
         val text = listOfNotNull(
             a.operator?.let { "Operator: $it" },
             a.direction?.let { "Camera faces: $it" },

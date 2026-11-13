@@ -10,9 +10,11 @@ broadcast. It never connects to, jams, deauths or transmits to anything.
   names, `Flock-XXXXXX`, "Flock Camera net.", FlockSafety and the `Penguin-<serial>` Bluetooth modules still count in
   full). "Stanford_Guest", "Oxford", "Clifford" and "Rhonda" are no longer cars (they contained *ford* / *honda*), and
   "Campbell", "Camden", "Cambridge", "Camry", "Charlotte", "Carlos", "Ernest" and "Wizards" are no longer cameras or
-  smart-home gear (they contained *cam* / *arlo* / *nest* / *wiz*). Real camera, car and Flock names still match; the
-  desktop beta got the same rules.
-- The "showed up again … apart" and "appeared N times … apart" notes now say "2.5 km" instead of "2.5k m".
+  smart-home gear (they contained *cam* / *arlo* / *nest* / *wiz*). Digits and underscores still count as word breaks,
+  so WiFi_OBDII, Ford_SYNC, FordPass, MyHonda, WyzeCam, IPCAM-1234, Google_Nest, Hue_Bridge and MyArlo match as before
+  (tests cover all of these). The desktop beta got the same rules.
+- Distances of a kilometre or more now read "2.5 km" instead of "2.5k m" (device details, "showed up again … apart",
+  "moved with you", alert titles and the map's "→" labels).
 
 ## What's new in v2.9.1: offline-map progress counts in order
 - **Save map (offline area):** the "N of M tiles" progress text could briefly count backwards when two tiles finished at
