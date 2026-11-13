@@ -48,6 +48,14 @@ Coworkers: add bigger ideas here with what / why / risk / size. K: delete a line
   *2026-11-12:* build 49 still live, not prerelease; no new CI runs; dev_check green. Nothing shipped: no candidate met
   the bar. GitHub fetches (flock-you-esp32 signatures, Actions tags) still blocked unattended (9th day, one try); still
   K's call above.
+  *2026-11-13:* shipped build 55 ("v2.9.2"): network/device names are matched as whole words (Penguin_5G, Flockhart,
+  Stanford, Oxford, Clifford, Rhonda, Campbell, Camden, Cambridge, Camry, Charlotte, Carlos, Ernest, Wizards no longer
+  become Flock cameras / cars / cameras; a lone "Penguin" on Wi-Fi is a weak hint), "2.5 km" instead of "2.5k m" in every
+  distance text, desktop beta mirrored; reviewed by sonnet (found the defects) and opus (found that `\b` lost WiFi_OBDII /
+  Ford_SYNC / Google_Nest: fixed with letters-only boundaries before merging). One branch run hit the known emulator
+  Search-dialog ANR (software renderer, not the change); the next two were green. Also test-only: the HUD step no longer
+  presses Back when the HUD dialog never opened (that closed the app to the launcher before the screen-off screenshot).
+  GitHub fetches still blocked unattended (10th day). Still open for K: street-layer cache, Actions bump, fetch access.
 - **CI actions are several major versions behind** (checkout v5→v7, setup-java v5→v6, setup-python v5→v7,
   upload-artifact v4→v7, download-artifact v4→v8, gradle/actions v4→v6, emulator-runner v2 current). Everything
   still works. Bumping touches the publish job (download-artifact), which coworkers must not change, and a failed
