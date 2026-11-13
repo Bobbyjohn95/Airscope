@@ -345,10 +345,12 @@ if tap "MORE ▾"; then
 fi
 
 note "-- web HUD"
-tap "HUD"; sleep 3
+if tap "HUD"; then HUD_OPENED=1; else HUD_OPENED=; fi; sleep 3
 URL=$(screen_text | grep -oE "http://[0-9.]+:8787/\?k=[A-Za-z0-9_-]+" | head -1)
 shot 12-hud-dialog
-tap "OK" || adb shell input keyevent 4
+# Only dismiss when the dialog did open: a blind Back on the main screen closes the app to the launcher, which
+# made 13-after-screen-off / 14-stopped show the home screen instead of AirScope (the service still ran).
+if [ -n "$HUD_OPENED" ] || [ -n "$URL" ]; then tap "OK" || adb shell input keyevent 4; else note "  (HUD dialog not opened: HUD button disabled, nothing to dismiss)"; fi
 if [ -n "$URL" ]; then
   KEY="${URL##*k=}"
   adb forward tcp:8787 tcp:8787 >/dev/null
