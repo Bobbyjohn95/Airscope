@@ -56,6 +56,11 @@ Coworkers: add bigger ideas here with what / why / risk / size. K: delete a line
   Search-dialog ANR (software renderer, not the change); the next two were green. Also test-only: the HUD step no longer
   presses Back when the HUD dialog never opened (that closed the app to the launcher before the screen-off screenshot).
   GitHub fetches still blocked unattended (10th day). Still open for K: street-layer cache, Actions bump, fetch access.
+  *2026-11-14:* build 55 live, not prerelease; main's CI green; dev_check green. Nothing shipped (routine release was
+  yesterday; never two days running). Prepared on branch `names-first-names`, reviewed by sonnet, CI running: "Sam's
+  iPhone" / "Wendy's AirPods" / "Ben's Pixel" now name their owner (those first names were on the never-a-person list
+  because of the chains); "Sam's Club WiFi", "Wendy's Guest WiFi", "Wendy's TV" stay nobody. Merges on 11-15 if the
+  emulator run is green. GitHub fetches still blocked unattended (11th day, one try); still K's call above.
 - **CI actions are several major versions behind** (checkout v5→v7, setup-java v5→v6, setup-python v5→v7,
   upload-artifact v4→v7, download-artifact v4→v8, gradle/actions v4→v6, emulator-runner v2 current). Everything
   still works. Bumping touches the publish job (download-artifact), which coworkers must not change, and a failed
