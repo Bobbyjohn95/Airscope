@@ -267,8 +267,8 @@ _DEVICE_WORDS = _rx(
     r"speaker|headphones|earbuds|fitbit\w*|garmin\w*|oura\w*|ring|band|car|tesla|jeep|truck|bike|scooter|hotspot|wifi|wi-fi|network|home|house|"
     r"place|room|apartment|flat|tv|xbox|playstation|ps[345]|switch|nintendo|oneplus\w*|xiaomi\w*|huawei\w*|motorola\w*|moto\w*|"
     r"s\d{1,2}\+?( ultra| fe)?|a\d{1,2}|z ?(fold|flip)\s?\d*|note\s?\d*|nest\w*|sonos\w*|bose\w*)\b.*$")
-_NOT_A_PERSON = set("""mcdonald wendy denny macy kohl lowe dillard dunkin domino applebee chili arby carl hardee kroger sam bj fry friday harry ben
-jerry levi kohls lowes church guest customer visitor student employee staff member driver rider owner admin everyone nobody someone user default
+_NOT_A_PERSON = set("""mcdonald kohl lowe dillard dunkin domino applebee chili arby hardee kroger bj fry friday
+kohls lowes church guest customer visitor student employee staff member driver rider owner admin everyone nobody someone user default
 free public city county school hotel cafe coffee bar pub shop store office clinic library gym club salon starbucks hilton marriott hyatt ihg
 walmart target costco panera chipotle subway living livingroom kitchen bedroom bathroom basement garage family game dining master upstairs
 downstairs work old new spare test main shared kids kid baby patio porch attic lobby hall garden pool front back backyard sala casa cocina cuarto
@@ -278,6 +278,9 @@ _BRANDS = set("""apple samsung google android xiaomi redmi huawei honor oneplus 
 lenovo msi razer microsoft amazon tesla ford toyota honda bmw audi vw kia hyundai nissan bose jbl sonos beats garmin fitbit polar wahoo tile chipolo
 direct desktop laptop iphone ipad galaxy pixel nest ring wyze arlo eufy roku fire echo tp tplink netgear linksys att xfinity spectrum verizon tmobile
 orbi eero ubnt hidden unknown mobile wireless network guest home office free public my""".split())
+# chains named after a person: a first name on a phone ("Sam's iPhone"), a business on a network ("Sam's Club WiFi")
+_CHAIN_FIRST_NAMES = {"wendy", "denny", "macy", "carl", "sam", "harry", "ben", "jerry", "levi"}
+_NETWORK_WORDS = _rx(r"^(hotspot|wifi|wi-fi|network|home|house|place|room|apartment|flat)\b.*$")
 _ARTICLES = {"the", "la", "el", "le", "les", "los", "las", "der", "die", "das", "de", "a", "an"}
 _POSSESSIVE = re.compile(r"^([^\W\d_][^\W\d_.\- ]{0,30}?(?:[.\- ][^\W\d_]+){0,2}?)\s*(['’`´]s|['’`´])\s+(.+)$", re.I | re.U)
 _OF_FORM = re.compile(r"^(.{2,40}?)\s+(de|di|von|van|do|da|du|des)\s+([^\W\d_][^\W\d_'\- ]{1,30})$", re.I | re.U)
@@ -286,7 +289,7 @@ _DROPPED = re.compile(r"^([^\W\d_]{2,20})s\s+(.+)$", re.U)
 _HOST_POSS = re.compile(r"^([^\W\d_]{2,20})s-(.+)$", re.I | re.U)
 
 
-def _person(who: str) -> bool:
+def _person(who: str, what: str = "") -> bool:
     w = who.strip().rstrip(".").lower()
     if not w or len(w) > 30 or w in _NOT_A_PERSON or w in _BRANDS:
         return False
@@ -294,6 +297,8 @@ def _person(who: str) -> bool:
     if not words or len(words) > 3 or words[0] in _ARTICLES:
         return False
     if any(x in _BRANDS or x in _NOT_A_PERSON or len(x) < 2 for x in words):
+        return False
+    if any(x in _CHAIN_FIRST_NAMES for x in words) and _NETWORK_WORDS.match(what.strip()):
         return False
     return all(all(c.isalpha() or c in ".-'" for c in x) and sum(c.isalpha() for c in x) >= 2 for x in words)
 
@@ -314,16 +319,16 @@ def owner(name: Optional[str]) -> Optional[str]:
     if len(n) < 4 or len(n) > 64:
         return None
     m = _POSSESSIVE.match(n)
-    if m and _DEVICE_WORDS.match(m.group(3).strip()) and _person(m.group(1)):
+    if m and _DEVICE_WORDS.match(m.group(3).strip()) and _person(m.group(1), m.group(3)):
         return _cap(m.group(1))
     m = _OF_FORM.match(n)
-    if m and _DEVICE_WORDS.match(m.group(1).strip()) and _person(m.group(3)):
+    if m and _DEVICE_WORDS.match(m.group(1).strip()) and _person(m.group(3), m.group(1)):
         return _cap(m.group(3))
     m = _HYPHEN.match(n)
-    if m and _DEVICE_WORDS.match(m.group(2).replace("-", " ").replace("_", " ")) and _person(m.group(1)):
+    if m and _DEVICE_WORDS.match(m.group(2).replace("-", " ").replace("_", " ")) and _person(m.group(1), m.group(2).replace("-", " ").replace("_", " ")):
         return _cap(m.group(1))
     m = _DROPPED.match(n)
-    if m and _DEVICE_WORDS.match(m.group(2).strip()) and _person(m.group(1) + "s") and _person(m.group(1)):
+    if m and _DEVICE_WORDS.match(m.group(2).strip()) and _person(m.group(1) + "s", m.group(2)) and _person(m.group(1), m.group(2)):
         return _cap(m.group(1) + "s")
     return None
 
@@ -335,7 +340,7 @@ def owner_from_hostname(host: Optional[str]) -> Optional[str]:
     if len(h) < 4:
         return None
     m = _HOST_POSS.match(h)
-    if m and _DEVICE_WORDS.match(m.group(2).replace("-", " ")) and _person(m.group(1) + "s") and _person(m.group(1)):
+    if m and _DEVICE_WORDS.match(m.group(2).replace("-", " ")) and _person(m.group(1) + "s", m.group(2)) and _person(m.group(1), m.group(2)):
         return _cap(m.group(1) + "s")
     return owner(h) or owner(h.replace("-", " ").replace("_", " "))
 

@@ -26,9 +26,9 @@ object Names {
 
     /** Possessive forms that belong to businesses or products, never to a person. */
     private val NOT_A_PERSON = setOf(
-        "mcdonald", "wendy", "denny", "macy", "kohl", "lowe", "dillard", "trader joe", "dunkin", "domino", "applebee",
-        "chili", "arby", "carl", "hardee", "kroger", "raising cane", "jimmy john", "papa john", "sam", "bj", "fry",
-        "friday", "tgi friday", "harry", "ben", "jerry", "ben & jerry", "levi", "kohls", "lowes", "church", "guest",
+        "mcdonald", "kohl", "lowe", "dillard", "trader joe", "dunkin", "domino", "applebee",
+        "chili", "arby", "hardee", "kroger", "raising cane", "jimmy john", "papa john", "bj", "fry",
+        "friday", "tgi friday", "ben & jerry", "kohls", "lowes", "church", "guest",
         "customer", "visitor", "student", "employee", "staff", "member", "driver", "rider", "owner", "admin",
         "everyone", "nobody", "someone", "user", "default", "free", "public", "city", "county", "school", "hotel",
         "cafe", "coffee", "bar", "pub", "shop", "store", "office", "clinic", "library", "gym", "club", "salon",
@@ -41,6 +41,13 @@ object Names {
         "la", "el", "los", "las", "le", "les", "der", "die", "das", "the", "a", "an", "my", "our", "your",
         "mobile", "wireless", "smart", "home", "house", "apartment", "flat", "room", "car", "cars", "truck", "boat",
     )
+
+    /**
+     * Chains named after a person: a real first name on a phone ("Sam's iPhone", "Wendy's AirPods"), a business on a
+     * network ("Sam's Club WiFi", "Wendy's Guest WiFi"). The network words decide.
+     */
+    private val CHAIN_FIRST_NAMES = setOf("wendy", "denny", "macy", "carl", "sam", "harry", "ben", "jerry", "levi")
+    private val NETWORK_WORDS = Regex("^(hotspot|wifi|wi-fi|network|home|house|place|room|apartment|flat)\\b.*$", RegexOption.IGNORE_CASE)
 
     /** "<Device> de/di/von/van <Name>" (Spanish, Portuguese, Italian, French, German, Dutch). */
     private val OF_FORM = Regex("^(.{2,40}?)\\s+(de|di|von|van|do|da|du|des)\\s+([\\p{L}][\\p{L}'\\- ]{1,30})$", RegexOption.IGNORE_CASE)
@@ -73,22 +80,22 @@ object Names {
         POSSESSIVE.find(n)?.let { m ->
             val who = m.groupValues[1].trim()
             val what = m.groupValues[3].trim()
-            if (DEVICE_WORDS.matches(what) && person(who)) return cap(who)
+            if (DEVICE_WORDS.matches(what) && person(who, what)) return cap(who)
         }
         OF_FORM.find(n)?.let { m ->
             val what = m.groupValues[1].trim()
             val who = m.groupValues[3].trim()
-            if (DEVICE_WORDS.matches(what) && person(who)) return cap(who)
+            if (DEVICE_WORDS.matches(what) && person(who, what)) return cap(who)
         }
         HYPHEN.find(n)?.let { m ->
             val who = m.groupValues[1]
             val what = m.groupValues[2].replace('-', ' ').replace('_', ' ')
-            if (DEVICE_WORDS.matches(what) && person(who)) return cap(who)
+            if (DEVICE_WORDS.matches(what) && person(who, what)) return cap(who)
         }
         DROPPED_APOSTROPHE.find(n)?.let { m -> // "Sarahs iPhone" / "James iPhone": no apostrophe, so the word is kept as typed
             val who = m.groupValues[1] + "s"
             val what = m.groupValues[2].trim()
-            if (DEVICE_WORDS.matches(what) && person(who) && person(m.groupValues[1])) return cap(who)
+            if (DEVICE_WORDS.matches(what) && person(who, what) && person(m.groupValues[1], what)) return cap(who)
         }
         return null
     }
@@ -100,20 +107,21 @@ object Names {
         HOST_POSSESSIVE.find(h)?.let { m -> // "Johns-MacBook-Pro": possessive without an apostrophe, kept as typed ("Johns")
             val who = m.groupValues[1] + "s"
             val what = m.groupValues[2].replace('-', ' ')
-            if (DEVICE_WORDS.matches(what) && person(who) && person(m.groupValues[1])) return cap(who)
+            if (DEVICE_WORDS.matches(what) && person(who, what) && person(m.groupValues[1], what)) return cap(who)
         }
         owner(h)?.let { return it }
         h = h.replace('-', ' ').replace('_', ' ')
         return owner(h)
     }
 
-    private fun person(who: String): Boolean {
+    private fun person(who: String, what: String): Boolean {
         val w = who.trim().trimEnd('.').lowercase(Locale.US)
         if (w.isEmpty() || w.length > 30) return false
         if (w in NOT_A_PERSON || w in BRANDS) return false
         val words = w.split(' ').filter { it.isNotEmpty() }
         if (words.isEmpty() || words.size > 3) return false
         if (words.any { it in BRANDS || it in NOT_A_PERSON }) return false
+        if (words.any { it in CHAIN_FIRST_NAMES } && NETWORK_WORDS.matches(what.trim())) return false
         if (words[0] in setOf("the", "la", "el", "le", "les", "los", "las", "der", "die", "das", "de", "a", "an")) return false
         if (words.any { it.length < 2 }) return false
         // Must be letters (any script), with at most a dot/hyphen/apostrophe per word
