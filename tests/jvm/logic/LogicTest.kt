@@ -774,6 +774,8 @@ fun main() {
         check("no owner: same name on a network", o("Sam's WiFi") == null && o("Wendy's Guest WiFi") == null && o("Sam's Club WiFi") == null
             && o("Ben & Jerry's WiFi") == null && o("Denny's Hotspot") == null && o("Carl's Home") == null
             && o("Sams WiFi") == null && o("Sam-WiFi") == null && o("Wendy's TV") == null && o("Sam's Car Wash") == null, o("Sam's WiFi"))
+        check("owner: chain first name, other forms", o("WiFi de Sam") == null && o("Wendys WiFi") == null && o("Ben's iPhone Hotspot") == "Ben"
+            && o("iPhone de Sam") == "Sam" && o("Wendys iPad") == "Wendys", o("Ben's iPhone Hotspot"))
         for (bad in listOf("Living-Room-TV", "Kitchen-Echo", "Bedroom-TV", "Work-Laptop", "Old-iPhone", "Test-Phone", "Kids' iPad",
             "The Smith's House", "TV de la sala", "iPad de casa", "House of Pizza", "My iPhone", "Family Room Apple TV", "Garage-Speaker"))
             check("no owner: $bad", o(bad) == null && Names.ownerFromHostname(bad) == null, o(bad) ?: Names.ownerFromHostname(bad))
