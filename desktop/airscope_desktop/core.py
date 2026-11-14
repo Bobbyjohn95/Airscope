@@ -280,7 +280,7 @@ direct desktop laptop iphone ipad galaxy pixel nest ring wyze arlo eufy roku fir
 orbi eero ubnt hidden unknown mobile wireless network guest home office free public my""".split())
 # chains named after a person: a first name on a phone ("Sam's iPhone"), a business on a network ("Sam's Club WiFi")
 _CHAIN_FIRST_NAMES = {"wendy", "denny", "macy", "carl", "sam", "harry", "ben", "jerry", "levi"}
-_NETWORK_WORDS = _rx(r"^(hotspot|wifi|wi-fi|network|home|house|place|room|apartment|flat)\b.*$")
+_NETWORK_WORDS = _rx(r"^(hotspot|wifi|wi-fi|network|home|house|place|room|apartment|flat|tv|car)\b.*$")
 _ARTICLES = {"the", "la", "el", "le", "les", "los", "las", "der", "die", "das", "de", "a", "an"}
 _POSSESSIVE = re.compile(r"^([^\W\d_][^\W\d_.\- ]{0,30}?(?:[.\- ][^\W\d_]+){0,2}?)\s*(['’`´]s|['’`´])\s+(.+)$", re.I | re.U)
 _OF_FORM = re.compile(r"^(.{2,40}?)\s+(de|di|von|van|do|da|du|des)\s+([^\W\d_][^\W\d_'\- ]{1,30})$", re.I | re.U)

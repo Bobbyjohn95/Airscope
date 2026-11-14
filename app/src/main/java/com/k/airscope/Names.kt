@@ -44,10 +44,10 @@ object Names {
 
     /**
      * Chains named after a person: a real first name on a phone ("Sam's iPhone", "Wendy's AirPods"), a business on a
-     * network ("Sam's Club WiFi", "Wendy's Guest WiFi"). The network words decide.
+     * network ("Sam's Club WiFi", "Wendy's Guest WiFi", "Wendy's TV"). The network / shared-thing words decide.
      */
     private val CHAIN_FIRST_NAMES = setOf("wendy", "denny", "macy", "carl", "sam", "harry", "ben", "jerry", "levi")
-    private val NETWORK_WORDS = Regex("^(hotspot|wifi|wi-fi|network|home|house|place|room|apartment|flat)\\b.*$", RegexOption.IGNORE_CASE)
+    private val NETWORK_WORDS = Regex("^(hotspot|wifi|wi-fi|network|home|house|place|room|apartment|flat|tv|car)\\b.*$", RegexOption.IGNORE_CASE)
 
     /** "<Device> de/di/von/van <Name>" (Spanish, Portuguese, Italian, French, German, Dutch). */
     private val OF_FORM = Regex("^(.{2,40}?)\\s+(de|di|von|van|do|da|du|des)\\s+([\\p{L}][\\p{L}'\\- ]{1,30})$", RegexOption.IGNORE_CASE)

@@ -145,7 +145,7 @@ class CoreTests(unittest.TestCase):
         self.assertEqual(core.owner("Sam's iPhone"), "Sam")
         self.assertEqual(core.owner("Wendy's AirPods"), "Wendy")
         self.assertEqual(core.owner_from_hostname("Sam-MacBook-Pro"), "Sam")
-        for bad in ("Sam's WiFi", "Wendy's Guest WiFi", "Sam's Club WiFi", "Denny's Hotspot", "Ben & Jerry's WiFi"):
+        for bad in ("Sam's WiFi", "Wendy's Guest WiFi", "Sam's Club WiFi", "Denny's Hotspot", "Ben & Jerry's WiFi", "Sams WiFi", "Wendy's TV", "Sam's Car Wash"):
             self.assertIsNone(core.owner(bad), bad)
         for bad in ("McDonald's Free WiFi", "Living-Room-TV", "Pineapple House", "Galaxy Buds2", "Kids' iPad", "The Smith's House", "Sonos Speaker"):
             self.assertIsNone(core.owner(bad), bad)
