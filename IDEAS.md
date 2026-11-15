@@ -61,6 +61,12 @@ Coworkers: add bigger ideas here with what / why / risk / size. K: delete a line
   iPhone" / "Wendy's AirPods" / "Ben's Pixel" now name their owner (those first names were on the never-a-person list
   because of the chains); "Sam's Club WiFi", "Wendy's Guest WiFi", "Wendy's TV" stay nobody. Merges on 11-15 if the
   emulator run is green. GitHub fetches still blocked unattended (11th day, one try); still K's call above.
+  *2026-11-15:* shipped build 59 ("v2.9.3", branch `names-first-names`): "Sam's iPhone" / "Wendy's AirPods" / "Ben's
+  Pixel" name their owner; "Sam's Club WiFi", "Wendy's TV", "Sam's Car Wash" stay nobody; desktop beta mirrored. Branch
+  run green (emulator PASS, 68 mph inside a car, 5 tiles, permanent key, scan survived screen-off), main run green,
+  release build-59 live and not prerelease. Overpass answered 502 once in diagnostics again (kumi fallback covered it,
+  48 cameras mapped). GitHub fetches still blocked unattended (12th day, one try). Weekly roundup sent to K. Still open
+  for K: street-layer cache, Actions bump, fetch access.
 - **CI actions are several major versions behind** (checkout v5→v7, setup-java v5→v6, setup-python v5→v7,
   upload-artifact v4→v7, download-artifact v4→v8, gradle/actions v4→v6, emulator-runner v2 current). Everything
   still works. Bumping touches the publish job (download-artifact), which coworkers must not change, and a failed
