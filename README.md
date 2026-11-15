@@ -4,6 +4,14 @@ A personal signal-observation app for the Pixel 8 Pro (Android 10+, GrapheneOS-f
 It **only listens**. It reads Wi-Fi beacons and Bluetooth LE advertisements that devices already
 broadcast. It never connects to, jams, deauths or transmits to anything.
 
+## What's new in v2.9.3: "Sam's iPhone" names its owner again
+- **A first name that is also a chain now counts as a person on a phone or wearable.** "Sam's iPhone", "Wendy's
+  AirPods", "Ben's Pixel", "Harry's Apple Watch" and "iPhone de Sam" show Sam / Wendy / Ben / Harry as the owner
+  (those names were on the never-a-person list because of Sam's Club, Wendy's, Ben & Jerry's, Denny's, Macy's, Carl's
+  Jr., Harry's and Levi's). On a network or shared thing the business reading still wins: "Sam's Club WiFi", "Wendy's
+  Guest WiFi", "Wendy's TV", "Denny's Hotspot", "Carl's Home" and "Sam's Car Wash" stay nobody. The desktop beta got the
+  same rule; tests cover every form above.
+
 ## What's new in v2.9.2: fewer wrong labels from look-alike network names
 - **Names are matched as whole words now.** A neighbour's "Penguin_5G", "Club Penguin" or "Flockhart" network no
   longer shows up as a Flock Safety camera (the word *Penguin* alone on Wi-Fi is now only a weak hint; Flock's real
