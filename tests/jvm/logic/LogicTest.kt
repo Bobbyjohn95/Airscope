@@ -919,7 +919,13 @@ fun main() {
         check("threat: Marauder BLE", Classifier.classifyBle("c1:00:00:00:00:02", true, AdvParser.parse(ad(name("Marauder"))), db).attackTool)
         // grades
         check("grade: WPA3 A, +WPS B", WifiSecurity.grade("[WPA2-SAE-CCMP][RSN-SAE-CCMP][ESS]", false).first == 'A' && WifiSecurity.grade("[RSN-SAE-CCMP][ESS]", true).first == 'B')
-        check("grade: WPA2 B, +WPS C", WifiSecurity.grade("[WPA2-PSK-CCMP][ESS]", false).first == 'B' && WifiSecurity.grade("[WPA2-PSK-CCMP][ESS][WPS]", true).first == 'C')
+        check("grade: WPA3 transition mode (WPA2-PSK still accepted) B, says why; label and rank stay WPA3; not weak",
+            listOf("[WPA2-PSK-CCMP][RSN-PSK+SAE-CCMP][ESS]", "[RSN-PSK-SAE-CCMP][ESS]").all { caps ->
+                val (g, why) = WifiSecurity.grade(caps, false)
+                g == 'B' && why.contains("transition") && Heuristics.securityLabel(caps) == "WPA3" && WifiSecurity.rank(caps) == 5 && !WifiSecurity.isWeak(caps, false)
+            } && WifiSecurity.grade("[WPA2-PSK-CCMP][RSN-PSK+SAE-CCMP][ESS][WPS]", true).first == 'C' &&
+                WifiSecurity.grade("[RSN-SAE-CCMP][RSN-SAE-GCMP-256][ESS]", false).first == 'A')
+        check("grade: WPA2 B, +WPS C",WifiSecurity.grade("[WPA2-PSK-CCMP][ESS]", false).first == 'B' && WifiSecurity.grade("[WPA2-PSK-CCMP][ESS][WPS]", true).first == 'C')
         check("grade: WPA2 TKIP-only C", WifiSecurity.grade("[WPA2-PSK-TKIP][ESS]", false).first == 'C')
         check("grade: WPA1 C weak, WEP D, open F", WifiSecurity.grade("[WPA-PSK-TKIP][ESS]", false).first == 'C' && WifiSecurity.isWeak("[WPA-PSK-TKIP][ESS]", false) &&
             WifiSecurity.grade("[WEP][ESS]", false).first == 'D' && WifiSecurity.grade("[ESS]", false).first == 'F' && !WifiSecurity.isWeak("[WPA2-PSK-CCMP][ESS]", false))

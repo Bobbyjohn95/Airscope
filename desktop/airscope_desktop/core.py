@@ -242,11 +242,14 @@ def security_grade(caps: str, wps: bool = False) -> Tuple[str, str]:
     label = security_label(caps)
     c = caps.upper()
     tkip_only = "TKIP" in c and "CCMP" not in c and "GCMP" not in c and "AES" not in c
-    g = {"WPA3": "A", "OWE": "B", "WPA2": "C" if tkip_only else "B", "WPA": "C", "WEP": "D"}.get(label, "F")
+    # "[RSN-PSK+SAE-CCMP]": WPA3 transition mode; older devices still join with WPA2-PSK, so it is only as strong as WPA2
+    transition = label == "WPA3" and "PSK" in c
+    g = {"WPA3": "B" if transition else "A", "OWE": "B", "WPA2": "C" if tkip_only else "B", "WPA": "C", "WEP": "D"}.get(label, "F")
     if wps and g in "ABC":
         g = chr(ord(g) + 1)
     why = {
-        "WPA3": "WPA3: current standard", "OWE": "OWE: encrypted open network (no password, traffic still protected)",
+        "WPA3": "WPA3 with WPA2 fallback (transition mode: older devices still join with WPA2, so the password can still be attacked offline)"
+        if transition else "WPA3: current standard", "OWE": "OWE: encrypted open network (no password, traffic still protected)",
         "WPA2": "WPA2 with TKIP only (old cipher)" if tkip_only else "WPA2", "WPA": "WPA1 (2003, outdated; crackable)",
         "WEP": "WEP (broken since 2001: anyone can read the traffic)",
     }.get(label, "Open: no encryption, anyone nearby can read the traffic")

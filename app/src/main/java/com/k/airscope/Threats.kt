@@ -91,8 +91,11 @@ object WifiSecurity {
     fun grade(caps: String, wps: Boolean): Pair<Char, String> {
         val label = Heuristics.securityLabel(caps)
         val tkipOnly = caps.contains("TKIP") && !caps.contains("CCMP") && !caps.contains("GCMP")
+        // "[RSN-PSK+SAE-CCMP]" / "[WPA2-PSK-CCMP][RSN-SAE-CCMP]": WPA3 transition mode. Older devices still join with
+        // WPA2-PSK, so the password can still be captured and attacked offline: the network is only as strong as WPA2.
+        val transition = label == "WPA3" && caps.contains("PSK")
         var g = when (label) {
-            "WPA3" -> 'A'
+            "WPA3" -> if (transition) 'B' else 'A'
             "OWE" -> 'B'
             "WPA2" -> if (tkipOnly) 'C' else 'B'
             "WPA" -> 'C'
@@ -101,7 +104,8 @@ object WifiSecurity {
         }
         if (wps && g in 'A'..'C') g += 1
         val why = when (label) {
-            "WPA3" -> "WPA3: current standard"
+            "WPA3" -> if (transition) "WPA3 with WPA2 fallback (transition mode: older devices still join with WPA2, so the password can still be attacked offline)"
+                      else "WPA3: current standard"
             "OWE" -> "OWE: encrypted open network (no password, traffic still protected)"
             "WPA2" -> if (tkipOnly) "WPA2 with TKIP only (old cipher)" else "WPA2"
             "WPA" -> "WPA1 (2003, outdated; crackable)"

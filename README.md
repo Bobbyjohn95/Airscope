@@ -4,6 +4,13 @@ A personal signal-observation app for the Pixel 8 Pro (Android 10+, GrapheneOS-f
 It **only listens**. It reads Wi-Fi beacons and Bluetooth LE advertisements that devices already
 broadcast. It never connects to, jams, deauths or transmits to anything.
 
+## What's new in v2.9.4: a WPA3 network that still takes WPA2 is graded B, not A
+- **WPA3 "transition mode" no longer gets the A.** Most routers sold as WPA3 run a mixed mode where older devices still
+  join with WPA2 and the same password, so the password can still be captured and attacked offline exactly as on a
+  WPA2 network. Those networks (Android reports them as `PSK+SAE`) now show **B** with the reason "WPA3 with WPA2
+  fallback (transition mode …)"; a pure WPA3 network keeps its A. The label stays WPA3, the weak-network filter and
+  the evil-twin "weaker than before" memory are unchanged. The desktop beta grades the same way; tests cover both.
+
 ## What's new in v2.9.3: "Sam's iPhone" names its owner again
 - **A first name that is also a chain now counts as a person on a phone or wearable.** "Sam's iPhone", "Wendy's
   AirPods", "Ben's Pixel", "Harry's Apple Watch" and "iPhone de Sam" show Sam / Wendy / Ben / Harry as the owner
@@ -69,7 +76,7 @@ broadcast. It never connects to, jams, deauths or transmits to anything.
   scores 45 and alerts; a known name from an address block never seen for it is noted at 15 (a new router or mesh
   node more often than a copy). A network name seen open and secured at the same time is noted (25) but does not
   alert on its own: venues do that on purpose.
-- **Network security grade** in every Wi-Fi row and in details: A WPA3 · B WPA2 or OWE · C WPA1 or TKIP-only · D WEP
+- **Network security grade** in every Wi-Fi row and in details: A WPA3 · B WPA2, OWE or WPA3 transition mode · C WPA1 or TKIP-only · D WEP
   · F open; WPS advertised lowers the grade one step (older routers: PIN attack risk). The reason is in plain words.
   WPA1, WEP and open networks count as security findings (`sec:weak`).
 - **"Following you" for any device, not just trackers:** a phone, earbuds or an unknown Bluetooth device that appeared
