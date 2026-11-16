@@ -124,6 +124,18 @@ PY
   sleep 1.5
 }
 
+# AirScope must be the focused window. A fallback Back that landed after a dialog had already closed (the dump
+# missed its "Close" button) sends the app to the launcher; the service keeps running, but every later screenshot
+# then shows the home screen. Bring the app back and say so.
+ensure_app() {
+  if adb shell dumpsys window 2>/dev/null | grep -E "mCurrentFocus|mFocusedApp" | grep -q "$PKG"; then return 0; fi
+  note "  (AirScope was not in front: relaunching it)"
+  adb shell am start -n "$PKG/.MainActivity" >/dev/null 2>&1; sleep 3
+}
+
+# Close a dialog: its Close button, or Back when the dump can't see it; then make sure the app is still in front.
+dismiss() { tap "${1:-Close}" || { adb shell input keyevent 4; sleep 1; ensure_app; }; }
+
 screen_text() {
   dump_ui || return 0
   python3 -c "import sys,xml.etree.ElementTree as E; print('\n'.join(n.get('text') for n in E.parse(sys.argv[1]).getroot().iter('node') if n.get('text')))" "$OUT/ui.xml" 2>/dev/null
@@ -299,7 +311,7 @@ if tap "MORE ▾"; then
     shot 11-updates
     screen_text > "$OUT/11-updates.txt"
     grep -E "Result|Signed|one-time" "$OUT/11-updates.txt" | sed 's/^/  /' | tee -a "$SUMMARY"
-    tap "Close" || adb shell input keyevent 4
+    dismiss
   fi
 fi
 
@@ -311,11 +323,11 @@ if tap "MORE ▾"; then
     screen_text > "$OUT/11c-diagnostics.txt"
     shot 11c-diagnostics-network
     grep -E "Map tiles|ALPR data|Updates \(GitHub\)|reachable" "$OUT/11c-diagnostics.txt" | sed 's/^/  /' | tee -a "$SUMMARY"
-    tap "Close" || adb shell input keyevent 4
+    dismiss
   fi
 fi
 if tap "MORE ▾"; then
-  if tap "Session log (seen again)"; then shot 11d-session-log; tap "Close" || adb shell input keyevent 4; fi
+  if tap "Session log (seen again)"; then shot 11d-session-log; dismiss; fi
 fi
 note "-- names on your Wi-Fi (mDNS/SSDP receive-only; the emulator network has none, the dialog must still open)"
 if tap "MORE ▾"; then
@@ -323,34 +335,35 @@ if tap "MORE ▾"; then
     sleep 1; shot 11e-lan-names
     screen_text > "$OUT/11e-lan-names.txt"
     grep -E "Listening|OFF|Nothing heard|can't listen" "$OUT/11e-lan-names.txt" | head -2 | sed 's/^/  /' | tee -a "$SUMMARY"
-    tap "Close" || adb shell input keyevent 4
+    dismiss
   fi
 fi
 
 note "-- security log + places dialogs"
 if tap "MORE ▾"; then
-  if tap "Security log" contains; then sleep 1; shot 11f-security-log; tap "Close" || adb shell input keyevent 4; fi
+  if tap "Security log" contains; then sleep 1; shot 11f-security-log; dismiss; fi
 fi
 if tap "MORE ▾"; then
   if tap "Places: home" contains; then
     sleep 1; shot 11g-places
     if tap "Add this place" contains; then sleep 1; tap "Save"; sleep 1; fi
-    tap "Close" || adb shell input keyevent 4
+    dismiss
     if tap "MORE ▾"; then if tap "Places: home" contains; then
       sleep 1; shot 11h-places-added; screen_text > "$OUT/11h-places.txt"
       grep -qE "Home" "$OUT/11h-places.txt" && grep -E "Home|learning|fix" "$OUT/11h-places.txt" | head -2 | sed 's/^/  /' | tee -a "$SUMMARY" || note "WARN: place 'Home' not listed after Save (check 11h-places-added.png; the mock GPS fix may be too rough)"
-      tap "Close" || adb shell input keyevent 4
+      dismiss
     fi; fi
   fi
 fi
 
 note "-- web HUD"
+ensure_app
 if tap "HUD"; then HUD_OPENED=1; else HUD_OPENED=; fi; sleep 3
 URL=$(screen_text | grep -oE "http://[0-9.]+:8787/\?k=[A-Za-z0-9_-]+" | head -1)
 shot 12-hud-dialog
 # Only dismiss when the dialog did open: a blind Back on the main screen closes the app to the launcher, which
 # made 13-after-screen-off / 14-stopped show the home screen instead of AirScope (the service still ran).
-if [ -n "$HUD_OPENED" ] || [ -n "$URL" ]; then tap "OK" || adb shell input keyevent 4; else note "  (HUD dialog not opened: HUD button disabled, nothing to dismiss)"; fi
+if [ -n "$HUD_OPENED" ] || [ -n "$URL" ]; then dismiss "OK"; else note "  (HUD dialog not opened: HUD button disabled, nothing to dismiss)"; fi
 if [ -n "$URL" ]; then
   KEY="${URL##*k=}"
   adb forward tcp:8787 tcp:8787 >/dev/null
@@ -366,6 +379,7 @@ fi
 tap "HUD"
 
 note "-- screen off for 40 s while moving (scan must keep running)"
+ensure_app
 adb shell input keyevent 26
 walk 40
 adb shell input keyevent 224
