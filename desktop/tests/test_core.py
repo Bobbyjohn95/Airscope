@@ -106,11 +106,13 @@ class CoreTests(unittest.TestCase):
         self.assertEqual(core.classify_wifi("a6:00:00:00:00:01", "Mike's iPhone", "[WPA2-PSK-CCMP][ESS]", self.db).label, "iPhone hotspot")
         self.assertEqual(core.security_grade("[RSN-SAE-CCMP][ESS]")[0], "A")
         # WPA3 transition mode (WPA2-PSK still accepted) is graded like WPA2, and says why
-        for caps in ("[WPA2-PSK-CCMP][RSN-PSK+SAE-CCMP][ESS]", "[RSN-PSK-SAE-CCMP][ESS]"):
+        for caps in ("[WPA2-PSK-CCMP][RSN-PSK+SAE-CCMP][ESS]", "[RSN-PSK-SAE-CCMP][ESS]", "[RSN-FT/PSK+PSK+FT/SAE+SAE-CCMP][ESS]"):
             g, why = core.security_grade(caps)
             self.assertEqual(g, "B", caps); self.assertIn("transition", why)
             self.assertEqual(core.security_label(caps), "WPA3"); self.assertFalse(core.is_weak(caps))
         self.assertEqual(core.security_grade("[WPA2-PSK-CCMP][RSN-PSK+SAE-CCMP][ESS][WPS]", wps=True)[0], "C")
+        for caps in ("[RSN-SAE-H2E-CCMP][ESS]", "[RSN-EAP+SAE-CCMP][ESS]"):
+            self.assertEqual(core.security_grade(caps)[0], "A", caps)
         self.assertEqual(core.security_grade("[WPA2-PSK-CCMP][ESS]", wps=True)[0], "C")
         self.assertTrue(core.is_weak("[WEP][ESS]")); self.assertFalse(core.is_weak("[WPA2-PSK-CCMP][ESS]"))
         # name words must be whole words: neighbours' networks are not cameras, cars or Flock gear

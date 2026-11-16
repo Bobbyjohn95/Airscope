@@ -104,7 +104,7 @@ object WifiSecurity {
         }
         if (wps && g in 'A'..'C') g += 1
         val why = when (label) {
-            "WPA3" -> if (transition) "WPA3 with WPA2 fallback (transition mode: older devices still join with WPA2, so the password can still be attacked offline)"
+            "WPA3" -> if (transition) "WPA3 with WPA2 fallback (transition mode): older devices join with WPA2, so the password can be attacked offline"
                       else "WPA3: current standard"
             "OWE" -> "OWE: encrypted open network (no password, traffic still protected)"
             "WPA2" -> if (tkipOnly) "WPA2 with TKIP only (old cipher)" else "WPA2"

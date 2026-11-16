@@ -248,7 +248,7 @@ def security_grade(caps: str, wps: bool = False) -> Tuple[str, str]:
     if wps and g in "ABC":
         g = chr(ord(g) + 1)
     why = {
-        "WPA3": "WPA3 with WPA2 fallback (transition mode: older devices still join with WPA2, so the password can still be attacked offline)"
+        "WPA3": "WPA3 with WPA2 fallback (transition mode): older devices join with WPA2, so the password can be attacked offline"
         if transition else "WPA3: current standard", "OWE": "OWE: encrypted open network (no password, traffic still protected)",
         "WPA2": "WPA2 with TKIP only (old cipher)" if tkip_only else "WPA2", "WPA": "WPA1 (2003, outdated; crackable)",
         "WEP": "WEP (broken since 2001: anyone can read the traffic)",
