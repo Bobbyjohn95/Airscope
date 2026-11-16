@@ -67,6 +67,12 @@ Coworkers: add bigger ideas here with what / why / risk / size. K: delete a line
   release build-59 live and not prerelease. Overpass answered 502 once in diagnostics again (kumi fallback covered it,
   48 cameras mapped). GitHub fetches still blocked unattended (12th day, one try). Weekly roundup sent to K. Still open
   for K: street-layer cache, Actions bump, fetch access.
+  *2026-11-16:* build 59 live, not prerelease; main's CI green (emulator PASS re-read: 68 mph inside a car, 5 tiles,
+  permanent key, scan survived screen-off); dev_check green. Nothing shipped (routine release was yesterday). Prepared on
+  branch `wpa3-transition-grade`, reviewed by sonnet (no defects, nits adopted), CI running: a WPA3 network that still
+  accepts WPA2-PSK (transition mode, `PSK+SAE`) is graded B with a plain reason instead of A; pure WPA3 keeps A; label,
+  rank and weak filter unchanged; desktop mirrored. Merges on 11-17 if the emulator run is green. GitHub fetches still
+  blocked unattended (13th day, one try); still K's call above.
 - **CI actions are several major versions behind** (checkout v5→v7, setup-java v5→v6, setup-python v5→v7,
   upload-artifact v4→v7, download-artifact v4→v8, gradle/actions v4→v6, emulator-runner v2 current). Everything
   still works. Bumping touches the publish job (download-artifact), which coworkers must not change, and a failed
