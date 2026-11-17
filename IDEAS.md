@@ -77,6 +77,13 @@ Coworkers: add bigger ideas here with what / why / risk / size. K: delete a line
   the screen-off screenshots show the app again. Merges on 11-17. overpass-api.de answered 502 in all three runs since
   11-15; the kumi.systems fallback covered each time (48-51 cameras mapped): watching, no change. GitHub fetches still
   blocked unattended (13th day, one try); still K's call above.
+  *2026-11-17:* shipped **build 63** (README v2.9.4): WPA3 transition mode (WPA2-PSK still accepted) is graded B with a
+  plain reason; pure WPA3 keeps A; desktop mirrored. Merged main into the branch, its run 44151575796 green (emulator
+  PASS, 66 mph inside a car, 5 tiles, scan survived screen-off; screenshots checked), fast-forwarded main, run
+  44154636812 green (PASS, 80 mph inside a car, 5 tiles), release build-63 is latest and not prerelease. Emulator script
+  note: when the UI dump fails, the Search and HUD dialogs are left open (Clear/OK never found), so 07b/08/13/14 show a
+  dialog over a live app; harmless, but a Back-if-a-dialog-is-up fallback would make those screenshots honest (test-only,
+  rides with the next release). Next routine release not before 11-19. GitHub fetches still blocked unattended (14th day).
 - **CI actions are several major versions behind** (checkout v5→v7, setup-java v5→v6, setup-python v5→v7,
   upload-artifact v4→v7, download-artifact v4→v8, gradle/actions v4→v6, emulator-runner v2 current). Everything
   still works. Bumping touches the publish job (download-artifact), which coworkers must not change, and a failed
