@@ -84,6 +84,14 @@ Coworkers: add bigger ideas here with what / why / risk / size. K: delete a line
   note: when the UI dump fails, the Search and HUD dialogs are left open (Clear/OK never found), so 07b/08/13/14 show a
   dialog over a live app; harmless, but a Back-if-a-dialog-is-up fallback would make those screenshots honest (test-only,
   rides with the next release). Next routine release not before 11-19. GitHub fetches still blocked unattended (14th day).
+  *2026-11-18:* build 63 live, not prerelease; main's CI green; dev_check green. Nothing shipped (routine release was
+  yesterday). Prepared on branch `names-business-words`, reviewed by sonnet (no defects; its nits adopted: home-gadget
+  words bar/coffee/outlet/garage/auto left out of the business list), run 44374824323 green (emulator PASS, 70 mph inside
+  a car, 5-6 tiles, permanent key, scan survived screen-off; screenshots checked): "Tom's Car Wash" / "Bob's Phone Shop" /
+  "Joe's TV Repair" are nobody's device (a trade word after the device word means a business); "Tom's Car", "Sarah's Home
+  WiFi", "Mike's TV Sound Bar" keep their owner; desktop mirrored. Also test-only: dismiss() checks dumpsys window for a
+  leftover dialog and presses Back, so the Search dialog no longer sits over the later screenshots (confirmed in that run).
+  Merges 11-19. GitHub fetches still blocked unattended (15th day, one try).
 - **CI actions are several major versions behind** (checkout v5→v7, setup-java v5→v6, setup-python v5→v7,
   upload-artifact v4→v7, download-artifact v4→v8, gradle/actions v4→v6, emulator-runner v2 current). Everything
   still works. Bumping touches the publish job (download-artifact), which coworkers must not change, and a failed
