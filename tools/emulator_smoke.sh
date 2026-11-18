@@ -133,8 +133,26 @@ ensure_app() {
   adb shell am start -n "$PKG/.MainActivity" >/dev/null 2>&1; sleep 3
 }
 
-# Close a dialog: its Close button, or Back when the dump can't see it; then make sure the app is still in front.
-dismiss() { tap "${1:-Close}" || { adb shell input keyevent 4; sleep 1; ensure_app; }; }
+# One of our dialogs is still up: a dialog window of this package is ty=APPLICATION (or a sub-panel), the
+# activity's own window is ty=BASE_APPLICATION. Used to tell a tap that missed the dialog's button (stale cached
+# position, dump failed) from one that closed it, so the later screenshots show the app, not a leftover dialog.
+dialog_up() {
+  adb shell dumpsys window windows 2>/dev/null | tr -d '\r' | awk -v pkg="$PKG" '
+    /^ *Window #/ { ours = index($0, pkg) > 0 }
+    ours && /ty=APPLICATION/ { found = 1 }
+    END { exit found ? 0 : 1 }'
+}
+
+# Close a dialog: its button (Close by default), or Back when the dump can't see it. If the button tap did not
+# close the dialog, press Back once. Then make sure the app is still in front.
+dismiss() {
+  if tap "${1:-Close}"; then
+    if dialog_up; then note "  (dialog still open after tapping \"${1:-Close}\": pressing Back)"; adb shell input keyevent 4; sleep 1; fi
+  else
+    adb shell input keyevent 4; sleep 1
+  fi
+  ensure_app
+}
 
 screen_text() {
   dump_ui || return 0
@@ -245,7 +263,7 @@ if tap "🔍" contains; then
   N=$(screen_text | grep -c "Flock")
   note "  search 'flock' -> $N Flock rows"
   shot 05c-search
-  tap "🔍" contains; tap "Clear"
+  if tap "🔍" contains; then dismiss "Clear"; fi
 fi
 
 # Vertical centre of the chip row: from the live dump, or from where a chip was last seen when the dump failed
@@ -399,6 +417,7 @@ note "== results =="
 adb logcat -d -v time > "$OUT/logcat-full.txt"
 adb logcat -d -b crash -v time > "$OUT/logcat-crash.txt"
 adb shell dumpsys gfxinfo "$PKG" > "$OUT/gfxinfo.txt"
+adb shell dumpsys window windows > "$OUT/window-state.txt" 2>/dev/null || true  # what dialog_up() reads
 adb shell dumpsys meminfo "$PKG" > "$OUT/meminfo.txt"
 grep -E "Total frames rendered|Janky frames|50th percentile|90th percentile|99th percentile" "$OUT/gfxinfo.txt" | head -5 | sed 's/^/  /' | tee -a "$SUMMARY"
 grep -E "TOTAL PSS|TOTAL:" "$OUT/meminfo.txt" | head -1 | sed 's/^/  memory /' | tee -a "$SUMMARY"
