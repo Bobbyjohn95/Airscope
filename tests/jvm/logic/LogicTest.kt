@@ -778,7 +778,8 @@ fun main() {
             && o("Mike's Bike Rentals") == null && o("Anna's Watch Store") == null && o("Carlos' Car Audio Sales") == null
             && o("Tom-Car-Wash") == null && Names.ownerFromHostname("Toms-Car-Wash") == null, o("Tom's Car Wash"))
         check("owner: own things keep their owner", o("Tom's Car") == "Tom" && o("Anna's Watch") == "Anna" && o("Bob's Phone") == "Bob"
-            && o("Sarah's Home WiFi") == "Sarah" && o("Tom's Car WiFi") == "Tom" && o("Lisa's Laptop") == "Lisa", o("Tom's Car"))
+            && o("Sarah's Home WiFi") == "Sarah" && o("Tom's Car WiFi") == "Tom" && o("Lisa's Laptop") == "Lisa"
+            && o("Mike's TV Sound Bar") == "Mike" && o("Tom's Home Outlet") == "Tom", o("Tom's Car"))
         check("owner: chain first name, other forms", o("WiFi de Sam") == null && o("Wendys WiFi") == null && o("Ben's iPhone Hotspot") == "Ben"
             && o("iPhone de Sam") == "Sam" && o("Wendys iPad") == "Wendys", o("Ben's iPhone Hotspot"))
         for (bad in listOf("Living-Room-TV", "Kitchen-Echo", "Bedroom-TV", "Work-Laptop", "Old-iPhone", "Test-Phone", "Kids' iPad",

@@ -52,12 +52,13 @@ object Names {
     /**
      * A business named after its owner: "Tom's Car Wash", "Bob's Phone Shop", "Joe's TV Repair", "Mike's Bike Rentals".
      * The thing starts with a device word, so without this it would read as Tom's own car. Any trade word after the
-     * first word says it is a business, whoever's name is in front.
+     * first word says it is a business, whoever's name is in front. Words that also name home gadgets (bar, coffee,
+     * outlet, garage, auto) are left out so "Mike's TV Sound Bar" or "Tom's Home Outlet" keep their owner.
      */
     private val BUSINESS_WORDS = Regex(
-        "^\\S+.*\\b(wash|shop|store|club|cafe|coffee|bar|pub|grill|diner|pizza|pizzeria|bakery|salon|spa|market|deli|" +
-            "tavern|lounge|inn|motel|hotel|auto|repair|repairs|tires?|towing|dealer|dealership|rentals?|restaurant|" +
-            "garage|service|services|sales|supply|supplies|detailing|wholesale|outlet)\\b.*$",
+        "^\\S+.*\\b(wash|shop|store|club|cafe|pub|grill|diner|pizza|pizzeria|bakery|salon|spa|market|deli|" +
+            "tavern|lounge|inn|motel|hotel|repair|repairs|tires?|towing|dealer|dealership|rentals?|restaurant|" +
+            "service|services|sales|supply|supplies|detailing|wholesale)\\b.*$",
         RegexOption.IGNORE_CASE,
     )
 

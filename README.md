@@ -4,6 +4,15 @@ A personal signal-observation app for the Pixel 8 Pro (Android 10+, GrapheneOS-f
 It **only listens**. It reads Wi-Fi beacons and Bluetooth LE advertisements that devices already
 broadcast. It never connects to, jams, deauths or transmits to anything.
 
+## What's new in v2.9.5: "Tom's Car Wash" is a business, not Tom's car
+- **A business named after its owner no longer shows that person as the owner.** "Tom's Car Wash", "Bob's Phone Shop",
+  "Joe's TV Repair" and "Mike's Bike Rentals" used to read as Tom's / Bob's / Joe's / Mike's own thing because they start
+  with a device word (car, phone, TV, bike). A trade word after it (wash, shop, store, repair, rentals, sales, service,
+  dealer, tires, ...) now means a business, whoever's name is in front. "Tom's Car", "Anna's Watch", "Sarah's Home WiFi"
+  and "Mike's TV Sound Bar" keep their owner. The desktop beta grades the same way; tests cover both.
+- Emulator test only: when a dialog's button could not be found, the Search / HUD dialog stayed open over the later
+  screenshots; the script now presses Back once if a dialog is still up.
+
 ## What's new in v2.9.4: a WPA3 network that still takes WPA2 is graded B, not A
 - **WPA3 "transition mode" no longer gets the A.** Most routers sold as WPA3 run a mixed mode where older devices still
   join with WPA2 and the same password, so the password can still be captured and attacked offline exactly as on a

@@ -139,7 +139,7 @@ ensure_app() {
 dialog_up() {
   adb shell dumpsys window windows 2>/dev/null | tr -d '\r' | awk -v pkg="$PKG" '
     /^ *Window #/ { ours = index($0, pkg) > 0 }
-    ours && /ty=APPLICATION/ { found = 1 }
+    ours && /ty=APPLICATION( |}|_PANEL|_SUB_PANEL|_ATTACHED_DIALOG)/ { found = 1 }  # not APPLICATION_STARTING (splash)
     END { exit found ? 0 : 1 }'
 }
 

@@ -159,7 +159,7 @@ class CoreTests(unittest.TestCase):
         for bad in ("Tom's Car Wash", "Bob's Phone Shop", "Joe's TV Repair", "Mike's Bike Rentals", "Tom-Car-Wash"):
             self.assertIsNone(core.owner(bad), bad)
         self.assertIsNone(core.owner_from_hostname("Toms-Car-Wash"))
-        for good, who in (("Tom's Car", "Tom"), ("Anna's Watch", "Anna"), ("Sarah's Home WiFi", "Sarah"), ("Tom's Car WiFi", "Tom")):
+        for good, who in (("Tom's Car", "Tom"), ("Anna's Watch", "Anna"), ("Sarah's Home WiFi", "Sarah"), ("Tom's Car WiFi", "Tom"), ("Mike's TV Sound Bar", "Mike")):
             self.assertEqual(core.owner(good), who, good)
         self.assertIsNone(core.owner("WiFi de Sam"))
         for bad in ("McDonald's Free WiFi", "Living-Room-TV", "Pineapple House", "Galaxy Buds2", "Kids' iPad", "The Smith's House", "Sonos Speaker"):

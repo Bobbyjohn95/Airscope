@@ -286,9 +286,9 @@ _CHAIN_FIRST_NAMES = {"wendy", "denny", "macy", "carl", "sam", "harry", "ben", "
 _NETWORK_WORDS = _rx(r"^(hotspot|wifi|wi-fi|network|home|house|place|room|apartment|flat|tv|car)\b.*$")
 # A business named after its owner ("Tom's Car Wash", "Bob's Phone Shop"): a trade word after the first word.
 _BUSINESS_WORDS = _rx(
-    r"^\S+.*\b(wash|shop|store|club|cafe|coffee|bar|pub|grill|diner|pizza|pizzeria|bakery|salon|spa|market|deli|"
-    r"tavern|lounge|inn|motel|hotel|auto|repair|repairs|tires?|towing|dealer|dealership|rentals?|restaurant|"
-    r"garage|service|services|sales|supply|supplies|detailing|wholesale|outlet)\b.*$"
+    r"^\S+.*\b(wash|shop|store|club|cafe|pub|grill|diner|pizza|pizzeria|bakery|salon|spa|market|deli|"
+    r"tavern|lounge|inn|motel|hotel|repair|repairs|tires?|towing|dealer|dealership|rentals?|restaurant|"
+    r"service|services|sales|supply|supplies|detailing|wholesale)\b.*$"
 )
 _ARTICLES = {"the", "la", "el", "le", "les", "los", "las", "der", "die", "das", "de", "a", "an"}
 _POSSESSIVE = re.compile(r"^([^\W\d_][^\W\d_.\- ]{0,30}?(?:[.\- ][^\W\d_]+){0,2}?)\s*(['’`´]s|['’`´])\s+(.+)$", re.I | re.U)
