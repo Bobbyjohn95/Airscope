@@ -774,6 +774,11 @@ fun main() {
         check("no owner: same name on a network", o("Sam's WiFi") == null && o("Wendy's Guest WiFi") == null && o("Sam's Club WiFi") == null
             && o("Ben & Jerry's WiFi") == null && o("Denny's Hotspot") == null && o("Carl's Home") == null
             && o("Sams WiFi") == null && o("Sam-WiFi") == null && o("Wendy's TV") == null && o("Sam's Car Wash") == null, o("Sam's WiFi"))
+        check("no owner: business named after its owner", o("Tom's Car Wash") == null && o("Bob's Phone Shop") == null && o("Joe's TV Repair") == null
+            && o("Mike's Bike Rentals") == null && o("Anna's Watch Store") == null && o("Carlos' Car Audio Sales") == null
+            && o("Tom-Car-Wash") == null && Names.ownerFromHostname("Toms-Car-Wash") == null, o("Tom's Car Wash"))
+        check("owner: own things keep their owner", o("Tom's Car") == "Tom" && o("Anna's Watch") == "Anna" && o("Bob's Phone") == "Bob"
+            && o("Sarah's Home WiFi") == "Sarah" && o("Tom's Car WiFi") == "Tom" && o("Lisa's Laptop") == "Lisa", o("Tom's Car"))
         check("owner: chain first name, other forms", o("WiFi de Sam") == null && o("Wendys WiFi") == null && o("Ben's iPhone Hotspot") == "Ben"
             && o("iPhone de Sam") == "Sam" && o("Wendys iPad") == "Wendys", o("Ben's iPhone Hotspot"))
         for (bad in listOf("Living-Room-TV", "Kitchen-Echo", "Bedroom-TV", "Work-Laptop", "Old-iPhone", "Test-Phone", "Kids' iPad",

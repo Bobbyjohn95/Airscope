@@ -284,6 +284,12 @@ orbi eero ubnt hidden unknown mobile wireless network guest home office free pub
 # chains named after a person: a first name on a phone ("Sam's iPhone"), a business on a network ("Sam's Club WiFi")
 _CHAIN_FIRST_NAMES = {"wendy", "denny", "macy", "carl", "sam", "harry", "ben", "jerry", "levi"}
 _NETWORK_WORDS = _rx(r"^(hotspot|wifi|wi-fi|network|home|house|place|room|apartment|flat|tv|car)\b.*$")
+# A business named after its owner ("Tom's Car Wash", "Bob's Phone Shop"): a trade word after the first word.
+_BUSINESS_WORDS = _rx(
+    r"^\S+.*\b(wash|shop|store|club|cafe|coffee|bar|pub|grill|diner|pizza|pizzeria|bakery|salon|spa|market|deli|"
+    r"tavern|lounge|inn|motel|hotel|auto|repair|repairs|tires?|towing|dealer|dealership|rentals?|restaurant|"
+    r"garage|service|services|sales|supply|supplies|detailing|wholesale|outlet)\b.*$"
+)
 _ARTICLES = {"the", "la", "el", "le", "les", "los", "las", "der", "die", "das", "de", "a", "an"}
 _POSSESSIVE = re.compile(r"^([^\W\d_][^\W\d_.\- ]{0,30}?(?:[.\- ][^\W\d_]+){0,2}?)\s*(['’`´]s|['’`´])\s+(.+)$", re.I | re.U)
 _OF_FORM = re.compile(r"^(.{2,40}?)\s+(de|di|von|van|do|da|du|des)\s+([^\W\d_][^\W\d_'\- ]{1,30})$", re.I | re.U)
@@ -302,6 +308,8 @@ def _person(who: str, what: str = "") -> bool:
     if any(x in _BRANDS or x in _NOT_A_PERSON or len(x) < 2 for x in words):
         return False
     if any(x in _CHAIN_FIRST_NAMES for x in words) and _NETWORK_WORDS.match(what.strip()):
+        return False
+    if _BUSINESS_WORDS.match(what.strip()):
         return False
     return all(all(c.isalpha() or c in ".-'" for c in x) and sum(c.isalpha() for c in x) >= 2 for x in words)
 

@@ -49,6 +49,18 @@ object Names {
     private val CHAIN_FIRST_NAMES = setOf("wendy", "denny", "macy", "carl", "sam", "harry", "ben", "jerry", "levi")
     private val NETWORK_WORDS = Regex("^(hotspot|wifi|wi-fi|network|home|house|place|room|apartment|flat|tv|car)\\b.*$", RegexOption.IGNORE_CASE)
 
+    /**
+     * A business named after its owner: "Tom's Car Wash", "Bob's Phone Shop", "Joe's TV Repair", "Mike's Bike Rentals".
+     * The thing starts with a device word, so without this it would read as Tom's own car. Any trade word after the
+     * first word says it is a business, whoever's name is in front.
+     */
+    private val BUSINESS_WORDS = Regex(
+        "^\\S+.*\\b(wash|shop|store|club|cafe|coffee|bar|pub|grill|diner|pizza|pizzeria|bakery|salon|spa|market|deli|" +
+            "tavern|lounge|inn|motel|hotel|auto|repair|repairs|tires?|towing|dealer|dealership|rentals?|restaurant|" +
+            "garage|service|services|sales|supply|supplies|detailing|wholesale|outlet)\\b.*$",
+        RegexOption.IGNORE_CASE,
+    )
+
     /** "<Device> de/di/von/van <Name>" (Spanish, Portuguese, Italian, French, German, Dutch). */
     private val OF_FORM = Regex("^(.{2,40}?)\\s+(de|di|von|van|do|da|du|des)\\s+([\\p{L}][\\p{L}'\\- ]{1,30})$", RegexOption.IGNORE_CASE)
 
@@ -122,6 +134,7 @@ object Names {
         if (words.isEmpty() || words.size > 3) return false
         if (words.any { it in BRANDS || it in NOT_A_PERSON }) return false
         if (words.any { it in CHAIN_FIRST_NAMES } && NETWORK_WORDS.matches(what.trim())) return false
+        if (BUSINESS_WORDS.matches(what.trim())) return false
         if (words[0] in setOf("the", "la", "el", "le", "les", "los", "las", "der", "die", "das", "de", "a", "an")) return false
         if (words.any { it.length < 2 }) return false
         // Must be letters (any script), with at most a dot/hyphen/apostrophe per word
