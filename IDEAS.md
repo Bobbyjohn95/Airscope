@@ -92,6 +92,12 @@ Coworkers: add bigger ideas here with what / why / risk / size. K: delete a line
   WiFi", "Mike's TV Sound Bar" keep their owner; desktop mirrored. Also test-only: dismiss() checks dumpsys window for a
   leftover dialog and presses Back, so the Search dialog no longer sits over the later screenshots (confirmed in that run).
   Merges 11-19. GitHub fetches still blocked unattended (15th day, one try).
+  *2026-11-19:* shipped **build 66** (README v2.9.5, branch `names-business-words`): "Tom's Car Wash" / "Bob's Phone Shop"
+  are nobody's device; owner names on real things unchanged; desktop mirrored; plus the test-only dialog fallback. Merged
+  main into the branch, its run 44591313426 green (emulator PASS, inside a car mid-drive, 4-6 tiles, 49 cameras, permanent
+  key, scan survived screen-off, no leftover dialogs; screenshots checked), fast-forwarded main, run 44595444091 green
+  (PASS, 68 mph inside a car), release build-66 is latest and not prerelease. That is this week's second routine release:
+  no more routine ones before 11-23. GitHub fetches still blocked unattended (16th day, one try); still K's call above.
 - **CI actions are several major versions behind** (checkout v5→v7, setup-java v5→v6, setup-python v5→v7,
   upload-artifact v4→v7, download-artifact v4→v8, gradle/actions v4→v6, emulator-runner v2 current). Everything
   still works. Bumping touches the publish job (download-artifact), which coworkers must not change, and a failed
