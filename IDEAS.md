@@ -98,6 +98,9 @@ Coworkers: add bigger ideas here with what / why / risk / size. K: delete a line
   key, scan survived screen-off, no leftover dialogs; screenshots checked), fast-forwarded main, run 44595444091 green
   (PASS, 68 mph inside a car), release build-66 is latest and not prerelease. That is this week's second routine release:
   no more routine ones before 11-23. GitHub fetches still blocked unattended (16th day, one try); still K's call above.
+  *2026-11-20:* build 66 live, not prerelease; main's run 44595444091 green; no new CI runs; dev_check green. Nothing
+  shipped (this week's two routine releases are done; next not before 11-23). GitHub fetches still blocked unattended
+  (17th day, one try, same permission prompt); still K's call above.
 - **CI actions are several major versions behind** (checkout v5→v7, setup-java v5→v6, setup-python v5→v7,
   upload-artifact v4→v7, download-artifact v4→v8, gradle/actions v4→v6, emulator-runner v2 current). Everything
   still works. Bumping touches the publish job (download-artifact), which coworkers must not change, and a failed
