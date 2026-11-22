@@ -104,6 +104,9 @@ Coworkers: add bigger ideas here with what / why / risk / size. K: delete a line
   *2026-11-21:* build 66 live, not prerelease; main's run 44595444091 green; no new CI runs; dev_check green. Nothing
   shipped (check-only day; next routine release not before 11-23). GitHub fetches still blocked unattended (18th day,
   one try); still K's call above.
+  *2026-11-22 (Sunday):* build 66 live, not prerelease; main's run 44595444091 green; no new CI runs; dev_check green.
+  Nothing shipped (check-only day; next routine release not before 11-23). GitHub fetches still blocked unattended
+  (19th day, one try); still K's call above. Weekly roundup sent (builds 63 + 66 this week).
 - **CI actions are several major versions behind** (checkout v5→v7, setup-java v5→v6, setup-python v5→v7,
   upload-artifact v4→v7, download-artifact v4→v8, gradle/actions v4→v6, emulator-runner v2 current). Everything
   still works. Bumping touches the publish job (download-artifact), which coworkers must not change, and a failed
