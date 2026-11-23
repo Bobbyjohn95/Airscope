@@ -647,6 +647,18 @@ fun main() {
         val tm3 = TileManager(dir, { calls++; ByteArray(16) { 1 } }, threads = 2)
         tm3.request(ids); waitFor { tm3.stats.fromDisk >= ids.size }
         check("Tiles: second run loads from the phone, no network", calls == c0 && tm3.stats.fromDisk >= ids.size, "${calls - c0} downloads")
+        // Counters are bumped by several threads at once: an increment must never be lost (CI saw 15 of 16 once).
+        // A dozen tiles on four threads is a guard, not a sure repro: the lost-update window is tiny.
+        run {
+            val dir2 = java.nio.file.Files.createTempDirectory("tiles2").toFile()
+            val many = Tiles.around(33.92, -84.84, 2500.0, 14)
+            val a = TileManager(dir2, { ByteArray(16) { 1 } }, threads = 4)
+            a.request(many); waitFor { a.stats.downloaded >= many.size && many.all { a.onDisk(it) } }
+            val b = TileManager(dir2, { ByteArray(16) { 1 } }, threads = 4)
+            b.request(many); waitFor { b.stats.fromDisk >= many.size }
+            check("Tiles: ${many.size} parallel loads counted exactly", a.stats.downloaded == many.size && b.stats.fromDisk == many.size, "${a.stats.downloaded} downloaded, ${b.stats.fromDisk} from disk")
+            dir2.deleteRecursively()
+        }
         var last = 0; var outOfOrder = 0
         // Pair up the offline downloads so two tiles finish at the same moment (the ordering race needs that).
         val pair = java.util.concurrent.CyclicBarrier(2)

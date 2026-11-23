@@ -49,7 +49,9 @@ class TileManager(
         }
     }
 
-    /** Numbers for the diagnostics screen. */
+    /** Numbers for the diagnostics screen. Counters are bumped under `synchronized(stats)`: two download threads
+     *  finishing together used to lose an increment (`++` on a volatile is read-then-write), which made the
+     *  "second run loads from the phone" JVM test count 15 of 16 disk loads on CI once. */
     class Stats {
         @Volatile var downloaded = 0
         @Volatile var failed = 0
@@ -111,7 +113,7 @@ class TileManager(
                 val bytes = try { f.readBytes() } catch (_: IOException) { null }
                 if (bytes != null && bytes.isNotEmpty()) {
                     data = VectorTile.decode(bytes, id, f.lastModified())
-                    stats.fromDisk++
+                    synchronized(stats) { stats.fromDisk++ }
                     publish(id, data)
                 }
             }
@@ -121,7 +123,7 @@ class TileManager(
                 val bytes = try {
                     fetcher(url(id))
                 } catch (e: Exception) {
-                    stats.failed++
+                    synchronized(stats) { stats.failed++ }
                     stats.lastError = (e.message ?: e.javaClass.simpleName).take(120)
                     stats.lastErrorAt = clock()
                     synchronized(inFlight) {
@@ -131,8 +133,7 @@ class TileManager(
                     return
                 }
                 stats.lastLatencyMs = (System.nanoTime() - t0) / 1_000_000
-                stats.downloaded++
-                stats.bytes += bytes.size
+                synchronized(stats) { stats.downloaded++; stats.bytes += bytes.size }
                 stats.lastOkAt = clock()
                 synchronized(inFlight) { failures.remove(id.key) }
                 save(f, bytes)
@@ -210,10 +211,10 @@ class TileManager(
                 try {
                     val bytes = fetcher(url(id))
                     save(f, bytes)
-                    stats.downloaded++; stats.bytes += bytes.size; stats.lastOkAt = clock()
+                    synchronized(stats) { stats.downloaded++; stats.bytes += bytes.size }; stats.lastOkAt = clock()
                 } catch (e: Exception) {
                     synchronized(lock) { failed++ }
-                    stats.failed++; stats.lastError = (e.message ?: e.javaClass.simpleName).take(120); stats.lastErrorAt = clock()
+                    synchronized(stats) { stats.failed++ }; stats.lastError = (e.message ?: e.javaClass.simpleName).take(120); stats.lastErrorAt = clock()
                 } finally {
                     // Count and report under one lock so progress never arrives out of order
                     // ("16 of 16" then "15 of 16") when two downloads finish together.
