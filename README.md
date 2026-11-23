@@ -4,6 +4,15 @@ A personal signal-observation app for the Pixel 8 Pro (Android 10+, GrapheneOS-f
 It **only listens**. It reads Wi-Fi beacons and Bluetooth LE advertisements that devices already
 broadcast. It never connects to, jams, deauths or transmits to anything.
 
+## What's new in v2.9.6: a network called "Marauder" is no longer an attack tool
+- **"Marauder" / "MarauderAP" is a note, not an alarm.** The app used to label a Wi-Fi network or Bluetooth device with
+  that name "ESP32 Marauder (attack tool)" and raise a MEDIUM alert, calling it the tool's default name. A check of the
+  Marauder firmware's own source shows it broadcasts no name of its own (its fake-portal network is called "PORTAL" and
+  its Bluetooth radio starts unnamed), so such a name is always someone's choice: a fan of the tool, a school mascot, a
+  car. The device details now carry a 25-point note that says exactly that, and nothing is labelled or alerted. Real
+  tool names (Pineapple, "pwned", O.MG, Flipper, Pwnagotchi, Hak5) are unchanged. The desktop beta matches; tests cover
+  both.
+
 ## What's new in v2.9.5: "Tom's Car Wash" is a business, not Tom's car
 - **A business named after its owner no longer shows that person as the owner.** "Tom's Car Wash", "Bob's Phone Shop",
   "Joe's TV Repair" and "Mike's Bike Rentals" used to read as Tom's / Bob's / Joe's / Mike's own thing because they start
@@ -73,8 +82,9 @@ broadcast. It never connects to, jams, deauths or transmits to anything.
 - **SECURITY chip** (last chip in the row; scroll the row) shows only devices with a security finding. Search terms:
   `sec:attack`, `sec:evil`, `sec:weak`, `sec:follow`, or `sec:` for all of them. The web HUD has the same chip.
 - **Attack / audit hardware:** Wi-Fi Pineapple (its default "Pineapple_XXXX" name only when the digits match its
-  address, or its address block), ESP8266 Deauther ("pwned"), ESP32 Marauder (default name), O.MG cable implants,
-  Flipper Zero (Bluetooth name), Pwnagotchi and Wi-Fi phishing-tool names are labelled and alert at MEDIUM. Honest
+  address, or its address block), ESP8266 Deauther ("pwned"), O.MG cable implants, Flipper Zero (Bluetooth
+  name), Pwnagotchi and Wi-Fi phishing-tool names are labelled and alert at MEDIUM. The ESP32 Marauder broadcasts no
+  name of its own, so a network or device called "Marauder" only gets a note saying that. Honest
   limit: these are the names and addresses the tools use out of the box. Anyone can name a network "pwned", and a
   pentester's Pineapple at a conference is not an attack on you; the text says so. "Pineapple Cafe", "Pineapple WiFi"
   and a school's "Marauders" network are not flagged (at most a low-score note).
