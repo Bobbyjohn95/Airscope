@@ -99,11 +99,11 @@ class CoreTests(unittest.TestCase):
         self.assertTrue(c.attack_tool); self.assertEqual(c.label, "Wi-Fi Pineapple / Hak5 tool")
         self.assertFalse(core.classify_wifi("a4:11:22:33:44:55", "Pineapple Cafe", "[WPA2-PSK-CCMP][ESS]", self.db).attack_tool)
         self.assertFalse(core.classify_wifi("a4:11:22:33:44:55", "Marauders", "[WPA2-PSK-CCMP][ESS]", self.db).attack_tool)
-        # A "Marauder" name is a 25-pt note, not a tool verdict: the firmware broadcasts no name of its own
-        for m in ("MarauderAP", "marauder", "Marauder_1a2b", "ESP32 Marauder"):
+        # A "Marauder" name is a 15-pt note (below MEDIUM), not a tool verdict: the firmware broadcasts no name of its own
+        for m in ("MarauderAP", "marauder", "Marauder_1a2b", "ESP32 Marauder", "ESP32-Marauder"):
             r = core.classify_wifi("a4:11:22:33:44:55", m, "[WPA2-PSK-CCMP][ESS]", self.db)
             self.assertFalse(r.attack_tool, m); self.assertNotEqual(r.label, "ESP32 Marauder (attack tool)")
-            self.assertTrue(any(f.points == 25 and "chosen name" in f.text for f in r.findings), m)
+            self.assertTrue(any(f.points == 15 and "chosen name" in f.text for f in r.findings), m); self.assertLess(sum(f.points for f in r.findings), 25, m)
         pd = core.classify_wifi("00:30:44:00:00:01", "IBR900-1a2", "[WPA2-PSK-CCMP][ESS]", self.db)
         self.assertEqual(pd.category, "VEHICLE")
         pol = core.classify_wifi("00:30:44:00:00:02", "CCPD 1234", "[WPA2-PSK-CCMP][ESS]", self.db)
@@ -144,7 +144,7 @@ class CoreTests(unittest.TestCase):
         flip = core.classify_ble("80:e1:26:00:00:01", "Flipper Kx9ab3", {}, set(), {}, self.db, False)
         self.assertTrue(flip.attack_tool); self.assertEqual(flip.label, "Flipper Zero")
         mar = core.classify_ble("c1:00:00:00:00:02", "Marauder", {}, set(), {}, self.db, True)
-        self.assertFalse(mar.attack_tool); self.assertTrue(any(f.points == 25 for f in mar.findings))
+        self.assertFalse(mar.attack_tool); self.assertTrue(any(f.points == 15 for f in mar.findings)); self.assertLess(sum(f.points for f in mar.findings), 25)
         self.assertTrue(core.classify_ble("c1:00:00:00:00:03", "pwnagotchi", {}, set(), {}, self.db, True).attack_tool)
         tile = core.classify_ble("c1:00:00:00:00:01", None, {}, {0xFEED}, {}, self.db, True)
         self.assertEqual(tile.ble_type, "Tile tracker")

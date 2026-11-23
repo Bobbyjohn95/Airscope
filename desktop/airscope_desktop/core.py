@@ -170,7 +170,7 @@ def threat_ssid_findings(ssid: str, bssid: str = "") -> List[Finding]:
     if "deauther" in low:
         return [Finding(55, "Network name says Deauther (ESP8266 Wi-Fi jamming tool)")]
     if MARAUDER_NAME.match(s):
-        return [Finding(25, "Named after the ESP32 Marauder attack tool; the tool itself broadcasts no network name, so this is someone's chosen name")]
+        return [Finding(15, "Named after the ESP32 Marauder attack tool; the tool itself broadcasts no network name, so this is someone's chosen name")]
     if "marauder" in low:
         return [Finding(10, 'Name contains "marauder" (a school mascot or a car more often than the attack tool)')]
     if OMG_DEFAULT.match(s):
@@ -201,7 +201,7 @@ def threat_ble_name_findings(name: Optional[str]) -> List[Finding]:
     if FLIPPER_NAME.match(n):
         return [Finding(45, "Flipper Zero (multi-tool: can clone, replay and spam signals; often just a hobbyist)")]
     if MARAUDER_NAME.match(n):
-        return [Finding(25, "Named after the ESP32 Marauder attack tool; the tool itself advertises no Bluetooth name, so this is someone's chosen name")]
+        return [Finding(15, "Named after the ESP32 Marauder attack tool; the tool itself advertises no Bluetooth name, so this is someone's chosen name")]
     if low.startswith("o.mg") or low.startswith("omg-"):
         return [Finding(50, "O.MG implant name (malicious cable)")]
     if "hak5" in low:
@@ -613,7 +613,7 @@ def classify_ble(addr: str, name: Optional[str], mfr: Dict[int, bytes], uuid16: 
     attack = threat_ble_name_findings(name) + ([] if random else threat_mac_findings(addr))
     if attack:
         c.findings += attack
-        # Pwnagotchi (35) and up count as a tool; a name merely borrowed from a tool (25) stays a note in the details.
+        # Pwnagotchi (35) and up count as a tool; a name merely borrowed from a tool (15, below MEDIUM) stays a note in the details.
         c.attack_tool = any(x.points >= 30 for x in attack)
         if c.attack_tool:
             lab = threat_label(attack)

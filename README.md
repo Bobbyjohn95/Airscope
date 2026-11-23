@@ -9,7 +9,7 @@ broadcast. It never connects to, jams, deauths or transmits to anything.
   that name "ESP32 Marauder (attack tool)" and raise a MEDIUM alert, calling it the tool's default name. A check of the
   Marauder firmware's own source shows it broadcasts no name of its own (its fake-portal network is called "PORTAL" and
   its Bluetooth radio starts unnamed), so such a name is always someone's choice: a fan of the tool, a school mascot, a
-  car. The device details now carry a 25-point note that says exactly that, and nothing is labelled or alerted. Real
+  car. The device details now carry a low-score note that says exactly that; the device stays LOW and is neither labelled nor alerted. Real
   tool names (Pineapple, "pwned", O.MG, Flipper, Pwnagotchi, Hak5) are unchanged. The desktop beta matches; tests cover
   both.
 

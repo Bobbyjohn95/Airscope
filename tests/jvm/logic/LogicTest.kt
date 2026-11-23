@@ -915,12 +915,12 @@ fun main() {
         check("threat: 'WiFi Pineapple MK7' named", w("a0:bb:cc:dd:ee:05", "WiFi Pineapple MK7").attackTool)
         val pwned = w("aa:bb:cc:dd:ee:01", "pwned", "[ESS]")
         check("threat: deauther 'pwned'", pwned.attackTool && pwned.label == "Wi-Fi deauther (jamming tool)", pwned.label)
-        // The Marauder firmware broadcasts no name of its own (portal AP "PORTAL", BLE unnamed), so a "Marauder" name is a 25-pt
-        // note, not a tool verdict; the finding still shows in the details and says why.
+        // The Marauder firmware broadcasts no name of its own (portal AP "PORTAL", BLE unnamed), so a "Marauder" name is a 15-pt
+        // note (below the 25-pt MEDIUM line), not a tool verdict; the finding still shows in the details and says why.
         for (m in listOf("MarauderAP", "marauder", "Marauder_1a2b", "ESP32 Marauder", "ESP32-Marauder")) {
             val r = w("aa:bb:cc:dd:ee:02", m)
             check("threat: '$m' is a note, not a tool", !r.attackTool && r.label != "ESP32 Marauder (attack tool)" &&
-                r.findings.any { it.points == 25 && it.text.contains("Marauder") && it.text.contains("chosen name") }, "${r.label} ${r.findings}")
+                r.findings.sumOf { it.points } < 25 && r.findings.any { it.points == 15 && it.text.contains("Marauder") && it.text.contains("chosen name") }, "${r.label} ${r.findings}")
         }
         check("threat: 'Marauders' stays the 10-pt mascot note", w("aa:bb:cc:dd:ee:02", "Marauders").findings.any { it.points == 10 && it.text.contains("marauder") })
         check("threat: O.MG", w("aa:bb:cc:dd:ee:03", "O.MG").attackTool)
@@ -930,7 +930,7 @@ fun main() {
         check("threat: Flipper Zero BLE name", flip.attackTool && flip.label == "Flipper Zero", flip.label)
         check("threat: plain 'Flipper' word alone is not", !Classifier.classifyBle("c1:00:00:00:00:01", true, AdvParser.parse(ad(name("Flipper"))), db).attackTool)
         val marBle = Classifier.classifyBle("c1:00:00:00:00:02", true, AdvParser.parse(ad(name("Marauder"))), db)
-        check("threat: BLE 'Marauder' is a note, not a tool", !marBle.attackTool && marBle.label != "ESP32 Marauder (attack tool)" && marBle.findings.any { it.points == 25 && it.text.contains("chosen name") }, "${marBle.label} ${marBle.findings}")
+        check("threat: BLE 'Marauder' is a note, not a tool", !marBle.attackTool && marBle.label != "ESP32 Marauder (attack tool)" && marBle.findings.sumOf { it.points } < 25 && marBle.findings.any { it.points == 15 && it.text.contains("chosen name") }, "${marBle.label} ${marBle.findings}")
         check("threat: BLE Pwnagotchi (35) still counts as a tool", Classifier.classifyBle("c1:00:00:00:00:03", true, AdvParser.parse(ad(name("pwnagotchi"))), db).attackTool)
         check("threat: BLE Hak5 name still counts as a tool", Classifier.classifyBle("c1:00:00:00:00:04", true, AdvParser.parse(ad(name("Hak5 Bash Bunny"))), db).attackTool)
         // grades
