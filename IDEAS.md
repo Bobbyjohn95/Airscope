@@ -107,6 +107,19 @@ Coworkers: add bigger ideas here with what / why / risk / size. K: delete a line
   *2026-11-22 (Sunday):* build 66 live, not prerelease; main's run 44595444091 green; no new CI runs; dev_check green.
   Nothing shipped (check-only day; next routine release not before 11-23). GitHub fetches still blocked unattended
   (19th day, one try); still K's call above. Weekly roundup sent (builds 63 + 66 this week).
+  *2026-11-23:* shipped **build 70** (README v2.9.6, branch `marauder-name-honest`, reviewed by sonnet): a Wi-Fi network or
+  Bluetooth device called "Marauder" / "MarauderAP" is a 15-pt note, not an "ESP32 Marauder (attack tool)" label with a
+  MEDIUM alert. Verified against the Marauder firmware source itself: it broadcasts no name of its own (portal AP "PORTAL",
+  BLE unnamed). The review caught that 25 pts would still have made the device MEDIUM; fixed to 15 before merging. Main's
+  first run then went red on the JVM tile test ("second run loads from the phone": 15 of 16 disk loads counted), a lost
+  `fromDisk++` from two threads; fixed on `stats-counters-lock` (counters under a lock; reviewed by haiku), its run green
+  (emulator PASS, 70 mph inside a car, 5-6 tiles, permanent key, scan survived screen-off), fast-forwarded, main run green,
+  build-70 is latest and not prerelease. **Freshness unblocked:** `git clone` of public GitHub repos works from the
+  sandbox (dev_check already does it), so upstream checks no longer need the web-fetch approval. flock-you-esp32
+  fy_detect.h (HEAD 2026-10-14) matches Signatures.kt exactly (33 high OUIs, 8 maker OUIs, 2 exact MACs, SoundThinking,
+  SSID/BLE keywords, 0x09C8, Raven UUIDs, Flock accessory UUID); Actions tags unchanged from the list below. Overpass
+  overpass-api.de answered 502 again in the branch run; kumi fallback covered it (49 cameras). Next routine release not
+  before 11-25.
 - **CI actions are several major versions behind** (checkout v5→v7, setup-java v5→v6, setup-python v5→v7,
   upload-artifact v4→v7, download-artifact v4→v8, gradle/actions v4→v6, emulator-runner v2 current). Everything
   still works. Bumping touches the publish job (download-artifact), which coworkers must not change, and a failed
