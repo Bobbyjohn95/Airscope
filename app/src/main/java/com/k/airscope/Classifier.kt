@@ -176,8 +176,9 @@ object Classifier {
         val attack = Threats.bleNameFindings(adv.name) + (if (randomAddr != true) Threats.macFindings(addr) else emptyList())
         if (attack.isNotEmpty()) {
             c.findings += attack
-            c.attackTool = true
-            Threats.label(attack)?.let { c.set(Category.NETWORK, it, 95) }
+            // Pwnagotchi (35) and up count as a tool; a name merely borrowed from a tool (25) stays a note in the details.
+            c.attackTool = attack.any { it.points >= 30 }
+            if (c.attackTool) Threats.label(attack)?.let { c.set(Category.NETWORK, it, 95) }
         }
 
         // --- Drone Remote ID

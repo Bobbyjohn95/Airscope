@@ -14,7 +14,10 @@ object Threats {
 
     private val pineappleDefault = Regex("^pineapple[_ -]?([0-9a-f]{4})$", RegexOption.IGNORE_CASE)
     private val pineappleWord = Regex("(wi-?fi ?pineapple|pineapple ?(mk ?\\d+|nano|tetra|hak5)\\b|hak5 ?pineapple)", RegexOption.IGNORE_CASE)
-    private val marauderDefault = Regex("^marauder(ap|_[0-9a-f]{2,6})?$", RegexOption.IGNORE_CASE)
+    // The ESP32 Marauder firmware (justcallmekoko/ESP32Marauder, checked 2026-11-23) broadcasts no name of its own:
+    // its evil-portal AP is called "PORTAL" and its BLE radio starts unnamed. A network or device called "Marauder" /
+    // "MarauderAP" is therefore someone's chosen name (a fan of the tool, a mascot, a car), never a factory default.
+    private val marauderName = Regex("^(esp32[ _-]?)?marauder(ap|_[0-9a-f]{2,6})?$", RegexOption.IGNORE_CASE)
     private val omgDefault = Regex("^o\\.mg([ _-].*)?$", RegexOption.IGNORE_CASE)
     private val flipperName = Regex("^flipper\\s+\\S{3,}$", RegexOption.IGNORE_CASE)
 
@@ -33,7 +36,7 @@ object Threats {
             pine != null -> f += Finding(15, "Looks like a Wi-Fi Pineapple default name, but the digits don't match its address (probably just a name)")
             l == "pwned" -> f += Finding(55, "\"pwned\": default network of the ESP8266 Deauther (Wi-Fi jamming tool), or someone's joke name")
             l.contains("deauther") -> f += Finding(55, "Network name says Deauther (ESP8266 Wi-Fi jamming tool)")
-            marauderDefault.matches(s) -> f += Finding(50, "ESP32 Marauder default network name (Wi-Fi/BLE attack tool)")
+            marauderName.matches(s) -> f += Finding(25, "Named after the ESP32 Marauder attack tool; the tool itself broadcasts no network name, so this is someone's chosen name")
             l.contains("marauder") -> f += Finding(10, "Name contains \"marauder\" (a school mascot or a car more often than the attack tool)")
             omgDefault.matches(s) -> f += Finding(55, "O.MG default network name (malicious-cable implant with Wi-Fi)")
             l.contains("hak5") -> f += Finding(45, "Network name says Hak5 (audit/attack hardware maker)")
@@ -57,7 +60,7 @@ object Threats {
         val l = n.lowercase(Locale.US)
         return when {
             flipperName.matches(n) -> listOf(Finding(45, "Flipper Zero (multi-tool: can clone, replay and spam signals; often just a hobbyist)"))
-            marauderDefault.matches(n) -> listOf(Finding(50, "ESP32 Marauder name (Wi-Fi/BLE attack tool)"))
+            marauderName.matches(n) -> listOf(Finding(25, "Named after the ESP32 Marauder attack tool; the tool itself advertises no Bluetooth name, so this is someone's chosen name"))
             l.startsWith("o.mg") || l.startsWith("omg-") -> listOf(Finding(50, "O.MG implant name (malicious cable)"))
             l.contains("hak5") -> listOf(Finding(40, "Hak5 (audit/attack hardware maker) in the name"))
             l == "pwnagotchi" -> listOf(Finding(35, "Pwnagotchi (handshake-collecting Wi-Fi toy)"))

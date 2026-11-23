@@ -915,14 +915,24 @@ fun main() {
         check("threat: 'WiFi Pineapple MK7' named", w("a0:bb:cc:dd:ee:05", "WiFi Pineapple MK7").attackTool)
         val pwned = w("aa:bb:cc:dd:ee:01", "pwned", "[ESS]")
         check("threat: deauther 'pwned'", pwned.attackTool && pwned.label == "Wi-Fi deauther (jamming tool)", pwned.label)
-        check("threat: Marauder default SSID", w("aa:bb:cc:dd:ee:02", "MarauderAP").attackTool && w("aa:bb:cc:dd:ee:02", "marauder").attackTool)
+        // The Marauder firmware broadcasts no name of its own (portal AP "PORTAL", BLE unnamed), so a "Marauder" name is a 25-pt
+        // note, not a tool verdict; the finding still shows in the details and says why.
+        for (m in listOf("MarauderAP", "marauder", "Marauder_1a2b", "ESP32 Marauder", "ESP32-Marauder")) {
+            val r = w("aa:bb:cc:dd:ee:02", m)
+            check("threat: '$m' is a note, not a tool", !r.attackTool && r.label != "ESP32 Marauder (attack tool)" &&
+                r.findings.any { it.points == 25 && it.text.contains("Marauder") && it.text.contains("chosen name") }, "${r.label} ${r.findings}")
+        }
+        check("threat: 'Marauders' stays the 10-pt mascot note", w("aa:bb:cc:dd:ee:02", "Marauders").findings.any { it.points == 10 && it.text.contains("marauder") })
         check("threat: O.MG", w("aa:bb:cc:dd:ee:03", "O.MG").attackTool)
         val free = w("aa:bb:cc:dd:ee:05", "Free WiFi", "[ESS]")
         check("threat: 'Free WiFi' is only a weak hint", !free.attackTool && free.findings.any { it.points == 10 })
         val flip = Classifier.classifyBle("80:e1:26:00:00:01", false, AdvParser.parse(ad(name("Flipper Kx9ab3"))), db)
         check("threat: Flipper Zero BLE name", flip.attackTool && flip.label == "Flipper Zero", flip.label)
         check("threat: plain 'Flipper' word alone is not", !Classifier.classifyBle("c1:00:00:00:00:01", true, AdvParser.parse(ad(name("Flipper"))), db).attackTool)
-        check("threat: Marauder BLE", Classifier.classifyBle("c1:00:00:00:00:02", true, AdvParser.parse(ad(name("Marauder"))), db).attackTool)
+        val marBle = Classifier.classifyBle("c1:00:00:00:00:02", true, AdvParser.parse(ad(name("Marauder"))), db)
+        check("threat: BLE 'Marauder' is a note, not a tool", !marBle.attackTool && marBle.label != "ESP32 Marauder (attack tool)" && marBle.findings.any { it.points == 25 && it.text.contains("chosen name") }, "${marBle.label} ${marBle.findings}")
+        check("threat: BLE Pwnagotchi (35) still counts as a tool", Classifier.classifyBle("c1:00:00:00:00:03", true, AdvParser.parse(ad(name("pwnagotchi"))), db).attackTool)
+        check("threat: BLE Hak5 name still counts as a tool", Classifier.classifyBle("c1:00:00:00:00:04", true, AdvParser.parse(ad(name("Hak5 Bash Bunny"))), db).attackTool)
         // grades
         check("grade: WPA3 A, +WPS B", WifiSecurity.grade("[WPA2-SAE-CCMP][RSN-SAE-CCMP][ESS]", false).first == 'A' && WifiSecurity.grade("[RSN-SAE-CCMP][ESS]", true).first == 'B')
         check("grade: WPA3 transition mode (WPA2-PSK still accepted) B, says why; label and rank stay WPA3; not weak",

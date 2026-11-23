@@ -77,7 +77,9 @@ TRAFFIC_SSID = _rx(r"(traffic ?(cam|signal|control|light)|\bgdot\b|iteris|miovis
 
 PINEAPPLE_DEFAULT = _rx(r"^pineapple[_ -]?([0-9a-f]{4})$")
 PINEAPPLE_WORD = _rx(r"(wi-?fi ?pineapple|pineapple ?(mk ?\d+|nano|tetra|hak5)\b|hak5 ?pineapple)")
-MARAUDER_DEFAULT = _rx(r"^marauder(ap|_[0-9a-f]{2,6})?$")
+# The ESP32 Marauder firmware broadcasts no name of its own (portal AP "PORTAL", BLE unnamed; checked 2026-11-23),
+# so a "Marauder" / "MarauderAP" name is someone's choice, never a factory default.
+MARAUDER_NAME = _rx(r"^(esp32[ _-]?)?marauder(ap|_[0-9a-f]{2,6})?$")
 OMG_DEFAULT = _rx(r"^o\.mg([ _-].*)?$")
 FLIPPER_NAME = _rx(r"^flipper\s+\S{3,}$")
 
@@ -167,8 +169,8 @@ def threat_ssid_findings(ssid: str, bssid: str = "") -> List[Finding]:
         return [Finding(55, '"pwned": default network of the ESP8266 Deauther (Wi-Fi jamming tool), or someone\'s joke name')]
     if "deauther" in low:
         return [Finding(55, "Network name says Deauther (ESP8266 Wi-Fi jamming tool)")]
-    if MARAUDER_DEFAULT.match(s):
-        return [Finding(50, "ESP32 Marauder default network name (Wi-Fi/BLE attack tool)")]
+    if MARAUDER_NAME.match(s):
+        return [Finding(25, "Named after the ESP32 Marauder attack tool; the tool itself broadcasts no network name, so this is someone's chosen name")]
     if "marauder" in low:
         return [Finding(10, 'Name contains "marauder" (a school mascot or a car more often than the attack tool)')]
     if OMG_DEFAULT.match(s):
@@ -198,8 +200,8 @@ def threat_ble_name_findings(name: Optional[str]) -> List[Finding]:
     low = n.lower()
     if FLIPPER_NAME.match(n):
         return [Finding(45, "Flipper Zero (multi-tool: can clone, replay and spam signals; often just a hobbyist)")]
-    if MARAUDER_DEFAULT.match(n):
-        return [Finding(50, "ESP32 Marauder name (Wi-Fi/BLE attack tool)")]
+    if MARAUDER_NAME.match(n):
+        return [Finding(25, "Named after the ESP32 Marauder attack tool; the tool itself advertises no Bluetooth name, so this is someone's chosen name")]
     if low.startswith("o.mg") or low.startswith("omg-"):
         return [Finding(50, "O.MG implant name (malicious cable)")]
     if "hak5" in low:
@@ -611,10 +613,12 @@ def classify_ble(addr: str, name: Optional[str], mfr: Dict[int, bytes], uuid16: 
     attack = threat_ble_name_findings(name) + ([] if random else threat_mac_findings(addr))
     if attack:
         c.findings += attack
-        c.attack_tool = True
-        lab = threat_label(attack)
-        if lab:
-            c.set("NETWORK", lab, 95)
+        # Pwnagotchi (35) and up count as a tool; a name merely borrowed from a tool (25) stays a note in the details.
+        c.attack_tool = any(x.points >= 30 for x in attack)
+        if c.attack_tool:
+            lab = threat_label(attack)
+            if lab:
+                c.set("NETWORK", lab, 95)
 
     apple = mfr.get(0x004C)
     if apple is not None:
