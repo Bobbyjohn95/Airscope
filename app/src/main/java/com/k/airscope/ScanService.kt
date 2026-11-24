@@ -77,20 +77,37 @@ class ScanService : Service() {
         }
         Engine.alprAlert = { h -> Notifier.alprAlert(app, h, Engine.geo.course) }
         Engine.eventAlert = { e -> Notifier.eventAlert(app, e) }
-        // Disruption watch: the phone's own Wi-Fi connection dropping again and again while standing still
+        // Disruption watch: the phone's own Wi-Fi connection dropping again and again while standing still.
+        // The same callback tells the scoring which access point the phone is joined to (its BSSID), so that network
+        // is not treated as a stranger's hotspot that keeps following you.
         try {
             val cm = getSystemService(android.net.ConnectivityManager::class.java)
             val req = android.net.NetworkRequest.Builder().addTransportType(android.net.NetworkCapabilities.TRANSPORT_WIFI).build()
-            netCallback = object : android.net.ConnectivityManager.NetworkCallback() {
-                @Volatile var available = 0L
-                override fun onAvailable(network: android.net.Network) { available = System.currentTimeMillis() }
-                override fun onLost(network: android.net.Network) {
-                    val lostAt = System.currentTimeMillis()
-                    // Switching to another Wi-Fi network also fires onLost: wait 5 s and only count a drop with no replacement
-                    Engine.handler.postDelayed({ if (available < lostAt) Engine.onWifiLost() }, 5_000)
-                }
-            }.also { cm.registerNetworkCallback(req, it) }
+            // Android 12+ only hands out the BSSID when the callback asks for location info (we hold fine location for scanning anyway)
+            netCallback = (if (Build.VERSION.SDK_INT >= 31) WifiWatch(android.net.ConnectivityManager.NetworkCallback.FLAG_INCLUDE_LOCATION_INFO) else WifiWatch())
+                .also { cm.registerNetworkCallback(req, it) }
         } catch (_: Exception) { }
+    }
+
+    private inner class WifiWatch : android.net.ConnectivityManager.NetworkCallback {
+        constructor() : super()
+        constructor(flags: Int) : super(flags)
+        @Volatile var available = 0L
+        override fun onAvailable(network: android.net.Network) { available = System.currentTimeMillis() }
+        override fun onCapabilitiesChanged(network: android.net.Network, caps: android.net.NetworkCapabilities) {
+            val bssid = try {
+                if (Build.VERSION.SDK_INT >= 31) (caps.transportInfo as? android.net.wifi.WifiInfo)?.bssid
+                else @Suppress("DEPRECATION") (getSystemService(Context.WIFI_SERVICE) as android.net.wifi.WifiManager).connectionInfo?.bssid
+            } catch (_: Exception) { null }
+            // "02:00:00:00:00:00" is Android's stand-in when the address is withheld from the app: then it is simply unknown
+            Heuristics.joinedBssid = bssid?.lowercase(java.util.Locale.US)?.takeIf { it.length == 17 && it != "02:00:00:00:00:00" }
+        }
+        override fun onLost(network: android.net.Network) {
+            val lostAt = System.currentTimeMillis()
+            Heuristics.joinedBssid = null
+            // Switching to another Wi-Fi network also fires onLost: wait 5 s and only count a drop with no replacement
+            Engine.handler.postDelayed({ if (available < lostAt) Engine.onWifiLost() }, 5_000)
+        }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -196,6 +213,7 @@ class ScanService : Service() {
         if (Engine.running) cleanup()
         try { netCallback?.let { getSystemService(android.net.ConnectivityManager::class.java).unregisterNetworkCallback(it) } } catch (_: Exception) { }
         netCallback = null
+        Heuristics.joinedBssid = null
         super.onDestroy()
         // Scanning stopped: an update that was waiting for that can install now (unless you're looking at the app).
         Updater.installPendingAsync(applicationContext)

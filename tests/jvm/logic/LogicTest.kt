@@ -864,6 +864,30 @@ fun main() {
         check("link: hotspot BSSID rotation, mesh APs untouched", st4.linkRotated(t0 + 200_000).size == 1 && st4.devices.size == 3, st4.devices.keys)
     }
 
+    // ---- The Wi-Fi network the phone is joined to is not a stranger's hotspot following you
+    run {
+        val t1 = t0 + 20 * 60_000
+        fun hotspot(mac: String) = Device(mac, Kind.WIFI, t0).also {
+            it.name = "AndroidWifi"; it.category = Category.PHONE; it.security = "[ESS]"; it.randomAddr = true
+            it.followM = 1500.0; it.addReading(-60, t1); it.presentSince = t0 // next to you for 20 min
+        }
+        val stranger = hotspot("02:15:b2:00:00:01"); val mine = hotspot("02:15:b2:00:00:02")
+        Heuristics.joinedBssid = "02:15:B2:00:00:02" // as Android reports it (upper case): matched case-insensitively
+        Heuristics.score(stranger, listOf(stranger, mine), t1); Heuristics.score(mine, listOf(stranger, mine), t1)
+        check("joined: a stranger's open hotspot that moves with you is HIGH", stranger.level == Level.HIGH &&
+            stranger.flags.any { it.startsWith("Mobile hotspot nearby") } && stranger.flags.any { it.startsWith("Hotspot moving with you") }, "${stranger.score} ${stranger.flags}")
+        check("joined: the one you're on drops the nearby/moving points, keeps the open-network fact", mine.level < Level.HIGH &&
+            mine.score == stranger.score - 25 && "The Wi-Fi network this phone is joined to" in mine.flags && "Open network (no encryption)" in mine.flags &&
+            mine.flags.none { it.startsWith("Mobile hotspot nearby") || it.startsWith("Hotspot moving with you") }, "${mine.score} ${mine.flags}")
+        // Evil-twin logic still applies to the joined network: a secured copy of its name nearby is still noted
+        val twin = Device("00:11:22:33:44:99", Kind.WIFI, t0).also { it.name = "AndroidWifi"; it.security = "[WPA2-PSK-CCMP][ESS]"; it.addReading(-60, t1) }
+        Heuristics.score(mine, listOf(mine, twin), t1)
+        check("joined: evil-twin check still runs on the joined network", mine.flags.any { it.startsWith("Same name as a secured network") }, mine.flags)
+        Heuristics.joinedBssid = null
+        Heuristics.score(mine, listOf(mine), t1)
+        check("joined: after leaving the network the points come back", mine.level == Level.HIGH, "${mine.score}")
+    }
+
     // ---- LanParser: mDNS + SSDP announcements
     run {
         fun lbl(vararg labels: String): ByteArray {

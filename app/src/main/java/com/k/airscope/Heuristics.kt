@@ -9,6 +9,8 @@ object Heuristics {
     /** Your current position (engine thread), for the "near where you learned it" check. */
     @Volatile var myLat: Double? = null
     @Volatile var myLon: Double? = null
+    /** BSSID (lowercase) of the Wi-Fi access point this phone is joined to, null when none or withheld; set by the scan service. */
+    @Volatile var joinedBssid: String? = null
 
     const val PERSIST_MS = 10 * 60_000L
 
@@ -42,7 +44,11 @@ object Heuristics {
         val present = now - d.presentSince
         val mins = present / 60_000
 
+        // The access point you chose to join (a friend's hotspot, the car's Wi-Fi) is not a stranger that keeps near you:
+        // what the network IS (open, WEP, an evil twin) still counts; how long it has been next to you does not.
+        val joined = d.kind == Kind.WIFI && d.id.equals(joinedBssid, ignoreCase = true)
         if (d.kind == Kind.WIFI) {
+            if (joined) f += "The Wi-Fi network this phone is joined to"
             when (securityLabel(d.security)) {
                 "WEP" -> { s += 20; f += "WEP encryption (broken)" }
                 "OPEN" -> { s += 15; f += "Open network (no encryption)" }
@@ -65,7 +71,7 @@ object Heuristics {
             }
             if (VendorDb.isRandomizedMac(d.id)) {
                 s += 10; f += "Randomized MAC (phone hotspot, guest or mesh network)"
-                if (present > PERSIST_MS && d.category == Category.PHONE) {
+                if (present > PERSIST_MS && d.category == Category.PHONE && !joined) {
                     s += 15; f += "Mobile hotspot nearby for $mins min"
                 }
             }
@@ -101,7 +107,7 @@ object Heuristics {
                 if (crowd <= 4) sec += "following" else f += "(many devices are travelling with you right now: transit or a group, so no alert)"
             }
         }
-        if (d.kind == Kind.WIFI && d.followM > 600) { s += 10; f += "Hotspot moving with you (${(d.followM / 1000).let { String.format(java.util.Locale.US, "%.1f", it) }} km)" }
+        if (d.kind == Kind.WIFI && d.followM > 600 && !joined) { s += 10; f += "Hotspot moving with you (${(d.followM / 1000).let { String.format(java.util.Locale.US, "%.1f", it) }} km)" }
 
         d.score = s.coerceIn(0, 100)
         d.flags = f
