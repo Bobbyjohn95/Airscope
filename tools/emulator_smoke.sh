@@ -391,6 +391,19 @@ if [ -n "$URL" ]; then
   note "  HUD /api/state=$CODE  page=$PAGE  wrong-key=$BAD"
   python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print('  HUD JSON ok:', len(d.get('devices',[])), 'devices, me =', d.get('me'))" "$OUT/hud-state.json" 2>&1 | tee -a "$SUMMARY"
   [ "$CODE" = "200" ] && [ "$BAD" != "200" ] || { note "FAIL: HUD did not answer correctly"; FAIL=1; }
+  # The emulator's own Wi-Fi (AndroidWifi, the network the emulator is joined to) must read as "joined", not as a
+  # stranger's hotspot that followed the simulated drive (informational: the BSSID can be withheld on some images)
+  python3 - "$OUT/hud-state.json" <<'PY' 2>&1 | tee -a "$SUMMARY"
+import json, sys
+d = json.load(open(sys.argv[1]))
+w = [x for x in d.get('devices', []) if x.get('kind') == 'WIFI' and 'AndroidWifi' in x.get('name', '')]
+if not w: print('  joined network: AndroidWifi not in the HUD list (skipped)')
+else:
+    x = w[0]; fl = x.get('flags', [])
+    joined = any(f.startswith('The Wi-Fi network this phone is joined to') for f in fl)
+    following = any(f.startswith('Hotspot moving with you') or f.startswith('Mobile hotspot nearby') for f in fl)
+    print('  joined network: AndroidWifi', x.get('level'), 'joined' if joined else 'NOT marked as joined', '(still scored as following)' if following else '', fl)
+PY
 else
   note "  (no HUD URL shown: emulator Wi-Fi may be off)"
 fi

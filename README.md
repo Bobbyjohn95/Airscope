@@ -4,6 +4,14 @@ A personal signal-observation app for the Pixel 8 Pro (Android 10+, GrapheneOS-f
 It **only listens**. It reads Wi-Fi beacons and Bluetooth LE advertisements that devices already
 broadcast. It never connects to, jams, deauths or transmits to anything.
 
+## What's new in v2.9.7: the Wi-Fi you're joined to is not a hotspot "following you"
+- **The network your phone is connected to is no longer scored as a stranger's hotspot.** A friend's hotspot, the car's
+  Wi-Fi or a tethered phone used to collect "Mobile hotspot nearby for N min" and "Hotspot moving with you" on every drive,
+  so an open one went HIGH. The device details now say "The Wi-Fi network this phone is joined to" instead of those two
+  findings. What the network *is* still counts: open, WEP, WPS on, a same-name evil twin nearby. Nothing new is asked for
+  (the connection's address comes from the Wi-Fi callback the disruption watch already uses). When Android withholds
+  the address, nothing changes. The emulator test checks this on its own AndroidWifi network.
+
 ## What's new in v2.9.6: a network called "Marauder" is no longer an attack tool
 - **"Marauder" / "MarauderAP" is a note, not an alarm.** The app used to label a Wi-Fi network or Bluetooth device with
   that name "ESP32 Marauder (attack tool)" and raise a MEDIUM alert, calling it the tool's default name. A check of the
