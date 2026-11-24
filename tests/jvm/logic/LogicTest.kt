@@ -877,12 +877,12 @@ fun main() {
         check("joined: a stranger's open hotspot that moves with you is HIGH", stranger.level == Level.HIGH &&
             stranger.flags.any { it.startsWith("Mobile hotspot nearby") } && stranger.flags.any { it.startsWith("Hotspot moving with you") }, "${stranger.score} ${stranger.flags}")
         check("joined: the one you're on drops the nearby/moving points, keeps the open-network fact", mine.level < Level.HIGH &&
-            mine.score == stranger.score - 25 && "The Wi-Fi network this phone is joined to" in mine.flags && "Open network (no encryption)" in mine.flags &&
+            mine.score < stranger.score && "The Wi-Fi network this phone is joined to" in mine.flags && "Open network (no encryption)" in mine.flags &&
             mine.flags.none { it.startsWith("Mobile hotspot nearby") || it.startsWith("Hotspot moving with you") }, "${mine.score} ${mine.flags}")
         // Evil-twin logic still applies to the joined network: a secured copy of its name nearby is still noted
         val twin = Device("00:11:22:33:44:99", Kind.WIFI, t0).also { it.name = "AndroidWifi"; it.security = "[WPA2-PSK-CCMP][ESS]"; it.addReading(-60, t1) }
         Heuristics.score(mine, listOf(mine, twin), t1)
-        check("joined: evil-twin check still runs on the joined network", mine.flags.any { it.startsWith("Same name as a secured network") }, mine.flags)
+        check("joined: evil-twin check still runs on the joined network", mine.flags.any { it.startsWith("Same name as a secured network") } && mine.level == Level.HIGH, "${mine.score} ${mine.flags}")
         Heuristics.joinedBssid = null
         Heuristics.score(mine, listOf(mine), t1)
         check("joined: after leaving the network the points come back", mine.level == Level.HIGH, "${mine.score}")

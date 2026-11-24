@@ -93,18 +93,23 @@ class ScanService : Service() {
         constructor() : super()
         constructor(flags: Int) : super(flags)
         @Volatile var available = 0L
+        /** The network whose BSSID is in Heuristics.joinedBssid: a late onLost for an OLD network must not wipe the new one. */
+        @Volatile private var bssidFrom: android.net.Network? = null
         override fun onAvailable(network: android.net.Network) { available = System.currentTimeMillis() }
         override fun onCapabilitiesChanged(network: android.net.Network, caps: android.net.NetworkCapabilities) {
+            // Fires on every signal-strength step as well, so a BSSID withheld at first (location off) shows up soon after.
             val bssid = try {
                 if (Build.VERSION.SDK_INT >= 31) (caps.transportInfo as? android.net.wifi.WifiInfo)?.bssid
                 else @Suppress("DEPRECATION") (getSystemService(Context.WIFI_SERVICE) as android.net.wifi.WifiManager).connectionInfo?.bssid
             } catch (_: Exception) { null }
             // "02:00:00:00:00:00" is Android's stand-in when the address is withheld from the app: then it is simply unknown
-            Heuristics.joinedBssid = bssid?.lowercase(java.util.Locale.US)?.takeIf { it.length == 17 && it != "02:00:00:00:00:00" }
+            val clean = bssid?.lowercase(java.util.Locale.US)?.takeIf { it.length == 17 && it != "02:00:00:00:00:00" }
+            if (clean != null) { bssidFrom = network; Heuristics.joinedBssid = clean }
+            else if (bssidFrom == network) { bssidFrom = null; Heuristics.joinedBssid = null }
         }
         override fun onLost(network: android.net.Network) {
             val lostAt = System.currentTimeMillis()
-            Heuristics.joinedBssid = null
+            if (bssidFrom == network) { bssidFrom = null; Heuristics.joinedBssid = null }
             // Switching to another Wi-Fi network also fires onLost: wait 5 s and only count a drop with no replacement
             Engine.handler.postDelayed({ if (available < lostAt) Engine.onWifiLost() }, 5_000)
         }
