@@ -120,6 +120,16 @@ Coworkers: add bigger ideas here with what / why / risk / size. K: delete a line
   SSID/BLE keywords, 0x09C8, Raven UUIDs, Flock accessory UUID); Actions tags unchanged from the list below. Overpass
   overpass-api.de answered 502 again in the branch run; kumi fallback covered it (49 cameras). Next routine release not
   before 11-25.
+  *2026-11-24:* build 70 live, not prerelease; main's run 45253407481 green (emulator PASS re-read: 42 mph inside a car,
+  4-6 tiles, 49 cameras, HUD key, scan survived screen-off). dev_check green. Nothing shipped (routine release was
+  yesterday). Prepared on branch `joined-network-note` (reviewed by sonnet; its roaming defect fixed: a late onLost for the
+  previous network no longer wipes the new one's BSSID): the Wi-Fi network the phone is joined to is noted as such instead
+  of collecting "Mobile hotspot nearby" + "Hotspot moving with you" (the emulator's own AndroidWifi went HIGH on every
+  simulated drive; it now reads MEDIUM, "joined"). Open/WEP/WPS/evil-twin facts still count. No new permission. Branch run
+  45465801570 green (PASS, 68 mph inside a car, 4-6 tiles, HUD state shows the joined note; screenshots checked). Merges
+  11-25. Freshness: flock-you-esp32 HEAD still ea5dc18 (signatures match); Actions majors unchanged; OpenFreeMap TileJSON
+  fetch blocked today (web-fetch approval), but the run shows tiles + attribution live. Emulator-script nit seen: after
+  the search step the app was left on the launcher for 06-08 (relaunch fired but the keyboard was up); test-only.
 - **CI actions are several major versions behind** (checkout v5→v7, setup-java v5→v6, setup-python v5→v7,
   upload-artifact v4→v7, download-artifact v4→v8, gradle/actions v4→v6, emulator-runner v2 current). Everything
   still works. Bumping touches the publish job (download-artifact), which coworkers must not change, and a failed
