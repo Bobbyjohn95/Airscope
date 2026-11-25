@@ -120,6 +120,12 @@ Coworkers: add bigger ideas here with what / why / risk / size. K: delete a line
   SSID/BLE keywords, 0x09C8, Raven UUIDs, Flock accessory UUID); Actions tags unchanged from the list below. Overpass
   overpass-api.de answered 502 again in the branch run; kumi fallback covered it (49 cameras). Next routine release not
   before 11-25.
+  *2026-11-25:* shipped **build 74** (README v2.9.7, branch `joined-network-note`): the Wi-Fi network the phone is joined
+  to is noted as such and no longer collects "hotspot nearby" + "moving with you" points (AndroidWifi now MEDIUM 25,
+  "joined", in both the branch run 45678320086 and main's run 45682246608; emulator PASS, 69 mph inside a car, 4-6 tiles,
+  39 cameras via the kumi fallback after an overpass-api.de 502, permanent key, scan survived screen-off; screenshots
+  checked). releases/latest = build-74, not prerelease. Freshness: flock-you-esp32 HEAD still ea5dc18; Actions majors
+  unchanged. Second routine release this week (11-23 + 11-25): no more routine ones before Monday 11-30.
   *2026-11-24:* build 70 live, not prerelease; main's run 45253407481 green (emulator PASS re-read: 42 mph inside a car,
   4-6 tiles, 49 cameras, HUD key, scan survived screen-off). dev_check green. Nothing shipped (routine release was
   yesterday). Prepared on branch `joined-network-note` (reviewed by sonnet; its roaming defect fixed: a late onLost for the
