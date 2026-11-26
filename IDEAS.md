@@ -126,6 +126,9 @@ Coworkers: add bigger ideas here with what / why / risk / size. K: delete a line
   39 cameras via the kumi fallback after an overpass-api.de 502, permanent key, scan survived screen-off; screenshots
   checked). releases/latest = build-74, not prerelease. Freshness: flock-you-esp32 HEAD still ea5dc18; Actions majors
   unchanged. Second routine release this week (11-23 + 11-25): no more routine ones before Monday 11-30.
+  *2026-11-26:* build 74 live, not prerelease; main's run 45682246608 green; no new CI runs; dev_check green. Nothing
+  shipped (check-only day: this week's two routine releases were 11-23 and 11-25; next not before Monday 11-30).
+  Freshness (git ls-remote): flock-you-esp32 HEAD still ea5dc18 (Signatures.kt matches); Actions majors unchanged.
   *2026-11-24:* build 70 live, not prerelease; main's run 45253407481 green (emulator PASS re-read: 42 mph inside a car,
   4-6 tiles, 49 cameras, HUD key, scan survived screen-off). dev_check green. Nothing shipped (routine release was
   yesterday). Prepared on branch `joined-network-note` (reviewed by sonnet; its roaming defect fixed: a late onLost for the
