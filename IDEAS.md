@@ -129,6 +129,10 @@ Coworkers: add bigger ideas here with what / why / risk / size. K: delete a line
   *2026-11-26:* build 74 live, not prerelease; main's run 45682246608 green; no new CI runs; dev_check green. Nothing
   shipped (check-only day: this week's two routine releases were 11-23 and 11-25; next not before Monday 11-30).
   Freshness (git ls-remote): flock-you-esp32 HEAD still ea5dc18 (Signatures.kt matches); Actions majors unchanged.
+  *2026-11-27:* build 74 live, not prerelease; main's run 45682246608 green; no new CI runs; dev_check green. Nothing
+  shipped (check-only day; next routine release not before Monday 11-30). Freshness (git ls-remote): flock-you-esp32
+  HEAD still ea5dc18; Actions majors unchanged (checkout v7, setup-java v6, setup-python v7, upload v7, download v8,
+  gradle v6, emulator-runner v2 vs the workflow's v5/v5/v5/v4/v4/v4/v2). No K edits to IDEAS.md or README.
   *2026-11-24:* build 70 live, not prerelease; main's run 45253407481 green (emulator PASS re-read: 42 mph inside a car,
   4-6 tiles, 49 cameras, HUD key, scan survived screen-off). dev_check green. Nothing shipped (routine release was
   yesterday). Prepared on branch `joined-network-note` (reviewed by sonnet; its roaming defect fixed: a late onLost for the
